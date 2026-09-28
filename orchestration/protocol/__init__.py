@@ -24,6 +24,8 @@ from .audio import (
     int16_to_float32,
     compute_rms,
     generate_silence_frame,
+    high_pass_filter,
+    AdaptiveNoiseCanceller,
 )
 
 __all__ = [
@@ -50,4 +52,6 @@ __all__ = [
     "int16_to_float32",
     "compute_rms",
     "generate_silence_frame",
+    "high_pass_filter",
+    "AdaptiveNoiseCanceller",
 ]

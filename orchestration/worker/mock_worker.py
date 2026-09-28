@@ -1,14 +1,6 @@
 """
-High-Fidelity Mock PersonaPlex Server for local testing, CI, and laptop development.
-
-Emulates:
-- The exact PersonaPlex / Moshi server WebSocket endpoint: `GET /api/chat`
-- Handshake protocol: sends `0x00` after prompt initialization
-- Full-duplex audio stream: 12.5 Hz (80ms per frame, 1,920 samples @ 24kHz)
-- Text token generation matching SentencePiece token stream
-- Single-concurrency mutual exclusion lock matching upstream `server.py`
-- Offline local text-to-speech synthesis (pyttsx3) for natural spoken audio
-- Dynamic persona-based conversational turn-taking and barge-in handling
+High-Fidelity Mock PersonaPlex Server with Adaptive Noise Cancellation,
+Intelligent Conversational Dialogue, and Full-Duplex Turn-Taking.
 """
 
 from __future__ import annotations
@@ -20,7 +12,7 @@ import os
 import tempfile
 import time
 import urllib.parse
-from typing import Optional, List
+from typing import Optional, List, Set
 
 import numpy as np
 import soundfile as sf
@@ -41,6 +33,7 @@ from ..protocol.audio import (
     SAMPLE_RATE,
     compute_rms,
     generate_silence_frame,
+    AdaptiveNoiseCanceller,
 )
 
 logger = logging.getLogger("orchestration.worker.mock")
@@ -51,7 +44,7 @@ _TTS_EXECUTOR = concurrent.futures.ThreadPoolExecutor(max_workers=2)
 
 def _synthesize_speech_offline(text: str, target_sr: int = 24000) -> Optional[np.ndarray]:
     """
-    Synthesize speech offline using native Windows/system TTS (pyttsx3)
+    Synthesize speech offline using native system TTS (pyttsx3)
     and resample to 24,000 Hz float32 mono PCM.
     """
     try:
@@ -63,8 +56,7 @@ def _synthesize_speech_offline(text: str, target_sr: int = 24000) -> Optional[np
     try:
         import pyttsx3
         engine = pyttsx3.init()
-        # Set speech rate and volume
-        engine.setProperty("rate", 175)
+        engine.setProperty("rate", 185)  # Crisper, conversational pace
         engine.setProperty("volume", 0.95)
 
         with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
@@ -73,7 +65,6 @@ def _synthesize_speech_offline(text: str, target_sr: int = 24000) -> Optional[np
         engine.save_to_file(text, tmp_path)
         engine.runAndWait()
 
-        # Read generated audio
         data, sr = sf.read(tmp_path, dtype="float32")
         try:
             os.remove(tmp_path)
@@ -83,7 +74,6 @@ def _synthesize_speech_offline(text: str, target_sr: int = 24000) -> Optional[np
         if data.ndim > 1:
             data = data.mean(axis=1)
 
-        # Resample to target_sr (24,000 Hz)
         if sr != target_sr and len(data) > 0:
             num_samples = int(len(data) * target_sr / sr)
             data = np.interp(
@@ -104,77 +94,123 @@ def _synthesize_speech_offline(text: str, target_sr: int = 24000) -> Optional[np
             pass
 
 
-def generate_persona_response(user_text: str, persona_prompt: str) -> str:
-    """Generate intelligent conversational responses in character for the active persona."""
-    u = user_text.lower().strip()
-    p = persona_prompt.lower()
+class DialogueSession:
+    """
+    Stateful conversational turn manager:
+    - Maintains turn memory and history.
+    - Prevents repetitive sentences.
+    - Delivers concise, efficient 1-2 sentence replies.
+    - Adapts dynamically to persona roles.
+    """
 
-    # 1. Mars Astronaut Alex
-    if "mars" in p or "reactor" in p or "astronaut" in p:
-        if any(w in u for w in ["coolant", "stabilize", "pump", "loop", "fix", "temperature"]):
-            return "Good thinking! I'm rerouting secondary coolant to loop B right now. Core temperature is dropping back under critical. We bought some time!"
-        elif any(w in u for w in ["status", "how", "report", "system", "damage"]):
-            return "Core temperature is holding at 820 Kelvin. We lost sensor manifold three, and emergency batteries are at fifty percent. We need to reset the magnetic containment."
-        elif any(w in u for w in ["hello", "hi", "hear", "alex", "mission"]):
-            return "Mission Control, thank goodness you can hear me! The reactor core on deck four has an active thermal runaway. Please advise immediately!"
+    def __init__(self, persona_prompt: str):
+        self.persona_prompt = persona_prompt.lower()
+        self.turn_count = 0
+        self.recent_responses: List[str] = []
+        self.topics_discussed: Set[str] = set()
+
+    def get_initial_greeting(self) -> str:
+        p = self.persona_prompt
+        if "mars" in p or "reactor" in p or "astronaut" in p:
+            msg = "Mission Control, this is Alex on Mars transit. The reactor core is fluctuating. Please advise on emergency procedures!"
+        elif "citysan" in p or "waste" in p:
+            msg = "CitySan Services, Ayelen Lucero speaking. How can I help with your collection schedule or bin services today?"
+        elif "shakshuka" in p or "restaurant" in p:
+            msg = "Welcome to Jerusalem Shakshuka, Owen Foster here. Can I prepare our Classic or Spicy shakshuka for you?"
+        elif "aerorentals" in p or "drone" in p:
+            msg = "AeroRentals Pro, Tomaz Novak. Are you interested in renting the PhoenixDrone X or SpectraDrone 9 today?"
         else:
-            return f"Understood regarding {user_text.rstrip('?.')}. The magnetic containment field is still fluctuating. What procedure should we initiate next?"
+            msg = "Hello! I am Sophia. What concept or question can I explain for you today?"
 
-    # 2. CitySan Services (Ayelen Lucero)
-    elif "citysan" in p or "waste" in p:
+        self.recent_responses.append(msg)
+        return msg
+
+    def reply(self, user_text: str) -> str:
+        self.turn_count += 1
+        u = user_text.lower().strip()
+        p = self.persona_prompt
+
+        # Determine topic and formulate fresh, efficient reply
+        if "mars" in p or "reactor" in p:
+            resp = self._reply_mars(u)
+        elif "citysan" in p:
+            resp = self._reply_citysan(u)
+        elif "shakshuka" in p:
+            resp = self._reply_shakshuka(u)
+        elif "aerorentals" in p or "drone" in p:
+            resp = self._reply_drone(u)
+        else:
+            resp = self._reply_teacher(u)
+
+        # De-duplication check: ensure we never repeat recent sentences
+        if resp in self.recent_responses[-3:]:
+            resp = f"Building on that, let's also examine the next critical step regarding {user_text.rstrip('?.')}."
+
+        self.recent_responses.append(resp)
+        if len(self.recent_responses) > 10:
+            self.recent_responses.pop(0)
+
+        return resp
+
+    def _reply_mars(self, u: str) -> str:
+        if any(w in u for w in ["coolant", "pump", "loop", "valve", "temperature", "stabilize"]):
+            if "coolant" not in self.topics_discussed:
+                self.topics_discussed.add("coolant")
+                return "Rerouting coolant to loop B now. Pressure is dropping below critical! We need to check magnetic containment next."
+            else:
+                return "Coolant flow is holding at eighty liters per second. Containment field is stabilized. What is the status of the thruster synchronization?"
+        elif any(w in u for w in ["status", "report", "how", "damage", "sensor"]):
+            return "Core temperature is holding at 760 Kelvin. Manifold three is offline, but auxiliary power is stable at sixty-five percent."
+        elif any(w in u for w in ["hello", "hi", "hear", "alex", "online"]):
+            return "Loud and clear, Mission Control! Reactor core temperature is rising, please talk me through emergency shutdown."
+        else:
+            return f"Understood regarding {u.rstrip('?.')}. I am implementing that procedure now. All systems are responsive."
+
+    def _reply_citysan(self, u: str) -> str:
         if any(w in u for w in ["schedule", "pickup", "when", "day", "collection"]):
-            return "Your regular pickup schedule is every other week. Your next collection is scheduled for Friday, April 12th."
-        elif any(w in u for w in ["compost", "bin", "green", "cost", "price", "add"]):
-            return "Yes! We provide green compost bins for an additional eight dollars per month. Would you like me to activate that on your account?"
+            return "Your regular pickup is every other week. Your next collection is scheduled for Friday, April 12th."
+        elif any(w in u for w in ["compost", "bin", "green", "cost", "price"]):
+            return "Yes, green compost bins are available for eight dollars a month. Would you like me to add one to your service?"
         elif any(w in u for w in ["name", "torres", "omar", "verify", "account"]):
-            return "I have verified your account under Omar Torres at CitySan Services. How else can I help with your service today?"
-        elif any(w in u for w in ["hello", "hi", "hey"]):
-            return "Hello! Thank you for calling CitySan Services. My name is Ayelen Lucero. How can I help you today?"
+            return "Account verified under Omar Torres. Your billing is up to date."
+        elif any(w in u for w in ["hello", "hi", "help"]):
+            return "Hello! I can check your pickup schedule, order compost bins, or update account details. Which would you prefer?"
         else:
-            return f"Regarding your question about {user_text.rstrip('?.')}, I can update your schedule or add bin services. Would you like me to do that?"
+            return f"I have noted your request about {u.rstrip('?.')}. Is there anything else I can update on your CitySan account?"
 
-    # 3. Jerusalem Shakshuka (Owen Foster)
-    elif "shakshuka" in p or "restaurant" in p:
+    def _reply_shakshuka(self, u: str) -> str:
         if any(w in u for w in ["menu", "what", "options", "price", "cost"]):
-            return "We serve our Classic Shakshuka with poached eggs for nine fifty, and Spicy with jalapenos for ten twenty-five. Sides include warm pita for two fifty and Israeli salad for three dollars."
-        elif any(w in u for w in ["order", "classic", "spicy", "buy", "want"]):
-            return "Great order! I will have that made fresh in the kitchen right now. Would you like warm pita or Israeli salad with that?"
-        elif any(w in u for w in ["hours", "open", "drive", "time", "close"]):
-            return "Our drive-through is open every day until nine PM. No combo offers, but everything is cooked fresh to order!"
-        elif any(w in u for w in ["hello", "hi", "hey"]):
-            return "Welcome to Jerusalem Shakshuka! I'm Owen Foster. Can I get a Classic or Spicy shakshuka started for you?"
+            return "Classic Shakshuka is nine fifty, and Spicy with jalapenos is ten twenty-five. Both come fresh with optional warm pita."
+        elif any(w in u for w in ["order", "classic", "spicy", "want", "have"]):
+            return "Order placed! The kitchen is preparing it fresh now. Would you like to add warm pita or Israeli salad with that?"
+        elif any(w in u for w in ["hours", "open", "time", "drive"]):
+            return "Our drive-through is open daily until nine PM. Everything is made fresh to order."
         else:
-            return f"Sounds good! We can definitely prepare {user_text.rstrip('?.')} for you fresh today. Anything else I can add?"
+            return f"Got it, {u.rstrip('?.')} added. Your total will be ready at the drive-through window in five minutes."
 
-    # 4. AeroRentals Pro (Tomaz Novak)
-    elif "aerorentals" in p or "drone" in p:
+    def _reply_drone(self, u: str) -> str:
         if any(w in u for w in ["price", "cost", "rate", "how much"]):
-            return "The PhoenixDrone X is sixty-five dollars for four hours or one ten for eight hours. The premium SpectraDrone 9 is ninety-five for four hours."
-        elif any(w in u for w in ["deposit", "require", "security"]):
-            return "We require a refundable deposit of one hundred fifty dollars for standard models, or three hundred dollars for premium drones."
-        elif any(w in u for w in ["hello", "hi"]):
-            return "Hello! AeroRentals Pro, Tomaz Novak speaking. Are you looking to rent the PhoenixDrone X or SpectraDrone 9 today?"
+            return "PhoenixDrone X is sixty-five dollars for four hours. The premium SpectraDrone 9 is ninety-five for four hours."
+        elif any(w in u for w in ["deposit", "security", "requirement"]):
+            return "We require a refundable deposit of one hundred fifty dollars for standard models, or three hundred for premium."
         else:
-            return f"The {user_text.rstrip('?.')} is available for rental today. We have fully charged battery packs ready to go."
+            return f"The {u.rstrip('?.')} is reserved and fully charged. When would you like to pick it up today?"
 
-    # 5. Sophia the Teacher (Assistant)
-    else:
-        if any(w in u for w in ["hello", "hi", "hey", "greetings"]):
-            return "Hello! I am Sophia, your teacher. What fascinating question or topic would you like to explore together today?"
+    def _reply_teacher(self, u: str) -> str:
+        if any(w in u for w in ["hello", "hi", "hey"]):
+            return "Hello! I am ready to explore any concept with you. What topic shall we dive into?"
         elif any(w in u for w in ["how are you", "doing"]):
-            return "I am doing wonderfully, thank you! I love discussing ideas and answering questions. What is on your mind?"
-        elif any(w in u for w in ["who are you", "what are you", "your name"]):
-            return "I am Sophia, a friendly teacher and voice assistant. I am here to explain concepts clearly and help you learn."
-        elif any(w in u for w in ["why", "how", "what", "explain", "tell me"]):
-            return f"That is an insightful question about {user_text.rstrip('?.')}! In simple terms, it works through clear principles. Let me explain the key parts."
+            return "I am doing wonderfully! Eager to explain ideas and solve problems together. What is on your mind?"
+        elif any(w in u for w in ["why", "how", "what", "explain", "tell"]):
+            return f"In concise terms, {u.rstrip('?.')} operates on key fundamental principles. Let's look at the primary cause first."
         else:
-            return f"I understand your thoughts on {user_text.rstrip('?.')}. Let's dive deeper into that. What aspect would you like to explore first?"
+            return f"That is a great perspective on {u.rstrip('?.')}. How would you like to take this investigation further?"
 
 
 class PersonaPlexMockServer:
     """
     Mock PersonaPlex server that mimics NVIDIA's server.py WebSocket behavior
-    with offline speech synthesis and dynamic persona replies.
+    with offline speech synthesis, adaptive noise cancellation, and intelligent turn-taking.
     """
 
     def __init__(
@@ -231,13 +267,11 @@ class PersonaPlexMockServer:
 
         async with self._lock:
             self.total_sessions_served += 1
-            # Parse query params
             parsed = urllib.parse.urlparse(path)
             query = urllib.parse.parse_qs(parsed.query)
             text_prompt = query.get("text_prompt", [""])[0]
-            voice_prompt = query.get("voice_prompt", ["NATF2.pt"])[0]
 
-            logger.info(f"Mock server accepted connection for prompt: {text_prompt[:50]}...")
+            logger.info(f"Mock server accepted session for prompt: {text_prompt[:50]}...")
 
             if self.prompt_init_delay > 0:
                 await asyncio.sleep(self.prompt_init_delay)
@@ -250,7 +284,9 @@ class PersonaPlexMockServer:
             last_speech_time = 0.0
             audio_phase = 0.0
 
-            # Outbound speech queue
+            dialogue = DialogueSession(text_prompt)
+            noise_canceller = AdaptiveNoiseCanceller()
+
             outbound_audio_frames: List[np.ndarray] = []
             outbound_tokens: List[str] = []
 
@@ -258,12 +294,10 @@ class PersonaPlexMockServer:
 
             async def queue_agent_utterance(reply_text: str):
                 nonlocal outbound_audio_frames, outbound_tokens
-                # Tokenize into words
                 words = reply_text.split(" ")
                 tokens = [" " + w if i > 0 else w for i, w in enumerate(words)]
                 outbound_tokens = tokens
 
-                # Synthesize audio in background thread
                 audio_samples = await loop.run_in_executor(
                     _TTS_EXECUTOR,
                     _synthesize_speech_offline,
@@ -277,20 +311,19 @@ class PersonaPlexMockServer:
                     frames = [padded[i * FRAME_SIZE : (i + 1) * FRAME_SIZE] for i in range(num_frames)]
                     outbound_audio_frames = frames
                 else:
-                    # Synthetic wave fallback
-                    t = np.linspace(0, len(tokens) * 0.25, len(tokens) * int(0.25 * SAMPLE_RATE))
-                    carrier = (0.2 * np.sin(2 * np.pi * 300 * t)).astype(np.float32)
+                    t = np.linspace(0, len(tokens) * 0.2, len(tokens) * int(0.2 * SAMPLE_RATE))
+                    carrier = (0.15 * np.sin(2 * np.pi * 300 * t)).astype(np.float32)
                     num_frames = int(math.ceil(len(carrier) / FRAME_SIZE))
                     padded = np.pad(carrier, (0, num_frames * FRAME_SIZE - len(carrier)))
                     outbound_audio_frames = [padded[i * FRAME_SIZE : (i + 1) * FRAME_SIZE] for i in range(num_frames)]
 
-            # Queue initial persona greeting in background
-            initial_greeting = generate_persona_response("hello", text_prompt)
+            # Queue initial concise greeting
+            initial_greeting = dialogue.get_initial_greeting()
             synth_task = asyncio.create_task(queue_agent_utterance(initial_greeting))
 
             async def receiver():
                 nonlocal user_speaking, last_speech_time, outbound_audio_frames, outbound_tokens
-                speech_detected_accum = 0
+                speech_frame_count = 0
 
                 try:
                     async for raw in websocket:
@@ -299,42 +332,49 @@ class PersonaPlexMockServer:
                         msg = decode_message(raw)
 
                         if msg.type == MessageType.TEXT:
-                            logger.info(f"Mock received user text: '{msg.text}'")
-                            # Barge-in: flush existing speech and formulate new answer
+                            logger.info(f"User utterance: '{msg.text}'")
+                            # Immediate barge-in cutoff
                             outbound_audio_frames.clear()
                             outbound_tokens.clear()
                             await websocket.send(encode_message(TextMessage(text=" ")))
 
-                            # Generate intelligent persona response
-                            reply = generate_persona_response(msg.text, text_prompt)
-                            logger.info(f"Mock generating persona reply: '{reply}'")
+                            # Formulate efficient persona reply
+                            reply = dialogue.reply(msg.text)
+                            logger.info(f"Agent reply: '{reply}'")
                             await queue_agent_utterance(reply)
 
                         elif msg.type == MessageType.AUDIO:
                             self.total_frames_received += 1
-                            audio_samples = (
+                            raw_samples = (
                                 np.frombuffer(msg.data, dtype=np.float32)
                                 if len(msg.data) >= FRAME_SIZE * 4
                                 else np.zeros(FRAME_SIZE, dtype=np.float32)
                             )
-                            rms = compute_rms(audio_samples)
+                            # Noise Cancellation Layer
+                            clean_samples = noise_canceller.clean_frame(raw_samples)
+                            rms = compute_rms(clean_samples)
 
+                            # Turn-taking VAD with 160ms onset debounce
                             if rms > 0.025:
-                                user_speaking = True
+                                speech_frame_count += 1
                                 last_speech_time = time.time()
-                                speech_detected_accum += 1
-                                # If agent was speaking, interrupt immediately (barge-in)
-                                if len(outbound_audio_frames) > 0:
-                                    outbound_audio_frames.clear()
-                                    outbound_tokens.clear()
-                            elif time.time() - last_speech_time > 0.5:
-                                if user_speaking and speech_detected_accum > 10:
-                                    # User finished speaking without text recognition, generate follow-up
+                                if speech_frame_count >= 2:
+                                    if not user_speaking:
+                                        user_speaking = True
+                                        # Instant barge-in: cut off agent speaking immediately
+                                        if len(outbound_audio_frames) > 0:
+                                            outbound_audio_frames.clear()
+                                            outbound_tokens.clear()
+                            elif time.time() - last_speech_time > 0.6:
+                                # 600ms conversational hangtime
+                                if user_speaking and speech_frame_count > 10:
+                                    # User spoke and paused without text recognition
                                     user_speaking = False
-                                    speech_detected_accum = 0
-                                    reply = generate_persona_response("I hear you speaking", text_prompt)
+                                    speech_frame_count = 0
+                                    reply = dialogue.reply("I hear you speaking")
                                     await queue_agent_utterance(reply)
                                 user_speaking = False
+                                speech_frame_count = 0
 
                 except websockets.ConnectionClosed:
                     pass
@@ -351,9 +391,9 @@ class PersonaPlexMockServer:
                     step += 1
 
                     if user_speaking:
-                        # User speaking: backchannel or listen silently
+                        # User is speaking: listen silently
                         out_frame = generate_silence_frame()
-                        if step % 25 == 0:
+                        if step % 30 == 0:
                             await websocket.send(encode_message(TextMessage(text=" [backchannel: mm-hmm]")))
                     elif len(outbound_audio_frames) > 0:
                         out_frame = outbound_audio_frames.pop(0)

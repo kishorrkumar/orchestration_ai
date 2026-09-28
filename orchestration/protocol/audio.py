@@ -52,6 +52,90 @@ def generate_silence_frame(dtype=np.float32) -> np.ndarray:
     return np.zeros(FRAME_SIZE, dtype=dtype)
 
 
+def high_pass_filter(samples: np.ndarray, cutoff_hz: float = 80.0, fs: int = SAMPLE_RATE) -> np.ndarray:
+    """
+    1st-order IIR High-Pass Filter to remove DC offset, desk rumble,
+    and 50/60 Hz electrical hum.
+    """
+    if len(samples) < 2:
+        return samples
+    rc = 1.0 / (2.0 * math.pi * cutoff_hz)
+    dt = 1.0 / fs
+    alpha = rc / (rc + dt)
+    out = np.empty_like(samples)
+    out[0] = samples[0]
+    for i in range(1, len(samples)):
+        out[i] = alpha * (out[i - 1] + samples[i] - samples[i - 1])
+    return out
+
+
+class AdaptiveNoiseCanceller:
+    """
+    Adaptive Noise Cancellation and Suppression Layer for 24 kHz speech.
+    Combines:
+    1. Low-frequency rumble / hum attenuation (High-Pass Filter).
+    2. Adaptive background noise spectrum estimation.
+    3. Spectral subtraction with over-subtraction factor and spectral floor.
+    4. Soft-knee dynamic noise gating during pauses.
+    """
+
+    def __init__(
+        self,
+        frame_size: int = FRAME_SIZE,
+        sample_rate: int = SAMPLE_RATE,
+        alpha: float = 2.0,       # Over-subtraction factor
+        beta: float = 0.03,       # Spectral floor fraction
+        gate_threshold_rms: float = 0.012, # Ambient noise floor threshold
+    ):
+        self.frame_size = frame_size
+        self.sample_rate = sample_rate
+        self.alpha = alpha
+        self.beta = beta
+        self.gate_threshold = gate_threshold_rms
+        self.noise_spectrum: np.ndarray | None = None
+        self.adaptation_rate: float = 0.08
+
+    def clean_frame(self, frame: np.ndarray) -> np.ndarray:
+        """Process and de-noise an incoming 1920-sample audio frame."""
+        if len(frame) == 0:
+            return frame
+
+        # Ensure float32
+        if frame.dtype != np.float32:
+            frame = frame.astype(np.float32)
+
+        # 1. High-Pass Filter (remove low-frequency hum < 80 Hz)
+        hp = high_pass_filter(frame, cutoff_hz=80.0, fs=self.sample_rate)
+
+        # 2. Check energy
+        rms = compute_rms(hp)
+
+        # 3. Spectral Subtraction
+        fft = np.fft.rfft(hp)
+        mag = np.abs(fft)
+        phase = np.angle(fft)
+
+        if self.noise_spectrum is None:
+            self.noise_spectrum = mag.copy()
+        elif rms < self.gate_threshold:
+            # During quiet moments, adapt noise profile to ambient room sound
+            self.noise_spectrum = (1.0 - self.adaptation_rate) * self.noise_spectrum + self.adaptation_rate * mag
+
+        # Subtract estimated background noise
+        subtracted = mag - self.alpha * self.noise_spectrum
+        cleaned_mag = np.maximum(subtracted, self.beta * mag)
+
+        # 4. Noise gate attenuation for low-energy frames
+        if rms < self.gate_threshold * 0.7:
+            cleaned_mag *= 0.15  # -16 dB attenuation on quiet background hiss
+
+        # Reconstruct time-domain signal
+        cleaned_fft = cleaned_mag * np.exp(1j * phase)
+        cleaned = np.fft.irfft(cleaned_fft, n=len(frame)).astype(np.float32)
+
+        return cleaned
+
+
 class AudioFrameBuffer:
     """
     Accumulator buffer for continuous streaming audio.

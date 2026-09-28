@@ -38,6 +38,7 @@ from ..protocol.audio import (
     SAMPLE_RATE,
     AudioFrameBuffer,
     compute_rms,
+    AdaptiveNoiseCanceller,
 )
 from ..worker.client import PersonaPlexWorkerClient
 from ..worker.pool import WorkerPool
@@ -122,11 +123,13 @@ class VoiceSession:
 
         self.metrics = SessionMetrics(session_id, persona.id, worker.worker_id)
         self.inbound_buffer = AudioFrameBuffer(dtype=np.float32)
+        self.noise_canceller = AdaptiveNoiseCanceller()
 
         self._state = SessionState.INITIALIZING
         self._stop_event = asyncio.Event()
         self._user_speaking = False
         self._last_user_speech_time = 0.0
+        self._speech_frames_count = 0
 
     @property
     def state(self) -> SessionState:
@@ -151,9 +154,9 @@ class VoiceSession:
     async def ingest_client_message(self, raw_bytes: bytes) -> Optional[WSMessage]:
         """
         Process an incoming raw binary message from client:
-        - If audio (0x01): buffer, slice into 1920-sample frames, check barge-in, push to worker.
+        - If audio (0x01): de-noise, buffer, slice into 1920-sample frames, check barge-in, push to worker.
+        - If text (0x02): forward to worker.
         - If control (0x03): forward to worker.
-        - If ping (0x06): return ping ack.
         """
         if self._state not in (SessionState.ACTIVE, SessionState.INTERRUPTED):
             return None
@@ -166,18 +169,21 @@ class VoiceSession:
 
             # Pop all available 1920-sample frames and feed to worker
             frames = self.inbound_buffer.pop_all_available_frames()
-            for frame in frames:
+            for raw_frame in frames:
                 self.metrics.user_frames_in += 1
+                # 1. Noise Cancellation Layer
+                frame = self.noise_canceller.clean_frame(raw_frame)
                 rms = compute_rms(frame)
 
-                # Barge-in / interruption detection
+                # 2. Voice Activity & Barge-in detection
                 if rms > self.barge_in_rms_threshold:
                     if not self._user_speaking:
                         self._user_speaking = True
                         self.metrics.barge_in_events += 1
                         self.set_state(SessionState.INTERRUPTED)
                     self._last_user_speech_time = time.time()
-                elif self._user_speaking and (time.time() - self._last_user_speech_time > 0.4):
+                elif self._user_speaking and (time.time() - self._last_user_speech_time > 0.6):
+                    # 600ms conversational hangtime before taking the floor
                     self._user_speaking = False
                     self.set_state(SessionState.ACTIVE)
 
