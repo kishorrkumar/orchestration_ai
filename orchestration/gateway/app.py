@@ -513,12 +513,23 @@ _CONSOLE_HTML = """<!DOCTYPE html>
 
   <script>
     let ws = null;
-    let audioContext = null;
+    let audioCtx = null;
+    let micStream = null;
+    let micSource = null;
+    let micProcessor = null;
+    let silentGain = null;
+    let nextPlayTime = 0;
+    let isConnected = false;
+
+    // Mic accumulator
+    let micBuffer = [];
+    const TARGET_SAMPLE_RATE = 24000;
+    const FRAME_SIZE = 1920;
+
     let framesIn = 0;
     let framesOut = 0;
     let tokensCount = 0;
     let bargeIns = 0;
-    let isConnected = false;
 
     async function loadAgents() {
       try {
@@ -581,24 +592,62 @@ _CONSOLE_HTML = """<!DOCTYPE html>
     loadAgents();
     updateClusterStats();
 
-    function toggleSession() {
+    async function toggleSession() {
       if (isConnected) {
         disconnectSession();
       } else {
-        startSession();
+        await startSession();
       }
     }
 
-    function startSession() {
+    async function startSession() {
       const personaId = document.getElementById('persona-select').value;
       const voice = document.getElementById('voice-input').value;
       const prompt = document.getElementById('prompt-input').value;
 
+      document.getElementById('session-badge').innerText = 'REQUESTING MIC...';
+
+      // 1. Initialize Web Audio Context
+      try {
+        const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+        audioCtx = new AudioContextClass({ sampleRate: TARGET_SAMPLE_RATE });
+        if (audioCtx.state === 'suspended') {
+          await audioCtx.resume();
+        }
+      } catch (e) {
+        console.warn('AudioContext sampleRate option not supported, using default rate', e);
+        audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      }
+
+      nextPlayTime = audioCtx.currentTime;
+
+      // 2. Request Microphone Access
+      try {
+        micStream = await navigator.mediaDevices.getUserMedia({
+          audio: {
+            channelCount: 1,
+            echoCancellation: true,
+            noiseSuppression: true,
+            autoGainControl: true,
+          }
+        });
+      } catch (err) {
+        alert('Microphone access denied or not available: ' + err.message);
+        disconnectSession();
+        return;
+      }
+
+      // 3. Connect WebSocket
       const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
       const url = `${proto}//${window.location.host}/v1/realtime?persona_id=${encodeURIComponent(personaId)}&voice_prompt=${encodeURIComponent(voice)}&text_prompt=${encodeURIComponent(prompt)}`;
 
-      document.getElementById('session-badge').innerText = 'CONNECTING...';
+      document.getElementById('session-badge').innerText = 'CONNECTING GATEWAY...';
       document.getElementById('transcript-content').innerText = '';
+      framesIn = 0;
+      framesOut = 0;
+      tokensCount = 0;
+      bargeIns = 0;
+      micBuffer = [];
 
       ws = new WebSocket(url);
       ws.binaryType = 'arraybuffer';
@@ -610,6 +659,9 @@ _CONSOLE_HTML = """<!DOCTYPE html>
         document.getElementById('session-badge').style.color = '#76b900';
         document.getElementById('btn-session').innerText = 'End Session';
         document.getElementById('btn-session').className = 'btn-danger';
+
+        // Start streaming microphone audio
+        startMicPipeline();
       };
 
       ws.onmessage = (event) => {
@@ -619,21 +671,31 @@ _CONSOLE_HTML = """<!DOCTYPE html>
         const payload = data.slice(1);
 
         if (kind === 0x00) {
-          // Handshake ack
+          // Handshake acknowledged
+          console.log('[PersonaPlex] Handshake 0x00 received from gateway');
         } else if (kind === 0x01) {
-          // Agent audio chunk
+          // Agent Audio Frame (PCM Float32, 1920 samples @ 24kHz)
           framesOut++;
           document.getElementById('metric-frames-out').innerText = framesOut;
-          // Pulse audio bar
+
+          // Convert bytes to Float32Array
+          const floatSamples = new Float32Array(payload.buffer, payload.byteOffset, payload.byteLength / 4);
+
+          // Play through speakers using Web Audio API
+          playAudioChunk(floatSamples);
+
+          // Update energy visualizer
           document.getElementById('audio-energy-bar').style.width = `${Math.min(100, (framesOut % 10) * 10 + 20)}%`;
         } else if (kind === 0x02) {
-          // Text token
+          // Streaming Text Token
           tokensCount++;
           document.getElementById('metric-tokens').innerText = tokensCount;
           const text = new TextDecoder().decode(payload);
           document.getElementById('transcript-content').innerText += text;
+          const box = document.getElementById('transcript-content');
+          box.scrollTop = box.scrollHeight;
         } else if (kind === 0x04) {
-          // Metadata
+          // Metadata (Session started, barge_in event, etc.)
           const meta = JSON.parse(new TextDecoder().decode(payload));
           if (meta.event === 'barge_in') {
             bargeIns++;
@@ -648,6 +710,91 @@ _CONSOLE_HTML = """<!DOCTYPE html>
       ws.onclose = () => {
         disconnectSession();
       };
+      ws.onerror = (e) => {
+        console.error('WebSocket error:', e);
+      };
+    }
+
+    function startMicPipeline() {
+      if (!micStream || !audioCtx) return;
+
+      micSource = audioCtx.createMediaStreamSource(micStream);
+      // Use 2048 buffer size for capture
+      micProcessor = audioCtx.createScriptProcessor(2048, 1, 1);
+
+      // Prevent feedback loop by sending through muted gain
+      silentGain = audioCtx.createGain();
+      silentGain.gain.value = 0.0;
+
+      const inputSampleRate = audioCtx.sampleRate;
+
+      micProcessor.onaudioprocess = (e) => {
+        if (!isConnected || !ws || ws.readyState !== WebSocket.OPEN) return;
+
+        const inputChannel = e.inputBuffer.getChannelData(0);
+
+        // Resample from inputSampleRate to TARGET_SAMPLE_RATE (24000) if different
+        let resampled;
+        if (inputSampleRate === TARGET_SAMPLE_RATE) {
+          resampled = inputChannel;
+        } else {
+          const ratio = TARGET_SAMPLE_RATE / inputSampleRate;
+          const newLength = Math.round(inputChannel.length * ratio);
+          resampled = new Float32Array(newLength);
+          for (let i = 0; i < newLength; i++) {
+            const srcIdx = i / ratio;
+            const idx0 = Math.floor(srcIdx);
+            const idx1 = Math.min(idx0 + 1, inputChannel.length - 1);
+            const frac = srcIdx - idx0;
+            resampled[i] = inputChannel[idx0] * (1 - frac) + inputChannel[idx1] * frac;
+          }
+        }
+
+        // Push into accumulator
+        for (let i = 0; i < resampled.length; i++) {
+          micBuffer.push(resampled[i]);
+        }
+
+        // Slice into exact 1920-sample frames (80ms at 24kHz)
+        while (micBuffer.length >= FRAME_SIZE) {
+          const frame = new Float32Array(micBuffer.slice(0, FRAME_SIZE));
+          micBuffer = micBuffer.slice(FRAME_SIZE);
+
+          // Package as 0x01 AudioMessage
+          const byteBuffer = new Uint8Array(1 + frame.byteLength);
+          byteBuffer[0] = 0x01; // Audio kind
+          byteBuffer.set(new Uint8Array(frame.buffer), 1);
+
+          ws.send(byteBuffer);
+          framesIn++;
+          document.getElementById('metric-frames-in').innerText = framesIn;
+        }
+      };
+
+      micSource.connect(micProcessor);
+      micProcessor.connect(silentGain);
+      silentGain.connect(audioCtx.destination);
+    }
+
+    function playAudioChunk(floatSamples) {
+      if (!audioCtx) return;
+
+      // Create an AudioBuffer at 24000 Hz (Web Audio resamples to device output automatically)
+      const buffer = audioCtx.createBuffer(1, floatSamples.length, TARGET_SAMPLE_RATE);
+      buffer.copyToChannel(floatSamples, 0);
+
+      const source = audioCtx.createBufferSource();
+      source.buffer = buffer;
+      source.connect(audioCtx.destination);
+
+      // Smooth schedule to avoid audio gaps/clicks
+      const now = audioCtx.currentTime;
+      if (nextPlayTime < now) {
+        nextPlayTime = now + 0.02; // Small 20ms jitter cushion
+      }
+
+      source.start(nextPlayTime);
+      nextPlayTime += buffer.duration;
     }
 
     function disconnectSession() {
@@ -655,6 +802,23 @@ _CONSOLE_HTML = """<!DOCTYPE html>
         ws.close();
         ws = null;
       }
+      if (micStream) {
+        micStream.getTracks().forEach(t => t.stop());
+        micStream = null;
+      }
+      if (micProcessor) {
+        try { micProcessor.disconnect(); } catch (e) {}
+        micProcessor = null;
+      }
+      if (micSource) {
+        try { micSource.disconnect(); } catch (e) {}
+        micSource = null;
+      }
+      if (silentGain) {
+        try { silentGain.disconnect(); } catch (e) {}
+        silentGain = null;
+      }
+
       isConnected = false;
       document.getElementById('session-badge').innerText = 'DISCONNECTED';
       document.getElementById('session-badge').style.background = 'rgba(255,255,255,0.06)';
