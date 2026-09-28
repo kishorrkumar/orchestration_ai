@@ -154,10 +154,11 @@ STUDIO_HTML = r"""<!DOCTYPE html>
     .studio-container {
       flex: 1;
       display: grid;
-      grid-template-columns: 320px 1fr 340px;
-      gap: 16px;
-      padding: 16px 20px 20px 20px;
+      grid-template-columns: 280px minmax(320px, 1fr) 280px;
+      gap: 14px;
+      padding: 14px 18px 18px 18px;
       overflow: hidden;
+      min-width: 0;
     }
 
     /* Glass Panels */
@@ -167,13 +168,14 @@ STUDIO_HTML = r"""<!DOCTYPE html>
       -webkit-backdrop-filter: var(--blur-glass);
       border: 0.5px solid var(--border-subtle);
       border-radius: var(--radius-lg);
-      padding: 18px;
+      padding: 16px;
       display: flex;
       flex-direction: column;
-      gap: 14px;
+      gap: 12px;
       box-shadow: var(--shadow-subtle);
       overflow: hidden;
       position: relative;
+      min-width: 0;
     }
 
     .panel-header {
@@ -392,7 +394,8 @@ STUDIO_HTML = r"""<!DOCTYPE html>
     .message-row {
       display: flex;
       flex-direction: column;
-      max-width: 80%;
+      max-width: 90%;
+      min-width: 0;
       animation: messageSlideIn 0.25s cubic-bezier(0.16, 1, 0.3, 1);
     }
     .message-row.agent { align-self: flex-start; }
@@ -407,11 +410,13 @@ STUDIO_HTML = r"""<!DOCTYPE html>
     }
 
     .bubble {
-      padding: 10px 15px;
-      font-size: 13.5px;
+      padding: 10px 14px;
+      font-size: 13px;
       line-height: 1.45;
       border-radius: 18px;
-      word-break: break-word;
+      word-break: normal;
+      overflow-wrap: break-word;
+      min-width: 0;
     }
 
     .message-row.agent .bubble {
@@ -1179,7 +1184,6 @@ STUDIO_HTML = r"""<!DOCTYPE html>
       constructor() {
         this.audio = new AudioPipeline();
         this.socket = new VoiceSocket();
-        this.rag = new RAGManager();
         this.orb = null;
 
         this.activeAccent = 'indian';
