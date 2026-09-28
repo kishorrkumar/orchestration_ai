@@ -106,3 +106,21 @@ def test_dialogue_engine_all_accent_character_combinations():
             assert "[backchannel" not in greeting
             assert "operates on key fundamental principles" not in greeting
             assert greeting.count("?") <= 1
+
+
+def test_dialogue_conversation_turns_no_mechanical_regarding():
+    """Verify that turns like 'can you hear me', 'how are you', and 'looking for...' produce clean, natural responses."""
+    engine = StrictVoiceDialogueEngine(accent="indian", character="professional")
+    
+    r1 = engine.reply("Hi, can you hear me")
+    assert "Yes, I hear you" in r1
+    assert "Regarding" not in r1
+    
+    r2 = engine.reply("How are you doing today?")
+    assert "operating optimally" in r2 or "ready to assist" in r2
+    assert "Regarding" not in r2
+    
+    r3 = engine.reply("So I am looking for a man who is friendly and talks about these things like.")
+    assert "Regarding" not in r3
+    assert "I hear you speaking" not in r3
+    assert len(r3.split(".")) <= 3

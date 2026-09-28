@@ -172,6 +172,9 @@ class StrictVoiceDialogueEngine:
             return f"{ack} Helping you with {goal} sounds like a solid plan. Where would you like to start?"
 
         # 5. Direct Question Handling: Caller asked a question
+        if any(w in u for w in ["can you hear", "can u hear", "hear me", "you hear me", "are you there"]):
+            return "Yes, I hear you loud and clear! How can I help you today?"
+
         if u.endswith("?") or any(u.startswith(w) for w in ["what", "how", "why", "when", "where", "can you", "could you", "is it", "are you"]):
             return self._answer_direct_question(raw, u)
 
@@ -188,18 +191,28 @@ class StrictVoiceDialogueEngine:
         if len(u.split()) <= 2 and u not in ["hello", "hi", "hey"]:
             return f"I want to make sure I understand you correctly. Could you say a bit more about '{raw}'?"
 
-        # 8. Handling General Conversation & Explanations
-        # Address what the caller just said with human warmth and next constructive step
-        cleaned_topic = self._clean_utterance_for_context(raw)
+        # 8. Handling Intent & General Conversation
+        if any(w in u for w in ["looking for", "want to talk", "interested in", "someone who"]):
+            if "funny" in self.character:
+                return "Well, you found the right agent! I'm all ears and ready to chat. What shall we talk about first?"
+            elif "warm" in self.character:
+                return "I'm right here and happy to chat with you! What kind of topics do you enjoy talking about?"
+            else:
+                return "I am glad to assist. Please let me know what topics you would like to discuss."
+
+        # Human conversational responses without mechanical quoted repetitions
+        prefix = f"{ack} " if ack else ""
         if "funny" in self.character:
-            return f"{ack} '{cleaned_topic}' makes good sense. What's the main outcome you want to see here?"
+            return f"{prefix}That makes good sense to me. What outcome are you hoping for?"
         elif "warm" in self.character:
-            return f"{ack} I hear you on '{cleaned_topic}'. What's the next best move for us?"
+            return f"{prefix}I hear you. What would be the best next step for us?"
         else: # Professional
-            return f"{ack} Regarding '{cleaned_topic}', I understand your objective. How would you like to proceed?"
+            return f"{prefix}I understand. How would you like to proceed from here?"
 
     def _answer_direct_question(self, raw: str, u: str) -> str:
         """Answers caller questions directly, concisely, and factually without inventing facts."""
+        if any(w in u for w in ["can you hear", "can u hear", "hear me"]):
+            return "Yes, I hear you loud and clear! How can I help you today?"
         if "weather" in u:
             return "I don't have a live weather feed connected right now, but I hope the skies are clear where you are! What else can I help with?"
         if "time" in u:
@@ -207,14 +220,13 @@ class StrictVoiceDialogueEngine:
         if any(w in u for w in ["pricing", "cost", "price", "rate"]):
             return "This open-source voice layer runs completely free and locally on your own machine. Is there a specific configuration you'd like to test?"
 
-        # Standard factual and concise direct reply
-        clean_q = raw.rstrip("?")
+        # Direct, concise conversational question reply
         if "indian" in self.accent:
-            return f"That is a relevant question regarding '{clean_q}'. Could you clarify your exact use case so I give you the most accurate answer?"
+            return "That's a good question. Could you clarify your exact use case so I can give you the most accurate answer?"
         elif "british" in self.accent:
-            return f"An excellent point regarding '{clean_q}'. To be precise, what specific outcome are you aiming for?"
+            return "An excellent question. To be precise, what specific outcome are you aiming for?"
         else:
-            return f"Good question regarding '{clean_q}'. What specific detail would be most helpful to explore?"
+            return "Good question. What specific detail would be most helpful to explore?"
 
     def _get_selective_acknowledgement(self) -> str:
         """Natural Acknowledgement (Principle 6) - only when appropriate, never robotic."""

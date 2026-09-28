@@ -355,13 +355,7 @@ class PersonaPlexMockServer:
                                             outbound_audio_frames.clear()
                                             outbound_tokens.clear()
                             elif time.time() - last_speech_time > 0.5:
-                                # 500ms conversational hangtime
-                                if user_speaking and speech_frame_count >= 3:
-                                    # User spoke audio frames and paused
-                                    user_speaking = False
-                                    speech_frame_count = 0
-                                    reply = dialogue.reply("I hear you speaking")
-                                    await queue_agent_utterance(reply)
+                                # 500ms conversational hangtime - end turn cleanly
                                 user_speaking = False
                                 speech_frame_count = 0
 

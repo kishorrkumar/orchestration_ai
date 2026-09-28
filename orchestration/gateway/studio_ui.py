@@ -1194,6 +1194,7 @@ STUDIO_HTML = r"""<!DOCTYPE html>
         this.isConnected = false;
         this.agentSpeaking = false;
         this.currentVoiceFilter = 'All';
+        this.currentAgentBubble = null;
 
         this.framesIn = 0;
         this.framesOut = 0;
@@ -1221,6 +1222,7 @@ STUDIO_HTML = r"""<!DOCTYPE html>
       initSocketEvents() {
         this.socket.onOpen = () => {
           this.isConnected = true;
+          this.currentAgentBubble = null;
           this.updateStatus('Active • Full-Duplex', 'connected');
           const callBtn = document.getElementById('btn-call-action');
           callBtn.classList.add('end');
@@ -1246,6 +1248,7 @@ STUDIO_HTML = r"""<!DOCTYPE html>
         this.socket.onMetadata = (meta) => {
           if (meta.event === 'barge_in') {
             this.bargeIns++;
+            this.currentAgentBubble = null;
             document.getElementById('telemetry-barge-in').innerText = this.bargeIns;
             this.audio.stopPlayback();
             this.agentSpeaking = false;
@@ -1467,7 +1470,8 @@ STUDIO_HTML = r"""<!DOCTYPE html>
         }
 
         if (isFinal) {
-          // Immediate barge-in cutoff
+          // Immediate barge-in cutoff & start fresh turn
+          this.currentAgentBubble = null;
           this.audio.stopPlayback();
           this.agentSpeaking = false;
           this.orb.setAgentSpeaking(false);
@@ -1495,6 +1499,7 @@ STUDIO_HTML = r"""<!DOCTYPE html>
         bubble.innerText = text;
         if (isFinal) {
           liveRow.removeAttribute('id'); // Finalize bubble
+          this.currentAgentBubble = null;
         }
         transcript.scrollTop = transcript.scrollHeight;
       }
@@ -1546,6 +1551,7 @@ STUDIO_HTML = r"""<!DOCTYPE html>
         if (!text) return;
         input.value = '';
 
+        this.currentAgentBubble = null;
         this.appendMessage('user', text);
         this.audio.stopPlayback();
         this.orb.setAgentSpeaking(false);
@@ -1563,27 +1569,32 @@ STUDIO_HTML = r"""<!DOCTYPE html>
         `;
         transcript.appendChild(row);
         transcript.scrollTop = transcript.scrollHeight;
+        if (author === 'user') {
+          this.currentAgentBubble = null;
+        }
       }
 
       appendTranscriptToken(author, token) {
         const transcript = document.getElementById('chat-transcript');
-        let lastRow = transcript.lastElementChild;
-        if (!lastRow || !lastRow.classList.contains(author) || lastRow.id === 'live-user-bubble') {
-          lastRow = document.createElement('div');
-          lastRow.className = `message-row ${author}`;
-          const authorName = author === 'user' ? 'You' : (this.activeAgentName || 'Agent');
-          lastRow.innerHTML = `
-            <span class="message-author">${authorName}</span>
-            <div class="bubble"></div>
-          `;
-          transcript.appendChild(lastRow);
+        if (author === 'agent') {
+          if (!this.currentAgentBubble) {
+            const row = document.createElement('div');
+            row.className = 'message-row agent';
+            const authorName = this.activeAgentName || 'Agent';
+            row.innerHTML = `
+              <span class="message-author">${authorName}</span>
+              <div class="bubble"></div>
+            `;
+            transcript.appendChild(row);
+            this.currentAgentBubble = row.querySelector('.bubble');
+          }
+          this.currentAgentBubble.innerText += token;
+          transcript.scrollTop = transcript.scrollHeight;
         }
-        const bubble = lastRow.querySelector('.bubble');
-        bubble.innerText += token;
-        transcript.scrollTop = transcript.scrollHeight;
       }
 
       disconnect() {
+        this.currentAgentBubble = null;
         this.socket.disconnect();
         this.audio.stop();
         this.recognizer.stop();
