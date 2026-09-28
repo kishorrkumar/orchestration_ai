@@ -1041,6 +1041,21 @@ STUDIO_HTML = r"""<!DOCTYPE html>
 
       playChunk(floatSamples) {
         if (!this.audioCtx) return;
+
+        // Skip pure silence frames so nextPlayTime doesn't wander into future
+        let sumSq = 0;
+        for (let i = 0; i < floatSamples.length; i++) {
+          sumSq += floatSamples[i] * floatSamples[i];
+        }
+        const rms = Math.sqrt(sumSq / floatSamples.length);
+        if (rms < 0.0008) return;
+
+        const now = this.audioCtx.currentTime;
+        if (this.nextPlayTime < now || this.nextPlayTime > now + 0.35) {
+          // Snap directly to current time with 15ms buffer for immediate speech
+          this.nextPlayTime = now + 0.015;
+        }
+
         const buffer = this.audioCtx.createBuffer(1, floatSamples.length, this.sampleRate);
         buffer.copyToChannel(floatSamples, 0);
 
@@ -1048,18 +1063,13 @@ STUDIO_HTML = r"""<!DOCTYPE html>
         source.buffer = buffer;
         source.connect(this.audioCtx.destination);
 
-        const now = this.audioCtx.currentTime;
-        if (this.nextPlayTime < now) {
-          this.nextPlayTime = now + 0.02;
-        }
-
         source.start(this.nextPlayTime);
         this.nextPlayTime += buffer.duration;
       }
 
       stopPlayback() {
         if (this.audioCtx) {
-          this.nextPlayTime = this.audioCtx.currentTime;
+          this.nextPlayTime = 0;
         }
       }
 

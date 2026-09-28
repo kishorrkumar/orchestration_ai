@@ -37,6 +37,7 @@ from ..protocol.audio import (
 )
 
 from ..persona.dialogue import StrictVoiceDialogueEngine, GroundedDialogueEngine
+from ..chunker.bridge import ClauseChunker
 
 logger = logging.getLogger("orchestration.worker.mock")
 
@@ -67,15 +68,15 @@ async def _synthesize_speech_neural(
             else:
                 voice = "en-IN-PrabhatNeural"
 
-        rate = "+0%"
+        rate = "+18%"
         pitch = "+0Hz"
         if character:
             c = character.lower()
             if "funny" in c:
-                rate = "+6%"
-                pitch = "+3Hz"
+                rate = "+22%"
+                pitch = "+2Hz"
             elif "professional" in c:
-                rate = "+0%"
+                rate = "+18%"
                 pitch = "+0Hz"
 
         comm = edge_tts.Communicate(text, voice, rate=rate, pitch=pitch)
@@ -122,16 +123,16 @@ def _synthesize_speech_offline(
         import pyttsx3
         engine = pyttsx3.init()
 
-        # Dynamic rate tuning based on character
-        rate = 182
+        # Dynamic rate tuning based on character (natural, fast, clear pacing)
+        rate = 210
         if character:
             c = character.lower()
             if "funny" in c:
-                rate = 195  # Energetic, snappy
+                rate = 225  # Energetic, snappy
             elif "professional" in c:
-                rate = 175  # Polished, measured
+                rate = 210  # Polished, crisp
             elif "warm" in c:
-                rate = 182  # Grounded, warm
+                rate = 205  # Grounded, natural
         engine.setProperty("rate", rate)
         engine.setProperty("volume", 0.95)
 
@@ -346,35 +347,47 @@ class PersonaPlexMockServer:
                 tokens = [(" " if i > 0 else "") + w for i, w in enumerate(words)]
                 outbound_tokens = tokens
 
-                # 1. Attempt open-source neural TTS (edge_tts)
-                audio_samples = await _synthesize_speech_neural(
-                    reply_text,
-                    target_sr=SAMPLE_RATE,
-                    voice_preset=voice_prompt,
-                    accent=accent,
-                    character=character,
-                    neural_voice=neural_voice,
-                )
+                # Streaming Clause Chunker: segment into immediate speakable chunks
+                chunker = ClauseChunker(first_chunk_min_words=3, first_chunk_max_words=5, later_chunk_min_words=6, later_chunk_max_words=12)
+                chunks: List[str] = []
+                for w in words:
+                    ready = chunker.feed_token(w + " ")
+                    chunks.extend(ready)
+                chunks.extend(chunker.flush())
 
-                # 2. Fallback to offline native SAPI5 if offline or unavailable
-                if audio_samples is None:
-                    audio_samples = await loop.run_in_executor(
-                        _TTS_EXECUTOR,
-                        _synthesize_speech_offline,
-                        reply_text,
-                        SAMPLE_RATE,
-                        voice_prompt,
-                        accent,
-                        character,
+                if not chunks:
+                    chunks = [reply_text]
+
+                for chunk_text in chunks:
+                    if stop_event.is_set() or user_speaking:
+                        break
+
+                    audio_samples = await _synthesize_speech_neural(
+                        chunk_text,
+                        target_sr=SAMPLE_RATE,
+                        voice_preset=voice_prompt,
+                        accent=accent,
+                        character=character,
+                        neural_voice=neural_voice,
                     )
 
-                if audio_samples is not None and len(audio_samples) > 0:
-                    num_frames = int(math.ceil(len(audio_samples) / FRAME_SIZE))
-                    padded = np.pad(audio_samples, (0, num_frames * FRAME_SIZE - len(audio_samples)))
-                    frames = [padded[i * FRAME_SIZE : (i + 1) * FRAME_SIZE] for i in range(num_frames)]
-                    outbound_audio_frames = frames
-                else:
-                    outbound_audio_frames = [generate_silence_frame() for _ in range(max(1, len(tokens)))]
+                    if audio_samples is None:
+                        audio_samples = await loop.run_in_executor(
+                            _TTS_EXECUTOR,
+                            _synthesize_speech_offline,
+                            chunk_text,
+                            SAMPLE_RATE,
+                            voice_prompt,
+                            accent,
+                            character,
+                        )
+
+                    if audio_samples is not None and len(audio_samples) > 0:
+                        num_frames = int(math.ceil(len(audio_samples) / FRAME_SIZE))
+                        padded = np.pad(audio_samples, (0, num_frames * FRAME_SIZE - len(audio_samples)))
+                        frames = [padded[i * FRAME_SIZE : (i + 1) * FRAME_SIZE] for i in range(num_frames)]
+                        # Add chunk frames immediately so client begins playing Chunk 1 while Chunk 2 synthesizes!
+                        outbound_audio_frames.extend(frames)
 
             # Queue initial concise greeting
             initial_greeting = dialogue.get_initial_greeting()
@@ -421,8 +434,8 @@ class PersonaPlexMockServer:
                                         user_speaking = True
                                         # Instant barge-in: cut off agent speaking immediately
                                         if len(outbound_audio_frames) > 0:
-                                            outbound_audio_frames.clear()
-                                            outbound_tokens.clear()
+                                             outbound_audio_frames.clear()
+                                             outbound_tokens.clear()
                             elif time.time() - last_speech_time > 0.5:
                                 # 500ms conversational hangtime - end turn cleanly
                                 user_speaking = False
@@ -434,7 +447,6 @@ class PersonaPlexMockServer:
                     stop_event.set()
 
             async def generator():
-                token_step_interval = 2  # Emit token cadence aligned with speech
                 step = 0
 
                 while not stop_event.is_set():
@@ -442,21 +454,19 @@ class PersonaPlexMockServer:
                     step += 1
 
                     if user_speaking:
-                        # User is speaking: listen in pure silence
+                        # User is speaking: stream silence
                         out_frame = generate_silence_frame()
                     elif len(outbound_audio_frames) > 0:
                         out_frame = outbound_audio_frames.pop(0)
-                        if step % token_step_interval == 0 and len(outbound_tokens) > 0:
+                        # Stream tokens briskly in sync with speech (1 token per 80ms frame)
+                        if len(outbound_tokens) > 0:
                             token = outbound_tokens.pop(0)
                             await websocket.send(encode_message(TextMessage(text=token)))
                     elif len(outbound_tokens) > 0:
-                        # Stream remaining or early tokens smoothly
                         out_frame = generate_silence_frame()
-                        if step % token_step_interval == 0:
-                            token = outbound_tokens.pop(0)
-                            await websocket.send(encode_message(TextMessage(text=token)))
+                        token = outbound_tokens.pop(0)
+                        await websocket.send(encode_message(TextMessage(text=token)))
                     else:
-                        # Clean silence when idle (NO buzz, NO tone)
                         out_frame = generate_silence_frame()
 
                     await websocket.send(encode_message(AudioMessage(data=out_frame.tobytes())))
