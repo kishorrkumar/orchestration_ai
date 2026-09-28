@@ -101,6 +101,10 @@ class PersonaPlexWorkerClient:
             "audio_topk": str(persona.top_k_audio),
             "text_topk": str(persona.top_k_text),
         }
+        if persona.accent:
+            query_params["accent"] = persona.accent
+        if persona.character:
+            query_params["character"] = persona.character
         if persona.seed is not None:
             query_params["seed"] = str(persona.seed)
 

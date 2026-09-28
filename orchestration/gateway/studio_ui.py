@@ -617,16 +617,37 @@ STUDIO_HTML = """<!DOCTYPE html>
   <!-- Main Container -->
   <div class="studio-container">
     <!-- Left Column: Personas & RAG Document Knowledge -->
-    <div class="panel">
+    <div class="panel" style="overflow-y: auto;">
       <div class="panel-header">
-        <span class="panel-title">Persona Models</span>
+        <span class="panel-title">Voice Accent</span>
+        <span id="active-accent-badge" class="doc-badge" style="color: var(--apple-cyan);">Indian</span>
+      </div>
+      <div class="segmented-control" id="accent-control">
+        <button class="segmented-btn active" id="accent-btn-indian" onclick="window.studioApp.selectAccent('indian')">Indian</button>
+        <button class="segmented-btn" id="accent-btn-american" onclick="window.studioApp.selectAccent('american')">American</button>
+        <button class="segmented-btn" id="accent-btn-british" onclick="window.studioApp.selectAccent('british')">British</button>
       </div>
 
-      <div class="persona-list" id="persona-list">
+      <div class="panel-header" style="margin-top: 2px;">
+        <span class="panel-title">Character</span>
+        <span id="active-char-badge" class="doc-badge" style="color: var(--apple-purple);">Professional</span>
+      </div>
+      <div class="segmented-control" id="character-control">
+        <button class="segmented-btn active" id="char-btn-professional" onclick="window.studioApp.selectCharacter('professional')">Professional</button>
+        <button class="segmented-btn" id="char-btn-funny" onclick="window.studioApp.selectCharacter('funny')">Funny</button>
+        <button class="segmented-btn" id="char-btn-warm" onclick="window.studioApp.selectCharacter('warm')">Warm</button>
+      </div>
+
+      <div class="panel-header" style="margin-top: 2px;">
+        <span class="panel-title">Active Persona</span>
+        <span id="active-preset-badge" class="doc-badge" style="color: var(--apple-green);">Aarav</span>
+      </div>
+
+      <div class="persona-list" id="persona-list" style="max-height: 120px;">
         <!-- Dynamically loaded -->
       </div>
 
-      <div class="panel-header" style="margin-top: 6px;">
+      <div class="panel-header" style="margin-top: 4px;">
         <span class="panel-title">Knowledge Engine (RAG)</span>
         <span id="rag-count-badge" class="doc-badge">0 documents</span>
       </div>
@@ -664,8 +685,8 @@ STUDIO_HTML = """<!DOCTYPE html>
       <!-- Transcript Container -->
       <div class="chat-transcript" id="chat-transcript">
         <div class="message-row agent">
-          <span class="message-author">Sophia</span>
-          <div class="bubble">Welcome! Start a voice call or upload documents on the left. I can answer questions directly grounded in your PDFs and notes.</div>
+          <span class="message-author" id="initial-agent-author">Aarav</span>
+          <div class="bubble">Welcome! Choose your preferred accent (Indian, American, British) and character (Professional, Funny, Warm & Concise). Speak into your mic or upload PDFs/notes. Accurate and grounded answers only — zero bluffs.</div>
         </div>
       </div>
 
@@ -959,6 +980,12 @@ STUDIO_HTML = """<!DOCTYPE html>
         } catch (e) {}
       }
 
+      setLang(lang) {
+        if (this.recognition) {
+          this.recognition.lang = lang;
+        }
+      }
+
       stop() {
         this.isRunning = false;
         if (this.recognition) {
@@ -1178,8 +1205,11 @@ STUDIO_HTML = """<!DOCTYPE html>
         this.rag = new RAGManager();
         this.orb = null;
 
-        this.activePersona = 'wise_teacher';
-        this.activeVoice = 'NATF2.pt';
+        this.activeAccent = 'indian';
+        this.activeCharacter = 'professional';
+        this.activePersona = 'indian_pro';
+        this.activeAgentName = 'Aarav';
+        this.activeVoice = 'NATM0.pt';
         this.isConnected = false;
         this.agentSpeaking = false;
         this.currentVoiceFilter = 'All';
@@ -1226,7 +1256,7 @@ STUDIO_HTML = """<!DOCTYPE html>
           const callBtn = document.getElementById('btn-call-action');
           callBtn.classList.add('end');
           document.getElementById('call-btn-text').innerText = 'End Call';
-          document.getElementById('speaker-status').innerText = 'Listening to you...';
+          document.getElementById('speaker-status').innerText = `Listening (${this.activeAgentName} ready)`;
         };
 
         this.socket.onAudio = (floatSamples) => {
@@ -1234,7 +1264,7 @@ STUDIO_HTML = """<!DOCTYPE html>
           document.getElementById('telemetry-frames-out').innerText = this.framesOut;
           this.agentSpeaking = true;
           this.orb.setAgentSpeaking(true);
-          document.getElementById('speaker-status').innerText = 'Agent Speaking';
+          document.getElementById('speaker-status').innerText = `${this.activeAgentName} Speaking`;
           this.audio.playChunk(floatSamples);
         };
 
@@ -1267,6 +1297,79 @@ STUDIO_HTML = """<!DOCTYPE html>
         await this.loadPersonas();
         await this.loadVoices();
         await this.refreshDocuments();
+        this.syncMatrixSelection();
+      }
+
+      selectAccent(accent) {
+        this.activeAccent = accent;
+        this.updateAccentButtons();
+        this.syncMatrixSelection();
+      }
+
+      selectCharacter(character) {
+        this.activeCharacter = character;
+        this.updateCharacterButtons();
+        this.syncMatrixSelection();
+      }
+
+      updateAccentButtons() {
+        ['indian', 'american', 'british'].forEach(acc => {
+          const btn = document.getElementById(`accent-btn-${acc}`);
+          if (btn) btn.classList.toggle('active', acc === this.activeAccent);
+        });
+        const badge = document.getElementById('active-accent-badge');
+        if (badge) {
+          badge.innerText = this.activeAccent.charAt(0).toUpperCase() + this.activeAccent.slice(1);
+        }
+        const langMap = { indian: 'en-IN', american: 'en-US', british: 'en-GB' };
+        if (this.recognizer) {
+          this.recognizer.setLang(langMap[this.activeAccent] || 'en-US');
+        }
+      }
+
+      updateCharacterButtons() {
+        ['professional', 'funny', 'warm'].forEach(ch => {
+          const btn = document.getElementById(`char-btn-${ch}`);
+          if (btn) btn.classList.toggle('active', ch === this.activeCharacter);
+        });
+        const badge = document.getElementById('active-char-badge');
+        if (badge) {
+          badge.innerText = this.activeCharacter === 'warm' ? 'Warm & Concise' : (this.activeCharacter.charAt(0).toUpperCase() + this.activeCharacter.slice(1));
+        }
+      }
+
+      syncMatrixSelection() {
+        const matrix = {
+          indian: {
+            professional: { id: 'indian_pro', name: 'Aarav', voice: 'NATM0.pt' },
+            funny: { id: 'indian_funny', name: 'Rohan', voice: 'NATM1.pt' },
+            warm: { id: 'indian_warm', name: 'Ananya', voice: 'NATF0.pt' }
+          },
+          american: {
+            professional: { id: 'american_pro', name: 'Sarah', voice: 'NATF1.pt' },
+            funny: { id: 'american_funny', name: 'Jack', voice: 'NATM2.pt' },
+            warm: { id: 'american_warm', name: 'Maya', voice: 'NATF2.pt' }
+          },
+          british: {
+            professional: { id: 'british_pro', name: 'Arthur', voice: 'NATM3.pt' },
+            funny: { id: 'british_funny', name: 'Oliver', voice: 'NATM0.pt' },
+            warm: { id: 'british_warm', name: 'Emma', voice: 'NATF3.pt' }
+          }
+        };
+
+        const target = matrix[this.activeAccent]?.[this.activeCharacter] || matrix.indian.professional;
+        this.activePersona = target.id;
+        this.activeAgentName = target.name;
+        this.activeVoice = target.voice;
+
+        const presetBadge = document.getElementById('active-preset-badge');
+        if (presetBadge) presetBadge.innerText = target.name;
+
+        const initialAuthor = document.getElementById('initial-agent-author');
+        if (initialAuthor && !this.isConnected) initialAuthor.innerText = target.name;
+
+        this.renderPersonas();
+        this.renderVoices();
       }
 
       async loadPersonas() {
@@ -1282,6 +1385,7 @@ STUDIO_HTML = """<!DOCTYPE html>
 
       renderPersonas() {
         const container = document.getElementById('persona-list');
+        if (!container) return;
         container.innerHTML = this.personas.map(p => `
           <div class="persona-card ${p.id === this.activePersona ? 'active' : ''}" onclick="window.studioApp.selectPersona('${p.id}')">
             <div class="persona-avatar">✦</div>
@@ -1297,7 +1401,14 @@ STUDIO_HTML = """<!DOCTYPE html>
         this.activePersona = personaId;
         const p = this.personas.find(item => item.id === personaId);
         if (p) {
+          if (p.accent) this.activeAccent = p.accent;
+          if (p.character) this.activeCharacter = p.character;
           this.activeVoice = p.voice_prompt;
+          this.activeAgentName = p.name.split(' ')[0];
+          this.updateAccentButtons();
+          this.updateCharacterButtons();
+          const presetBadge = document.getElementById('active-preset-badge');
+          if (presetBadge) presetBadge.innerText = this.activeAgentName;
           this.renderPersonas();
           this.renderVoices();
         }
@@ -1440,7 +1551,7 @@ STUDIO_HTML = """<!DOCTYPE html>
       }
 
       async startCall() {
-        this.updateStatus('Connecting...', 'connecting');
+        this.updateStatus(`Connecting (${this.activeAgentName})...`, 'connecting');
 
         try {
           await this.audio.startMicrophone(
@@ -1464,11 +1575,13 @@ STUDIO_HTML = """<!DOCTYPE html>
           return;
         }
 
-        // Start speech recognition
+        // Start speech recognition with accent language code
+        const langMap = { indian: 'en-IN', american: 'en-US', british: 'en-GB' };
+        this.recognizer.setLang(langMap[this.activeAccent] || 'en-US');
         this.recognizer.start();
 
         const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-        const url = `${proto}//${window.location.host}/v1/realtime?persona_id=${encodeURIComponent(this.activePersona)}&voice_prompt=${encodeURIComponent(this.activeVoice)}`;
+        const url = `${proto}//${window.location.host}/v1/realtime?persona_id=${encodeURIComponent(this.activePersona)}&voice_prompt=${encodeURIComponent(this.activeVoice)}&accent=${encodeURIComponent(this.activeAccent)}&character=${encodeURIComponent(this.activeCharacter)}`;
         this.socket.connect(url);
       }
 
@@ -1494,8 +1607,9 @@ STUDIO_HTML = """<!DOCTYPE html>
         const transcript = document.getElementById('chat-transcript');
         const row = document.createElement('div');
         row.className = `message-row ${author} ${isGrounded ? 'grounded' : ''}`;
+        const authorName = author === 'user' ? 'You' : (this.activeAgentName || 'Agent');
         row.innerHTML = `
-          <span class="message-author">${author === 'user' ? 'You' : 'Sophia'}</span>
+          <span class="message-author">${authorName}</span>
           <div class="bubble">${text}</div>
         `;
         transcript.appendChild(row);
@@ -1508,8 +1622,9 @@ STUDIO_HTML = """<!DOCTYPE html>
         if (!lastRow || !lastRow.classList.contains(author) || lastRow.id === 'live-user-bubble') {
           lastRow = document.createElement('div');
           lastRow.className = `message-row ${author}`;
+          const authorName = author === 'user' ? 'You' : (this.activeAgentName || 'Agent');
           lastRow.innerHTML = `
-            <span class="message-author">${author === 'user' ? 'You' : 'Sophia'}</span>
+            <span class="message-author">${authorName}</span>
             <div class="bubble"></div>
           `;
           transcript.appendChild(lastRow);

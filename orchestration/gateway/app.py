@@ -317,6 +317,8 @@ def create_app(
         voice_prompt: Optional[str] = Query(default=None, description="Optional override for voice prompt"),
         text_prompt: Optional[str] = Query(default=None, description="Optional override for text prompt"),
         session_id: Optional[str] = Query(default=None, description="Optional custom session ID"),
+        accent: Optional[str] = Query(default=None, description="Optional accent override (indian, american, british)"),
+        character: Optional[str] = Query(default=None, description="Optional character override (professional, funny, warm)"),
     ):
         await websocket.accept()
 
@@ -334,6 +336,10 @@ def create_app(
             active_persona.voice_prompt = voice_prompt
         if text_prompt:
             active_persona.text_prompt = text_prompt
+        if accent:
+            active_persona.accent = accent
+        if character:
+            active_persona.character = character
 
         # 2. Acquire Worker and Create Session
         try:
@@ -357,6 +363,8 @@ def create_app(
                     "session_id": session.session_id,
                     "persona": active_persona.id,
                     "voice": active_persona.get_normalized_voice_prompt(),
+                    "accent": active_persona.accent,
+                    "character": active_persona.character,
                     "sample_rate": 24000,
                     "frame_size": 1920,
                     "frame_rate": 12.5,
