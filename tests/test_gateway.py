@@ -42,7 +42,7 @@ async def test_gateway_rest_routes():
         r = await client.get("/v1/agents")
         assert r.status_code == 200
         agents = r.json()["agents"]
-        assert len(agents) >= 5
+        assert len(agents) >= 2
 
         # 4. Register custom agent
         custom_agent = {
@@ -58,6 +58,12 @@ async def test_gateway_rest_routes():
         r = await client.get("/v1/agents/drone_support")
         assert r.status_code == 200
         assert r.json()["name"] == "Drone Expert"
+
+        # 4b. Update / Save agent
+        custom_agent["name"] = "Drone Chief"
+        r = await client.put("/v1/agents/drone_support", json=custom_agent)
+        assert r.status_code == 200
+        assert r.json()["agent"]["name"] == "Drone Chief"
 
         # 5. Workers registration
         worker_cfg = {

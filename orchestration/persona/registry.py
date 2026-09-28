@@ -51,9 +51,10 @@ class PersonaConfig(BaseModel):
     id: str = Field(..., description="Unique identifier for the agent persona")
     name: str = Field(..., description="Display name of the agent")
     description: str = Field(default="", description="Description of the role")
-    accent: str = Field(default="American English", description="Accent (Indian English, American English, British English)")
-    character: str = Field(default="Confident, Warm & Concise", description="Character (Professional, Funny, Confident, Warm & Concise)")
-    voice_prompt: str = Field(default="NATF2.pt", description="Voice embedding (.pt) or audio reference (.wav)")
+    accent: str = Field(default="Indian English", description="Accent (Indian English)")
+    character: str = Field(default="Professional", description="Character (Professional, Friendly & Funny)")
+    voice_prompt: str = Field(default="NATM0.pt", description="Voice embedding (.pt) or audio reference (.wav)")
+    neural_voice: str = Field(default="en-IN-PrabhatNeural", description="Open-source neural TTS voice model (e.g. en-IN-PrabhatNeural, en-IN-NeerjaExpressiveNeural)")
     text_prompt: str = Field(..., description="Behavioral instructions and persona facts")
     audio_temperature: float = Field(default=0.8, ge=0.0, le=2.0)
     text_temperature: float = Field(default=0.8, ge=0.0, le=2.0)
@@ -78,182 +79,30 @@ class PersonaRegistry:
         self._register_default_personas()
 
     def _register_default_personas(self) -> None:
-        # 1. Indian English - 3 Characters
+        # Option 1: Indian English • Professional (Aarav)
         self.register(
             PersonaConfig(
                 id="indian_pro",
-                name="Aarav (Indian • Professional)",
+                name="Aarav (Indian English • Professional)",
                 description="Articulate, polite, structured, business-oriented Indian English speaker.",
                 accent="Indian English",
                 character="Professional",
                 voice_prompt="NATM0.pt",
+                neural_voice="en-IN-PrabhatNeural",
                 text_prompt=build_system_prompt("indian", "professional"),
             )
         )
+        # Option 2: Indian English • Friendly & Funny (Rohan)
         self.register(
             PersonaConfig(
                 id="indian_funny",
-                name="Rohan (Indian • Funny)",
-                description="Witty, cheerful, playful, humorous Indian English companion.",
+                name="Rohan (Indian English • Friendly & Funny)",
+                description="Witty, warm, charismatic, cheerful Indian English conversational companion.",
                 accent="Indian English",
-                character="Funny",
+                character="Friendly & Funny",
                 voice_prompt="NATM3.pt",
+                neural_voice="en-IN-NeerjaExpressiveNeural",
                 text_prompt=build_system_prompt("indian", "funny"),
-            )
-        )
-        self.register(
-            PersonaConfig(
-                id="indian_warm",
-                name="Ananya (Indian • Warm & Concise)",
-                description="Grounded, reassuring, direct, crisp Indian English communicator.",
-                accent="Indian English",
-                character="Confident, Warm & Concise",
-                voice_prompt="NATF2.pt",
-                text_prompt=build_system_prompt("indian", "warm"),
-            )
-        )
-
-        # 2. American English - 3 Characters
-        self.register(
-            PersonaConfig(
-                id="american_pro",
-                name="Sarah (American • Professional)",
-                description="Crisp, focused, executive American corporate voice.",
-                accent="American English",
-                character="Professional",
-                voice_prompt="NATF1.pt",
-                text_prompt=build_system_prompt("american", "professional"),
-            )
-        )
-        self.register(
-            PersonaConfig(
-                id="american_funny",
-                name="Jack (American • Funny)",
-                description="High-energy, sarcastic, entertaining American conversationalist.",
-                accent="American English",
-                character="Funny",
-                voice_prompt="VARM3.pt",
-                text_prompt=build_system_prompt("american", "funny"),
-            )
-        )
-        self.register(
-            PersonaConfig(
-                id="american_warm",
-                name="Maya (American • Warm & Concise)",
-                description="Friendly, confident, succinct American advisor.",
-                accent="American English",
-                character="Confident, Warm & Concise",
-                voice_prompt="NATF3.pt",
-                text_prompt=build_system_prompt("american", "warm"),
-            )
-        )
-
-        # 3. British English - 3 Characters
-        self.register(
-            PersonaConfig(
-                id="british_pro",
-                name="Arthur (British • Professional)",
-                description="Methodical, refined, composed British RP presenter.",
-                accent="British English",
-                character="Professional",
-                voice_prompt="NATM1.pt",
-                text_prompt=build_system_prompt("british", "professional"),
-            )
-        )
-        self.register(
-            PersonaConfig(
-                id="british_funny",
-                name="Oliver (British • Funny)",
-                description="Dry British wit, clever, charming, self-deprecating banter.",
-                accent="British English",
-                character="Funny",
-                voice_prompt="VARM0.pt",
-                text_prompt=build_system_prompt("british", "funny"),
-            )
-        )
-        self.register(
-            PersonaConfig(
-                id="british_warm",
-                name="Emma (British • Warm & Concise)",
-                description="Warm RP, calm, articulate, concise British speaker.",
-                accent="British English",
-                character="Confident, Warm & Concise",
-                voice_prompt="VARF2.pt",
-                text_prompt=build_system_prompt("british", "warm"),
-            )
-        )
-
-        # Standard Legacy Persona
-        self.register(
-            PersonaConfig(
-                id="wise_teacher",
-                name="Sophia (Teacher)",
-                description="Wise, patient, and friendly educator for Q&A and learning.",
-                accent="American English",
-                character="Confident, Warm & Concise",
-                voice_prompt="NATF2.pt",
-                text_prompt="You are a wise and friendly teacher. Answer questions or provide advice in a clear, concise, and truthful way.",
-            )
-        )
-
-        # Waste Management Customer Service
-        self.register(
-            PersonaConfig(
-                id="citysan_service",
-                name="Ayelen Lucero (CitySan)",
-                description="CitySan Services waste management customer representative.",
-                voice_prompt="NATF1.pt",
-                text_prompt=(
-                    "You work for CitySan Services which is a waste management and your name is Ayelen Lucero. "
-                    "Information: Verify customer name Omar Torres. Current schedule: every other week. "
-                    "Upcoming pickup: April 12th. Compost bin service available for $8/month add-on."
-                ),
-            )
-        )
-
-        # Restaurant Customer Service
-        self.register(
-            PersonaConfig(
-                id="jerusalem_shakshuka",
-                name="Owen Foster (Jerusalem Shakshuka)",
-                description="Restaurant host for Jerusalem Shakshuka drive-through.",
-                voice_prompt="NATM1.pt",
-                text_prompt=(
-                    "You work for Jerusalem Shakshuka which is a restaurant and your name is Owen Foster. "
-                    "Information: There are two shakshuka options: Classic (poached eggs, $9.50) and Spicy (scrambled eggs with jalapenos, $10.25). "
-                    "Sides include warm pita ($2.50) and Israeli salad ($3). No combo offers. Available for drive-through until 9 PM."
-                ),
-            )
-        )
-
-        # Drone Rental
-        self.register(
-            PersonaConfig(
-                id="aerorentals_pro",
-                name="Tomaz Novak (AeroRentals)",
-                description="Technical sales agent at AeroRentals Pro drone rentals.",
-                voice_prompt="NATM2.pt",
-                text_prompt=(
-                    "You work for AeroRentals Pro which is a drone rental company and your name is Tomaz Novak. "
-                    "Information: AeroRentals Pro has the following availability: PhoenixDrone X ($65/4 hours, $110/8 hours), "
-                    "and the premium SpectraDrone 9 ($95/4 hours, $160/8 hours). Deposit required: $150 for standard models, $300 for premium."
-                ),
-            )
-        )
-
-        # Mars Mission Emergency Astronaut
-        self.register(
-            PersonaConfig(
-                id="mars_astronaut",
-                name="Alex (Mars Mission Astronaut)",
-                description="Astronaut facing a reactor core emergency on a Mars transit ship.",
-                voice_prompt="VARM1.pt",
-                text_prompt=(
-                    "You enjoy having a good conversation. Have a technical discussion about fixing a reactor core on a spaceship to Mars. "
-                    "You are an astronaut on a Mars mission. Your name is Alex. You are already dealing with a reactor core meltdown on a Mars mission. "
-                    "Several ship systems are failing, and continued instability will lead to catastrophic failure. "
-                    "You explain what is happening and you urgently ask for help thinking through how to stabilize the reactor."
-                ),
             )
         )
 

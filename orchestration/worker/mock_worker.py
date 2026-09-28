@@ -44,6 +44,62 @@ logger = logging.getLogger("orchestration.worker.mock")
 _TTS_EXECUTOR = concurrent.futures.ThreadPoolExecutor(max_workers=2)
 
 
+async def _synthesize_speech_neural(
+    text: str,
+    target_sr: int = 24000,
+    voice_preset: Optional[str] = None,
+    accent: Optional[str] = None,
+    character: Optional[str] = None,
+    neural_voice: Optional[str] = None,
+) -> Optional[np.ndarray]:
+    """
+    Synthesize high-fidelity Indian neural voice via edge_tts.
+    Supports en-IN-PrabhatNeural (Professional) and en-IN-NeerjaExpressiveNeural (Friendly & Funny).
+    """
+    try:
+        import edge_tts
+        import io
+
+        voice = neural_voice or ""
+        if not voice:
+            if character and "funny" in character.lower():
+                voice = "en-IN-NeerjaExpressiveNeural"
+            else:
+                voice = "en-IN-PrabhatNeural"
+
+        rate = "+0%"
+        pitch = "+0Hz"
+        if character:
+            c = character.lower()
+            if "funny" in c:
+                rate = "+6%"
+                pitch = "+3Hz"
+            elif "professional" in c:
+                rate = "+0%"
+                pitch = "+0Hz"
+
+        comm = edge_tts.Communicate(text, voice, rate=rate, pitch=pitch)
+        buf = io.BytesIO()
+        async for chunk in comm.stream():
+            if chunk["type"] == "audio":
+                buf.write(chunk["data"])
+        buf.seek(0)
+        data, sr = sf.read(buf, dtype="float32")
+        if data.ndim > 1:
+            data = data.mean(axis=1)
+        if sr != target_sr and len(data) > 0:
+            num_samples = int(len(data) * target_sr / sr)
+            data = np.interp(
+                np.linspace(0, len(data), num_samples, endpoint=False),
+                np.arange(len(data)),
+                data,
+            ).astype(np.float32)
+        return data.astype(np.float32)
+    except Exception as e:
+        logger.warning(f"Neural TTS synthesis unavailable: {e}. Falling back to offline SAPI5.")
+        return None
+
+
 def _synthesize_speech_offline(
     text: str,
     target_sr: int = 24000,
@@ -242,8 +298,9 @@ class PersonaPlexMockServer:
             query = urllib.parse.parse_qs(parsed.query)
             text_prompt = query.get("text_prompt", [""])[0]
             voice_prompt = query.get("voice_prompt", ["NATF2.pt"])[0]
-            accent = query.get("accent", ["American English"])[0]
-            character = query.get("character", ["Confident, Warm & Concise"])[0]
+            accent = query.get("accent", ["Indian English"])[0]
+            character = query.get("character", ["Professional"])[0]
+            neural_voice = query.get("neural_voice", [""])[0]
 
             # Infer from prompt if present
             tp_lower = text_prompt.lower()
@@ -262,7 +319,7 @@ class PersonaPlexMockServer:
                 character = "Confident, Warm & Concise"
 
             logger.info(
-                f"Mock server session: accent={accent}, character={character}, voice={voice_prompt}"
+                f"Mock server session: accent={accent}, character={character}, voice={voice_prompt}, neural_voice={neural_voice}"
             )
 
             if self.prompt_init_delay > 0:
@@ -289,15 +346,27 @@ class PersonaPlexMockServer:
                 tokens = [(" " if i > 0 else "") + w for i, w in enumerate(words)]
                 outbound_tokens = tokens
 
-                audio_samples = await loop.run_in_executor(
-                    _TTS_EXECUTOR,
-                    _synthesize_speech_offline,
+                # 1. Attempt open-source neural TTS (edge_tts)
+                audio_samples = await _synthesize_speech_neural(
                     reply_text,
-                    SAMPLE_RATE,
-                    voice_prompt,
-                    accent,
-                    character,
+                    target_sr=SAMPLE_RATE,
+                    voice_preset=voice_prompt,
+                    accent=accent,
+                    character=character,
+                    neural_voice=neural_voice,
                 )
+
+                # 2. Fallback to offline native SAPI5 if offline or unavailable
+                if audio_samples is None:
+                    audio_samples = await loop.run_in_executor(
+                        _TTS_EXECUTOR,
+                        _synthesize_speech_offline,
+                        reply_text,
+                        SAMPLE_RATE,
+                        voice_prompt,
+                        accent,
+                        character,
+                    )
 
                 if audio_samples is not None and len(audio_samples) > 0:
                     num_frames = int(math.ceil(len(audio_samples) / FRAME_SIZE))

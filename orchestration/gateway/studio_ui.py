@@ -502,38 +502,142 @@ STUDIO_HTML = r"""<!DOCTYPE html>
       box-shadow: 0 2px 12px rgba(255, 69, 58, 0.35);
     }
 
-    /* Right Panel: Voice Selection & Observability */
-    .voice-grid {
+    /* Indian Agent Options Grid (2 Best Options) */
+    .agent-options-grid {
       display: grid;
       grid-template-columns: 1fr 1fr;
-      gap: 6px;
-      overflow-y: auto;
-      max-height: 250px;
-      padding-right: 4px;
+      gap: 8px;
     }
-
-    .voice-card {
-      background: rgba(255, 255, 255, 0.03);
-      border: 0.5px solid var(--border-subtle);
+    .agent-option-btn {
+      background: rgba(255, 255, 255, 0.04);
+      border: 1px solid var(--border-subtle);
       border-radius: var(--radius-md);
-      padding: 8px 10px;
+      padding: 10px 12px;
       cursor: pointer;
+      text-align: left;
       display: flex;
       flex-direction: column;
-      gap: 2px;
-      transition: all 0.2s ease;
+      gap: 3px;
+      transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
     }
-    .voice-card:hover {
+    .agent-option-btn:hover {
       background: rgba(255, 255, 255, 0.08);
       border-color: var(--border-medium);
+      transform: translateY(-1px);
     }
-    .voice-card.selected {
-      border-color: var(--apple-cyan);
+    .agent-option-btn.active {
       background: rgba(41, 151, 255, 0.12);
+      border-color: var(--apple-cyan);
+      box-shadow: 0 0 16px rgba(41, 151, 255, 0.2);
     }
-    .voice-id { font-size: 12px; font-weight: 600; color: var(--text-primary); }
-    .voice-tag { font-size: 10px; color: var(--apple-cyan); }
-    .voice-desc { font-size: 9.5px; color: var(--text-secondary); line-height: 1.2; }
+    .agent-option-title {
+      font-size: 13px;
+      font-weight: 600;
+      color: #ffffff;
+    }
+    .agent-option-sub {
+      font-size: 10.5px;
+      color: var(--text-secondary);
+    }
+    .agent-option-tag {
+      font-size: 9.5px;
+      color: var(--apple-cyan);
+      background: rgba(41, 151, 255, 0.12);
+      padding: 2px 6px;
+      border-radius: 4px;
+      width: fit-content;
+      margin-top: 2px;
+      font-family: var(--font-mono);
+    }
+
+    /* Customizer Form & Save Agent */
+    .customizer-form {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      background: rgba(0, 0, 0, 0.25);
+      border: 0.5px solid var(--border-subtle);
+      border-radius: var(--radius-md);
+      padding: 10px;
+    }
+    .form-group {
+      display: flex;
+      flex-direction: column;
+      gap: 3px;
+    }
+    .form-row {
+      display: flex;
+      gap: 8px;
+    }
+    .flex-1 { flex: 1; }
+    .form-label {
+      font-size: 10px;
+      font-weight: 600;
+      color: var(--text-secondary);
+      text-transform: uppercase;
+      letter-spacing: 0.03em;
+    }
+    .form-input, .form-select, .form-textarea {
+      background: rgba(255, 255, 255, 0.05);
+      border: 0.5px solid var(--border-subtle);
+      border-radius: 6px;
+      color: var(--text-primary);
+      font-family: inherit;
+      font-size: 12px;
+      padding: 6px 8px;
+      outline: none;
+      transition: all 0.2s ease;
+    }
+    .form-input:focus, .form-select:focus, .form-textarea:focus {
+      border-color: var(--apple-cyan);
+      background: rgba(255, 255, 255, 0.08);
+      box-shadow: 0 0 8px rgba(41, 151, 255, 0.2);
+    }
+    .form-select option {
+      background: #1c1c1e;
+      color: #fff;
+    }
+    .form-textarea {
+      resize: vertical;
+      font-family: var(--font-mono);
+      font-size: 10.5px;
+      line-height: 1.4;
+      min-height: 75px;
+    }
+    .btn-save-agent {
+      background: linear-gradient(135deg, var(--apple-cyan), var(--apple-blue));
+      color: #ffffff;
+      border: none;
+      border-radius: 7px;
+      padding: 8px 12px;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+      box-shadow: 0 2px 8px rgba(0, 113, 227, 0.3);
+    }
+    .btn-save-agent:hover {
+      opacity: 0.95;
+      transform: translateY(-1px);
+      box-shadow: 0 4px 14px rgba(0, 113, 227, 0.45);
+    }
+    .btn-save-agent:active {
+      transform: scale(0.98);
+    }
+    .save-feedback {
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--apple-green);
+      opacity: 0;
+      transition: opacity 0.3s ease;
+    }
+    .save-feedback.show {
+      opacity: 1;
+    }
 
     /* Observability Rows */
     .telemetry-group {
@@ -585,62 +689,72 @@ STUDIO_HTML = r"""<!DOCTYPE html>
 
   <!-- Main Container -->
   <div class="studio-container">
-    <!-- Left Column: Personas & RAG Document Knowledge -->
+    <!-- Left Column: Indian Voice Agent Customizer & 2 Best Options -->
     <div class="panel" style="overflow-y: auto;">
       <div class="panel-header">
-        <span class="panel-title">Voice Accent</span>
-        <span id="active-accent-badge" class="doc-badge" style="color: var(--apple-cyan);">Indian</span>
-      </div>
-      <div class="segmented-control" id="accent-control">
-        <button class="segmented-btn active" id="accent-btn-indian" onclick="window.studioApp.selectAccent('indian')">Indian</button>
-        <button class="segmented-btn" id="accent-btn-american" onclick="window.studioApp.selectAccent('american')">American</button>
-        <button class="segmented-btn" id="accent-btn-british" onclick="window.studioApp.selectAccent('british')">British</button>
+        <span class="panel-title">Voice Agent</span>
+        <span id="active-agent-badge" class="doc-badge" style="color: var(--apple-cyan);">Aarav</span>
       </div>
 
-      <div class="panel-header" style="margin-top: 2px;">
-        <span class="panel-title">Character</span>
-        <span id="active-char-badge" class="doc-badge" style="color: var(--apple-purple);">Professional</span>
-      </div>
-      <div class="segmented-control" id="character-control">
-        <button class="segmented-btn active" id="char-btn-professional" onclick="window.studioApp.selectCharacter('professional')">Professional</button>
-        <button class="segmented-btn" id="char-btn-funny" onclick="window.studioApp.selectCharacter('funny')">Funny</button>
-        <button class="segmented-btn" id="char-btn-warm" onclick="window.studioApp.selectCharacter('warm')">Warm</button>
-      </div>
-
-      <div class="panel-header" style="margin-top: 2px;">
-        <span class="panel-title">Active Persona</span>
-        <span id="active-preset-badge" class="doc-badge" style="color: var(--apple-green);">Aarav</span>
-      </div>
-
-      <div class="persona-list" id="persona-list" style="max-height: 120px;">
-        <!-- Dynamically loaded -->
+      <!-- The Two Best Options -->
+      <div class="agent-options-grid">
+        <button class="agent-option-btn active" id="btn-agent-aarav" onclick="window.studioApp.selectAgentPreset('indian_pro')">
+          <div class="agent-option-title">Aarav</div>
+          <div class="agent-option-sub">Professional &amp; Articulate</div>
+          <span class="agent-option-tag">en-IN Prabhat</span>
+        </button>
+        <button class="agent-option-btn" id="btn-agent-rohan" onclick="window.studioApp.selectAgentPreset('indian_funny')">
+          <div class="agent-option-title">Rohan</div>
+          <div class="agent-option-sub">Friendly &amp; Funny</div>
+          <span class="agent-option-tag">en-IN Neerja</span>
+        </button>
       </div>
 
-      <div class="panel-header" style="margin-top: 6px;">
-        <span class="panel-title">System Prompt &amp; Rules</span>
-        <span id="principles-badge" class="doc-badge" style="color: var(--apple-cyan);">12 Principles</span>
+      <!-- Agent Settings & Live Customizer -->
+      <div class="panel-header" style="margin-top: 4px;">
+        <span class="panel-title">Agent Settings</span>
+        <span id="agent-save-feedback" class="save-feedback"></span>
       </div>
 
-      <div class="system-prompt-card">
-        <div class="prompt-header">
-          <span class="prompt-tag">Voice Conditioning</span>
-          <span class="prompt-badge">Strict Principles</span>
+      <div class="customizer-form">
+        <div class="form-group">
+          <label class="form-label" for="cfg-agent-name">Agent Display Name</label>
+          <input type="text" id="cfg-agent-name" class="form-input" placeholder="Agent Name">
         </div>
-        <div class="prompt-body" id="system-prompt-display">1. Listen First
-2. Respond to Latest Message
-3. Be Concise (1–2 sentences)
-4. One Question at a Time
-5. Do Not Repeat Known Info
-6. Natural Acknowledgements
-7. Human-like Turn Taking
-8. Never Sound Robotic
-9. Handle Interruptions
-10. Handle Uncertainty
-11. Maintain Context &amp; Goals
-12. Priority (A → B → C → D → E)</div>
+
+        <div class="form-row">
+          <div class="form-group flex-1">
+            <label class="form-label" for="cfg-character">Character Style</label>
+            <select id="cfg-character" class="form-select">
+              <option value="Professional">Professional</option>
+              <option value="Friendly & Funny">Friendly & Funny</option>
+            </select>
+          </div>
+          <div class="form-group flex-1">
+            <label class="form-label" for="cfg-neural-voice">Neural Voice</label>
+            <select id="cfg-neural-voice" class="form-select">
+              <option value="en-IN-PrabhatNeural">Prabhat (Male)</option>
+              <option value="en-IN-NeerjaExpressiveNeural">Neerja (Female - Expressive)</option>
+              <option value="en-IN-NeerjaNeural">Neerja (Female - Calm)</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="form-group">
+          <div style="display:flex; justify-content:space-between; align-items:center;">
+            <label class="form-label" for="cfg-system-prompt">System Prompt &amp; Rules</label>
+            <span style="font-size:10px; color:var(--apple-green);">12 Principles Enforced</span>
+          </div>
+          <textarea id="cfg-system-prompt" class="form-textarea" rows="7" placeholder="Agent system prompt..."></textarea>
+        </div>
+
+        <button id="btn-save-agent" class="btn-save-agent" onclick="window.studioApp.saveActiveAgent()">
+          <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/></svg>
+          <span>Save Agent</span>
+        </button>
       </div>
 
-      <div class="panel-header" style="margin-top: 6px;">
+      <div class="panel-header" style="margin-top: 4px;">
         <span class="panel-title">Live Call Context</span>
         <span id="call-flow-state" class="doc-badge" style="color: var(--apple-green);">Standby</span>
       </div>
@@ -679,7 +793,7 @@ STUDIO_HTML = r"""<!DOCTYPE html>
       <div class="chat-transcript" id="chat-transcript">
         <div class="message-row agent">
           <span class="message-author" id="initial-agent-author">Aarav</span>
-          <div class="bubble">Welcome! Choose your preferred accent (Indian, American, British) and character (Professional, Funny, Warm &amp; Concise). The agent follows strict conversation principles—concise turns, active listening, and clean talking.</div>
+          <div class="bubble">Namaste! I am your Indian English voice assistant. Choose Aarav (Professional) or Rohan (Friendly &amp; Funny), customize the system prompt or voice settings and click &quot;Save Agent&quot;, then click Start Call to begin.</div>
         </div>
       </div>
 
@@ -704,26 +818,53 @@ STUDIO_HTML = r"""<!DOCTYPE html>
       </div>
     </div>
 
-    <!-- Right Column: Voice Selection & Telemetry -->
+    <!-- Right Column: Indian Neural Voice Engine & Conversation Rules -->
     <div class="panel">
       <div class="panel-header">
-        <span class="panel-title">PersonaPlex Voices</span>
+        <span class="panel-title">Acoustic Engine</span>
+        <span class="doc-badge" style="color: var(--apple-cyan);">Indian Neural</span>
       </div>
 
-      <!-- Segmented filter for voices -->
-      <div class="segmented-control" id="voice-filter">
-        <button class="segmented-btn active" onclick="window.studioApp.filterVoices('All')">All</button>
-        <button class="segmented-btn" onclick="window.studioApp.filterVoices('Female')">Female</button>
-        <button class="segmented-btn" onclick="window.studioApp.filterVoices('Male')">Male</button>
-        <button class="segmented-btn" onclick="window.studioApp.filterVoices('Variety')">Variety</button>
+      <div class="telemetry-group" style="padding: 10px; font-size: 11.5px;">
+        <div class="telemetry-row">
+          <span class="telemetry-label">Active Neural Voice</span>
+          <span class="telemetry-val" id="active-neural-voice-badge">en-IN-PrabhatNeural</span>
+        </div>
+        <div class="telemetry-row">
+          <span class="telemetry-label">Accent / Dialect</span>
+          <span class="telemetry-val">Indian English (en-IN)</span>
+        </div>
+        <div class="telemetry-row">
+          <span class="telemetry-label">Sampling Quality</span>
+          <span class="telemetry-val">24,000 Hz Mono Float32</span>
+        </div>
+        <div class="telemetry-row">
+          <span class="telemetry-label">Frame Cadence</span>
+          <span class="telemetry-val">12.5 Hz (80ms turns)</span>
+        </div>
       </div>
 
-      <!-- Voice cards -->
-      <div class="voice-grid" id="voice-grid">
-        <!-- Dynamically rendered voice cards -->
+      <div class="panel-header" style="margin-top: 8px;">
+        <span class="panel-title">12 Conversation Principles</span>
+        <span class="doc-badge" style="color: var(--apple-green);">Active</span>
       </div>
 
-      <div class="panel-header" style="margin-top: 10px;">
+      <div class="system-prompt-card" style="max-height: 180px; overflow-y: auto;">
+        <div class="prompt-body" style="font-size: 10.5px; line-height: 1.45;">1. Listen First (Understand before reply)
+2. Respond to Latest Message
+3. Concise (1–2 sentences)
+4. One Question at a Time
+5. Do Not Repeat Known Info
+6. Natural Acknowledgement
+7. Human-like Turn Taking
+8. Never Sound Robotic (Zero filler)
+9. Handle Interruptions (Instant cut)
+10. Handle Uncertainty Gracefully
+11. Maintain Context &amp; Goals
+12. Truthful &amp; Non-hallucinatory</div>
+      </div>
+
+      <div class="panel-header" style="margin-top: 8px;">
         <span class="panel-title">Session Telemetry</span>
       </div>
 
@@ -754,6 +895,7 @@ STUDIO_HTML = r"""<!DOCTYPE html>
         </div>
       </div>
     </div>
+
   </div>
 
   <!-- SOLID Modular Architecture JavaScript -->
@@ -930,7 +1072,7 @@ STUDIO_HTML = r"""<!DOCTYPE html>
           this.recognition = new SpeechRecognition();
           this.recognition.continuous = true;
           this.recognition.interimResults = true;
-          this.recognition.lang = 'en-US';
+          this.recognition.lang = 'en-IN';
 
           this.recognition.onresult = (event) => {
             let interim = '';
@@ -1269,89 +1411,6 @@ STUDIO_HTML = r"""<!DOCTYPE html>
 
       async boot() {
         await this.loadPersonas();
-        await this.loadVoices();
-        await this.loadSystemPrompt();
-        this.syncMatrixSelection();
-      }
-
-      async loadSystemPrompt() {
-        const data = await this.promptManager.getSystemPrompt();
-        const display = document.getElementById('system-prompt-display');
-        if (display && data.prompt) {
-          display.innerText = data.prompt;
-        }
-      }
-
-      selectAccent(accent) {
-        this.activeAccent = accent;
-        this.updateAccentButtons();
-        this.syncMatrixSelection();
-      }
-
-      selectCharacter(character) {
-        this.activeCharacter = character;
-        this.updateCharacterButtons();
-        this.syncMatrixSelection();
-      }
-
-      updateAccentButtons() {
-        ['indian', 'american', 'british'].forEach(acc => {
-          const btn = document.getElementById(`accent-btn-${acc}`);
-          if (btn) btn.classList.toggle('active', acc === this.activeAccent);
-        });
-        const badge = document.getElementById('active-accent-badge');
-        if (badge) {
-          badge.innerText = this.activeAccent.charAt(0).toUpperCase() + this.activeAccent.slice(1);
-        }
-        const langMap = { indian: 'en-IN', american: 'en-US', british: 'en-GB' };
-        if (this.recognizer) {
-          this.recognizer.setLang(langMap[this.activeAccent] || 'en-US');
-        }
-      }
-
-      updateCharacterButtons() {
-        ['professional', 'funny', 'warm'].forEach(ch => {
-          const btn = document.getElementById(`char-btn-${ch}`);
-          if (btn) btn.classList.toggle('active', ch === this.activeCharacter);
-        });
-        const badge = document.getElementById('active-char-badge');
-        if (badge) {
-          badge.innerText = this.activeCharacter === 'warm' ? 'Warm & Concise' : (this.activeCharacter.charAt(0).toUpperCase() + this.activeCharacter.slice(1));
-        }
-      }
-
-      syncMatrixSelection() {
-        const matrix = {
-          indian: {
-            professional: { id: 'indian_pro', name: 'Aarav', voice: 'NATM0.pt' },
-            funny: { id: 'indian_funny', name: 'Rohan', voice: 'NATM1.pt' },
-            warm: { id: 'indian_warm', name: 'Ananya', voice: 'NATF0.pt' }
-          },
-          american: {
-            professional: { id: 'american_pro', name: 'Sarah', voice: 'NATF1.pt' },
-            funny: { id: 'american_funny', name: 'Jack', voice: 'NATM2.pt' },
-            warm: { id: 'american_warm', name: 'Maya', voice: 'NATF2.pt' }
-          },
-          british: {
-            professional: { id: 'british_pro', name: 'Arthur', voice: 'NATM3.pt' },
-            funny: { id: 'british_funny', name: 'Oliver', voice: 'NATM0.pt' },
-            warm: { id: 'british_warm', name: 'Emma', voice: 'NATF3.pt' }
-          }
-        };
-
-        const target = matrix[this.activeAccent]?.[this.activeCharacter] || matrix.indian.professional;
-        this.activePersona = target.id;
-        this.activeAgentName = target.name;
-        this.activeVoice = target.voice;
-
-        const presetBadge = document.getElementById('active-preset-badge');
-        if (presetBadge) presetBadge.innerText = target.name;
-
-        const initialAuthor = document.getElementById('initial-agent-author');
-        if (initialAuthor && !this.isConnected) initialAuthor.innerText = target.name;
-
-        this.renderPersonas();
-        this.renderVoices();
       }
 
       async loadPersonas() {
@@ -1359,83 +1418,101 @@ STUDIO_HTML = r"""<!DOCTYPE html>
           const res = await fetch('/v1/agents');
           const data = await res.json();
           this.personas = data.agents || [];
-          this.renderPersonas();
+          this.selectAgentPreset(this.activePersona || 'indian_pro');
         } catch (e) {
           console.error('Failed loading personas', e);
         }
       }
 
-      renderPersonas() {
-        const container = document.getElementById('persona-list');
-        if (!container) return;
-        container.innerHTML = this.personas.map(p => `
-          <div class="persona-card ${p.id === this.activePersona ? 'active' : ''}" onclick="window.studioApp.selectPersona('${p.id}')">
-            <div class="persona-avatar">✦</div>
-            <div class="persona-info">
-              <div class="persona-name">${p.name}</div>
-              <div class="persona-role">${p.description}</div>
-            </div>
-          </div>
-        `).join('');
+      selectAgentPreset(presetId) {
+        this.activePersona = presetId;
+        const btnAarav = document.getElementById('btn-agent-aarav');
+        const btnRohan = document.getElementById('btn-agent-rohan');
+        if (btnAarav) btnAarav.classList.toggle('active', presetId === 'indian_pro');
+        if (btnRohan) btnRohan.classList.toggle('active', presetId === 'indian_funny');
+
+        this.populateCustomizer();
       }
 
-      selectPersona(personaId) {
-        this.activePersona = personaId;
-        const p = this.personas.find(item => item.id === personaId);
-        if (p) {
-          if (p.accent) this.activeAccent = p.accent;
-          if (p.character) this.activeCharacter = p.character;
-          this.activeVoice = p.voice_prompt;
-          this.activeAgentName = p.name.split(' ')[0];
-          this.updateAccentButtons();
-          this.updateCharacterButtons();
-          const presetBadge = document.getElementById('active-preset-badge');
-          if (presetBadge) presetBadge.innerText = this.activeAgentName;
-          this.renderPersonas();
-          this.renderVoices();
-        }
+      populateCustomizer() {
+        const p = this.personas.find(item => item.id === this.activePersona);
+        if (!p) return;
+
+        this.activeAgentName = p.name.split(' ')[0];
+        this.activeCharacter = p.character;
+        this.activeNeuralVoice = p.neural_voice || (p.character === 'Professional' ? 'en-IN-PrabhatNeural' : 'en-IN-NeerjaExpressiveNeural');
+        this.activeVoice = p.voice_prompt;
+
+        const badge = document.getElementById('active-agent-badge');
+        if (badge) badge.innerText = this.activeAgentName;
+
+        const neuralBadge = document.getElementById('active-neural-voice-badge');
+        if (neuralBadge) neuralBadge.innerText = this.activeNeuralVoice;
+
+        const nameInput = document.getElementById('cfg-agent-name');
+        if (nameInput) nameInput.value = p.name;
+
+        const charSelect = document.getElementById('cfg-character');
+        if (charSelect) charSelect.value = p.character;
+
+        const voiceSelect = document.getElementById('cfg-neural-voice');
+        if (voiceSelect) voiceSelect.value = this.activeNeuralVoice;
+
+        const promptArea = document.getElementById('cfg-system-prompt');
+        if (promptArea) promptArea.value = p.text_prompt;
+
+        const initialAuthor = document.getElementById('initial-agent-author');
+        if (initialAuthor && !this.isConnected) initialAuthor.innerText = this.activeAgentName;
       }
 
-      async loadVoices() {
+      async saveActiveAgent() {
+        const nameInput = document.getElementById('cfg-agent-name');
+        const charSelect = document.getElementById('cfg-character');
+        const voiceSelect = document.getElementById('cfg-neural-voice');
+        const promptArea = document.getElementById('cfg-system-prompt');
+
+        const updatedPersona = {
+          id: this.activePersona,
+          name: nameInput.value.trim() || this.activeAgentName,
+          description: `${charSelect.value} Indian English conversational AI agent.`,
+          accent: 'Indian English',
+          character: charSelect.value,
+          voice_prompt: this.activePersona === 'indian_pro' ? 'NATM0.pt' : 'NATM3.pt',
+          neural_voice: voiceSelect.value,
+          text_prompt: promptArea.value.trim(),
+        };
+
         try {
-          const res = await fetch('/v1/voices');
-          const data = await res.json();
-          this.voices = data.voices || [];
-          this.renderVoices();
+          const res = await fetch(`/v1/agents/${encodeURIComponent(this.activePersona)}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(updatedPersona)
+          });
+          const result = await res.json();
+          if (result.agent) {
+            const idx = this.personas.findIndex(p => p.id === this.activePersona);
+            if (idx >= 0) this.personas[idx] = result.agent;
+            else this.personas.push(result.agent);
+
+            this.activeAgentName = result.agent.name.split(' ')[0];
+            this.activeCharacter = result.agent.character;
+            this.activeNeuralVoice = result.agent.neural_voice;
+
+            const badge = document.getElementById('active-agent-badge');
+            if (badge) badge.innerText = this.activeAgentName;
+            const neuralBadge = document.getElementById('active-neural-voice-badge');
+            if (neuralBadge) neuralBadge.innerText = this.activeNeuralVoice;
+
+            const feedback = document.getElementById('agent-save-feedback');
+            if (feedback) {
+              feedback.innerText = 'Saved & Active';
+              feedback.classList.add('show');
+              setTimeout(() => feedback.classList.remove('show'), 2500);
+            }
+          }
         } catch (e) {
-          console.error('Failed loading voices', e);
+          alert('Failed to save agent: ' + e.message);
         }
-      }
-
-      filterVoices(category) {
-        this.currentVoiceFilter = category;
-        const btns = document.querySelectorAll('#voice-filter .segmented-btn');
-        btns.forEach(b => b.classList.toggle('active', b.innerText === category));
-        this.renderVoices();
-      }
-
-      renderVoices() {
-        const container = document.getElementById('voice-grid');
-        const filtered = this.voices.filter(v => {
-          if (this.currentVoiceFilter === 'All') return true;
-          if (this.currentVoiceFilter === 'Female') return v.gender === 'Female';
-          if (this.currentVoiceFilter === 'Male') return v.gender === 'Male';
-          if (this.currentVoiceFilter === 'Variety') return v.category === 'Variety';
-          return true;
-        });
-
-        container.innerHTML = filtered.map(v => `
-          <div class="voice-card ${v.id === this.activeVoice ? 'selected' : ''}" onclick="window.studioApp.selectVoice('${v.id}')">
-            <div class="voice-id">${v.id.replace('.pt', '')}</div>
-            <div class="voice-tag">${v.tag}</div>
-            <div class="voice-desc">${v.description}</div>
-          </div>
-        `).join('');
-      }
-
-      selectVoice(voiceId) {
-        this.activeVoice = voiceId;
-        this.renderVoices();
       }
 
       updateStatus(text, className) {
@@ -1529,13 +1606,12 @@ STUDIO_HTML = r"""<!DOCTYPE html>
           return;
         }
 
-        // Start speech recognition with accent language code
-        const langMap = { indian: 'en-IN', american: 'en-US', british: 'en-GB' };
-        this.recognizer.setLang(langMap[this.activeAccent] || 'en-US');
+        // Start speech recognition locked to Indian English
+        this.recognizer.setLang('en-IN');
         this.recognizer.start();
 
         const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-        const url = `${proto}//${window.location.host}/v1/realtime?persona_id=${encodeURIComponent(this.activePersona)}&voice_prompt=${encodeURIComponent(this.activeVoice)}&accent=${encodeURIComponent(this.activeAccent)}&character=${encodeURIComponent(this.activeCharacter)}`;
+        const url = `${proto}//${window.location.host}/v1/realtime?persona_id=${encodeURIComponent(this.activePersona)}&neural_voice=${encodeURIComponent(this.activeNeuralVoice || 'en-IN-PrabhatNeural')}&voice_prompt=${encodeURIComponent(this.activeVoice || 'NATM0.pt')}&accent=Indian%20English&character=${encodeURIComponent(this.activeCharacter || 'Professional')}`;
         this.socket.connect(url);
       }
 

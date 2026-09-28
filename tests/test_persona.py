@@ -38,13 +38,18 @@ def test_official_presets_count():
 def test_persona_registry_defaults():
     registry = PersonaRegistry()
     personas = registry.list_all()
-    assert len(personas) >= 5
+    assert len(personas) == 2
 
-    teacher = registry.get("wise_teacher")
-    assert teacher is not None
-    assert teacher.voice_prompt == "NATF2.pt"
-    assert teacher.get_formatted_text_prompt().startswith("<system>")
-    assert teacher.get_formatted_text_prompt().endswith("<system>")
+    aarav = registry.get("indian_pro")
+    assert aarav is not None
+    assert aarav.voice_prompt == "NATM0.pt"
+    assert "en-IN-PrabhatNeural" in aarav.neural_voice
+    assert aarav.get_formatted_text_prompt().startswith("<system>")
+    assert aarav.get_formatted_text_prompt().endswith("<system>")
+
+    rohan = registry.get("indian_funny")
+    assert rohan is not None
+    assert "en-IN" in rohan.neural_voice
 
 
 def test_custom_persona_registration():

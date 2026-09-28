@@ -24,7 +24,7 @@ async def test_session_lifecycle_and_barge_in():
         pool.register_worker(WorkerNodeConfig(id="worker-sess-test", host="127.0.0.1", port=port))
 
         manager = SessionManager(pool=pool)
-        persona = default_registry.get("wise_teacher")
+        persona = default_registry.get("indian_pro")
         assert persona is not None
 
         session = await manager.create_session(persona=persona, session_id="test-session-lifecycle")

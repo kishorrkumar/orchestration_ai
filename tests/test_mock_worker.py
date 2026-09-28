@@ -16,7 +16,7 @@ async def test_mock_worker_handshake_and_stream():
     await mock.start()
 
     try:
-        persona = default_registry.get("wise_teacher")
+        persona = default_registry.get("indian_pro")
         assert persona is not None
 
         client = PersonaPlexWorkerClient(worker_id="test-worker-1", host="127.0.0.1", port=port)
@@ -62,7 +62,7 @@ async def test_mock_worker_single_concurrency_lock():
     await mock.start()
 
     try:
-        persona = default_registry.get("wise_teacher")
+        persona = default_registry.get("indian_pro")
         client1 = PersonaPlexWorkerClient(worker_id="client-1", host="127.0.0.1", port=port)
         await client1.connect(session_id="sess-1", persona=persona)
         assert client1.status == WorkerStatus.BUSY

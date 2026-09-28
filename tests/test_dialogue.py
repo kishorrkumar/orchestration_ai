@@ -25,25 +25,19 @@ def test_system_prompt_contains_12_principles():
         assert p in prompt, f"Expected principle {p} in master system prompt"
 
 
-def test_nine_accent_character_presets_registered():
-    """Verify all 3 accents x 3 characters (9 presets) are registered with system prompts."""
+def test_two_indian_voice_presets_registered():
+    """Verify the two primary Indian voice presets (Professional and Friendly & Funny) are registered with neural voices and prompts."""
     expected_ids = [
-        ("indian_pro", "indian", "professional"),
-        ("indian_funny", "indian", "funny"),
-        ("indian_warm", "indian", "warm"),
-        ("american_pro", "american", "professional"),
-        ("american_funny", "american", "funny"),
-        ("american_warm", "american", "warm"),
-        ("british_pro", "british", "professional"),
-        ("british_funny", "british", "funny"),
-        ("british_warm", "british", "warm"),
+        ("indian_pro", "indian", "professional", "en-IN-PrabhatNeural"),
+        ("indian_funny", "indian", "funny", "en-IN-NeerjaExpressiveNeural"),
     ]
 
-    for persona_id, expected_accent, expected_character in expected_ids:
+    for persona_id, expected_accent, expected_character, expected_neural in expected_ids:
         persona = default_registry.get(persona_id)
         assert persona is not None, f"Persona {persona_id} should be registered"
         assert expected_accent in persona.accent.lower(), f"Expected accent {expected_accent} for {persona_id}"
         assert expected_character in persona.character.lower(), f"Expected character {expected_character} for {persona_id}"
+        assert expected_neural in persona.neural_voice, f"Expected neural voice {expected_neural} for {persona_id}"
         prompt = persona.get_formatted_text_prompt()
         assert "<system>" in prompt
         assert "CONVERSATION PRINCIPLES" in prompt

@@ -171,6 +171,12 @@ def create_app(
         persona_registry.register(persona)
         return {"status": "created", "agent": persona.model_dump()}
 
+    @app.put("/v1/agents/{agent_id}", tags=["Agents"])
+    async def update_agent(agent_id: str, persona: PersonaConfig):
+        persona.id = agent_id
+        persona_registry.register(persona)
+        return {"status": "updated", "agent": persona.model_dump()}
+
     @app.delete("/v1/agents/{agent_id}", tags=["Agents"])
     async def delete_agent(agent_id: str):
         deleted = persona_registry.delete(agent_id)
@@ -326,27 +332,28 @@ def create_app(
     @app.websocket("/v1/realtime")
     async def realtime_endpoint(
         websocket: WebSocket,
-        persona_id: str = Query(default="wise_teacher", description="Registered persona ID"),
+        persona_id: str = Query(default="indian_pro", description="Registered persona ID"),
         voice_prompt: Optional[str] = Query(default=None, description="Optional override for voice prompt"),
+        neural_voice: Optional[str] = Query(default=None, description="Optional override for neural TTS voice"),
         text_prompt: Optional[str] = Query(default=None, description="Optional override for text prompt"),
         session_id: Optional[str] = Query(default=None, description="Optional custom session ID"),
-        accent: Optional[str] = Query(default=None, description="Optional accent override (indian, american, british)"),
-        character: Optional[str] = Query(default=None, description="Optional character override (professional, funny, warm)"),
+        accent: Optional[str] = Query(default=None, description="Optional accent override (Indian English)"),
+        character: Optional[str] = Query(default=None, description="Optional character override (Professional, Friendly & Funny)"),
     ):
         await websocket.accept()
 
         # 1. Resolve Persona
         base_persona = persona_registry.get(persona_id)
         if not base_persona:
-            err = encode_message(ErrorMessage(error=f"Unknown persona_id '{persona_id}'"))
-            await websocket.send_bytes(err)
-            await websocket.close(code=1008, reason="Invalid persona")
-            return
+            # Fall back to indian_pro if requested ID not found
+            base_persona = persona_registry.get("indian_pro") or list(persona_registry.list_all())[0]
 
         # Apply overrides if provided
         active_persona = base_persona.model_copy()
         if voice_prompt:
             active_persona.voice_prompt = voice_prompt
+        if neural_voice:
+            active_persona.neural_voice = neural_voice
         if text_prompt:
             active_persona.text_prompt = text_prompt
         if accent:
