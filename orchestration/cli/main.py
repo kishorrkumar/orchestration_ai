@@ -224,6 +224,13 @@ def main():
     gw.add_argument("--mock-port-start", type=int, default=8998, help="Starting port for mock workers")
     gw.add_argument("--worker", action="append", help="Register real worker (id:host:port[:gpu_id])")
 
+    # run-local (convenience command for instant local testing)
+    local_p = subparsers.add_parser("run-local", help="One-command local run: gateway + 2 local workers on port 8000")
+    local_p.add_argument("--host", default="127.0.0.1", help="Gateway bind host")
+    local_p.add_argument("--port", type=int, default=8000, help="Gateway bind port")
+    local_p.add_argument("--mock-workers", type=int, default=2, help="Number of local workers")
+    local_p.add_argument("--mock-port-start", type=int, default=8998, help="Starting port for workers")
+
     # run-mock-worker
     mock = subparsers.add_parser("run-mock-worker", help="Run standalone PersonaPlex mock worker")
     mock.add_argument("--host", default="127.0.0.1")
@@ -239,7 +246,9 @@ def main():
 
     args = parser.parse_args()
 
-    if args.subcommand == "run-gateway":
+    if args.subcommand in ("run-gateway", "run-local"):
+        if not hasattr(args, "worker"):
+            args.worker = None
         asyncio.run(_run_gateway_cmd(args))
     elif args.subcommand == "run-mock-worker":
         asyncio.run(_run_mock_worker_cmd(args))
