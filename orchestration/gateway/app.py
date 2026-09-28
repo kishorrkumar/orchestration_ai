@@ -483,13 +483,18 @@ _CONSOLE_HTML = """<!DOCTYPE html>
         <span id="session-badge" class="stat-badge" style="background: rgba(255,255,255,0.06); color: var(--text-muted);">DISCONNECTED</span>
       </div>
 
-      <div class="transcript-box" id="transcript-content">Agent conversation transcript will stream here token by token...</div>
+      <div class="transcript-box" id="transcript-content">Connecting... Click "Start Voice Session" to begin.</div>
+
+      <div style="display: flex; gap: 0.6rem; align-items: center;">
+        <input type="text" id="chat-input" placeholder="Type here or speak naturally into your microphone..." onkeydown="if(event.key==='Enter') sendTextMessage()" style="flex: 1;">
+        <button class="btn-primary" onclick="sendTextMessage()" style="padding: 0.65rem 1.2rem; white-space: nowrap;">Send</button>
+      </div>
 
       <div style="display: flex; gap: 1rem; align-items: center;">
         <div style="flex: 1; height: 35px; background: rgba(0,0,0,0.5); border-radius: 6px; border: 1px solid var(--border); position: relative; overflow: hidden;">
           <div id="audio-energy-bar" style="height: 100%; width: 0%; background: linear-gradient(90deg, #76b900, #00e5ff); transition: width 0.08s;"></div>
         </div>
-        <span style="font-size: 0.8rem; font-family: var(--font-mono); color: var(--text-muted);">24 kHz / 12.5 Hz (80ms)</span>
+        <span id="mic-status-label" style="font-size: 0.8rem; font-family: var(--font-mono); color: var(--text-muted);">24 kHz / 12.5 Hz (80ms)</span>
       </div>
     </div>
 
@@ -518,8 +523,10 @@ _CONSOLE_HTML = """<!DOCTYPE html>
     let micSource = null;
     let micProcessor = null;
     let silentGain = null;
+    let recognition = null;
     let nextPlayTime = 0;
     let isConnected = false;
+    let agentTurnActive = false;
 
     // Mic accumulator
     let micBuffer = [];
@@ -592,6 +599,42 @@ _CONSOLE_HTML = """<!DOCTYPE html>
     loadAgents();
     updateClusterStats();
 
+    function appendTranscript(speaker, text) {
+      const box = document.getElementById('transcript-content');
+      if (speaker === 'Agent') {
+        if (!agentTurnActive) {
+          box.innerHTML += `\\n\\n<strong style="color: #76b900;">Agent:</strong> `;
+          agentTurnActive = true;
+        }
+        box.innerHTML += text;
+      } else if (speaker === 'User') {
+        box.innerHTML += `\\n\\n<strong style="color: #00e5ff;">You:</strong> ${text}`;
+        agentTurnActive = false;
+      }
+      box.scrollTop = box.scrollHeight;
+    }
+
+    function sendTextMessage() {
+      const input = document.getElementById('chat-input');
+      const text = input.value.trim();
+      if (!text || !ws || ws.readyState !== WebSocket.OPEN) return;
+
+      appendTranscript('User', text);
+      input.value = '';
+
+      // Stop current playback (barge-in)
+      if (audioCtx) {
+        nextPlayTime = audioCtx.currentTime;
+      }
+
+      // Send as 0x02 Text message
+      const textBytes = new TextEncoder().encode(text);
+      const msg = new Uint8Array(1 + textBytes.byteLength);
+      msg[0] = 0x02; // Text kind
+      msg.set(textBytes, 1);
+      ws.send(msg);
+    }
+
     async function toggleSession() {
       if (isConnected) {
         disconnectSession();
@@ -615,7 +658,6 @@ _CONSOLE_HTML = """<!DOCTYPE html>
           await audioCtx.resume();
         }
       } catch (e) {
-        console.warn('AudioContext sampleRate option not supported, using default rate', e);
         audioCtx = new (window.AudioContext || window.webkitAudioContext)();
       }
 
@@ -632,7 +674,7 @@ _CONSOLE_HTML = """<!DOCTYPE html>
           }
         });
       } catch (err) {
-        alert('Microphone access denied or not available: ' + err.message);
+        alert('Microphone access denied: ' + err.message);
         disconnectSession();
         return;
       }
@@ -642,12 +684,13 @@ _CONSOLE_HTML = """<!DOCTYPE html>
       const url = `${proto}//${window.location.host}/v1/realtime?persona_id=${encodeURIComponent(personaId)}&voice_prompt=${encodeURIComponent(voice)}&text_prompt=${encodeURIComponent(prompt)}`;
 
       document.getElementById('session-badge').innerText = 'CONNECTING GATEWAY...';
-      document.getElementById('transcript-content').innerText = '';
+      document.getElementById('transcript-content').innerHTML = '<em>Connecting session...</em>';
       framesIn = 0;
       framesOut = 0;
       tokensCount = 0;
       bargeIns = 0;
       micBuffer = [];
+      agentTurnActive = false;
 
       ws = new WebSocket(url);
       ws.binaryType = 'arraybuffer';
@@ -659,9 +702,11 @@ _CONSOLE_HTML = """<!DOCTYPE html>
         document.getElementById('session-badge').style.color = '#76b900';
         document.getElementById('btn-session').innerText = 'End Session';
         document.getElementById('btn-session').className = 'btn-danger';
+        document.getElementById('transcript-content').innerHTML = '<em>Connected. Listening to your voice...</em>';
 
-        // Start streaming microphone audio
+        // Start streaming microphone audio and speech recognition
         startMicPipeline();
+        startSpeechRecognition();
       };
 
       ws.onmessage = (event) => {
@@ -671,7 +716,6 @@ _CONSOLE_HTML = """<!DOCTYPE html>
         const payload = data.slice(1);
 
         if (kind === 0x00) {
-          // Handshake acknowledged
           console.log('[PersonaPlex] Handshake 0x00 received from gateway');
         } else if (kind === 0x01) {
           // Agent Audio Frame (PCM Float32, 1920 samples @ 24kHz)
@@ -691,9 +735,7 @@ _CONSOLE_HTML = """<!DOCTYPE html>
           tokensCount++;
           document.getElementById('metric-tokens').innerText = tokensCount;
           const text = new TextDecoder().decode(payload);
-          document.getElementById('transcript-content').innerText += text;
-          const box = document.getElementById('transcript-content');
-          box.scrollTop = box.scrollHeight;
+          appendTranscript('Agent', text);
         } else if (kind === 0x04) {
           // Metadata (Session started, barge_in event, etc.)
           const meta = JSON.parse(new TextDecoder().decode(payload));
@@ -715,14 +757,65 @@ _CONSOLE_HTML = """<!DOCTYPE html>
       };
     }
 
+    function startSpeechRecognition() {
+      const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+      if (!SpeechRecognition) return;
+
+      try {
+        recognition = new SpeechRecognition();
+        recognition.continuous = true;
+        recognition.interimResults = true;
+        recognition.lang = 'en-US';
+
+        recognition.onresult = (event) => {
+          let interimText = '';
+          for (let i = event.resultIndex; i < event.results.length; ++i) {
+            const transcript = event.results[i][0].transcript;
+            if (event.results[i].isFinal) {
+              const cleaned = transcript.trim();
+              if (cleaned.length > 0) {
+                appendTranscript('User', cleaned);
+                // Cut off agent playback immediately (barge-in)
+                if (audioCtx) {
+                  nextPlayTime = audioCtx.currentTime;
+                }
+                // Send text over WebSocket (0x02)
+                if (ws && ws.readyState === WebSocket.OPEN) {
+                  const textBytes = new TextEncoder().encode(cleaned);
+                  const msg = new Uint8Array(1 + textBytes.byteLength);
+                  msg[0] = 0x02; // Text kind
+                  msg.set(textBytes, 1);
+                  ws.send(msg);
+                }
+              }
+            } else {
+              interimText += transcript;
+            }
+          }
+        };
+
+        recognition.onerror = (err) => {
+          console.warn('SpeechRecognition error:', err);
+        };
+
+        recognition.onend = () => {
+          if (isConnected) {
+            try { recognition.start(); } catch (e) {}
+          }
+        };
+
+        recognition.start();
+      } catch (e) {
+        console.warn('SpeechRecognition initialization error:', e);
+      }
+    }
+
     function startMicPipeline() {
       if (!micStream || !audioCtx) return;
 
       micSource = audioCtx.createMediaStreamSource(micStream);
-      // Use 2048 buffer size for capture
       micProcessor = audioCtx.createScriptProcessor(2048, 1, 1);
 
-      // Prevent feedback loop by sending through muted gain
       silentGain = audioCtx.createGain();
       silentGain.gain.value = 0.0;
 
@@ -733,7 +826,6 @@ _CONSOLE_HTML = """<!DOCTYPE html>
 
         const inputChannel = e.inputBuffer.getChannelData(0);
 
-        // Resample from inputSampleRate to TARGET_SAMPLE_RATE (24000) if different
         let resampled;
         if (inputSampleRate === TARGET_SAMPLE_RATE) {
           resampled = inputChannel;
@@ -750,17 +842,14 @@ _CONSOLE_HTML = """<!DOCTYPE html>
           }
         }
 
-        // Push into accumulator
         for (let i = 0; i < resampled.length; i++) {
           micBuffer.push(resampled[i]);
         }
 
-        // Slice into exact 1920-sample frames (80ms at 24kHz)
         while (micBuffer.length >= FRAME_SIZE) {
           const frame = new Float32Array(micBuffer.slice(0, FRAME_SIZE));
           micBuffer = micBuffer.slice(FRAME_SIZE);
 
-          // Package as 0x01 AudioMessage
           const byteBuffer = new Uint8Array(1 + frame.byteLength);
           byteBuffer[0] = 0x01; // Audio kind
           byteBuffer.set(new Uint8Array(frame.buffer), 1);
@@ -779,7 +868,6 @@ _CONSOLE_HTML = """<!DOCTYPE html>
     function playAudioChunk(floatSamples) {
       if (!audioCtx) return;
 
-      // Create an AudioBuffer at 24000 Hz (Web Audio resamples to device output automatically)
       const buffer = audioCtx.createBuffer(1, floatSamples.length, TARGET_SAMPLE_RATE);
       buffer.copyToChannel(floatSamples, 0);
 
@@ -787,10 +875,9 @@ _CONSOLE_HTML = """<!DOCTYPE html>
       source.buffer = buffer;
       source.connect(audioCtx.destination);
 
-      // Smooth schedule to avoid audio gaps/clicks
       const now = audioCtx.currentTime;
       if (nextPlayTime < now) {
-        nextPlayTime = now + 0.02; // Small 20ms jitter cushion
+        nextPlayTime = now + 0.02;
       }
 
       source.start(nextPlayTime);
@@ -801,6 +888,10 @@ _CONSOLE_HTML = """<!DOCTYPE html>
       if (ws) {
         ws.close();
         ws = null;
+      }
+      if (recognition) {
+        try { recognition.stop(); } catch (e) {}
+        recognition = null;
       }
       if (micStream) {
         micStream.getTracks().forEach(t => t.stop());
@@ -820,6 +911,7 @@ _CONSOLE_HTML = """<!DOCTYPE html>
       }
 
       isConnected = false;
+      agentTurnActive = false;
       document.getElementById('session-badge').innerText = 'DISCONNECTED';
       document.getElementById('session-badge').style.background = 'rgba(255,255,255,0.06)';
       document.getElementById('session-badge').style.color = 'var(--text-muted)';

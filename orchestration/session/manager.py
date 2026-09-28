@@ -183,6 +183,8 @@ class VoiceSession:
 
                 await self.worker.send_audio(frame)
 
+        elif msg.type == MessageType.TEXT:
+            await self.worker.send_text(msg.text)
         elif msg.type == MessageType.CONTROL:
             await self.worker.send_control(msg.action)
 

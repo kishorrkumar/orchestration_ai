@@ -181,6 +181,12 @@ class PersonaPlexWorkerClient:
             return
         await self._ws.send(encode_message(ControlMessage(action=action)))
 
+    async def send_text(self, text: str) -> None:
+        """Send text message upstream (Kind 0x02)."""
+        if self._ws is None:
+            return
+        await self._ws.send(encode_message(TextMessage(text=text)))
+
     async def recv_messages(self) -> AsyncGenerator[WSMessage, None]:
         """Async generator yielding incoming messages from the upstream worker."""
         if self._ws is None:

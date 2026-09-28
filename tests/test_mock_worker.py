@@ -75,6 +75,7 @@ async def test_mock_worker_single_concurrency_lock():
         # Disconnect client 1
         await client1.close()
         assert client1.status == WorkerStatus.IDLE
+        await asyncio.sleep(0.05)
 
         # Now client 2 can connect!
         await client2.connect(session_id="sess-2-retry", persona=persona)
