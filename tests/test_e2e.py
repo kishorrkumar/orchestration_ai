@@ -54,7 +54,7 @@ async def test_full_duplex_e2e_call(tmp_path):
         # 4. Execute test call CLI routine
         args = MockArgs(
             url=f"ws://127.0.0.1:{gw_port}/v1/realtime",
-            persona="citysan_service",
+            persona="indian_pro",
             input_wav=input_wav_path,
             output_wav=output_wav_path,
             output_json=output_json_path,

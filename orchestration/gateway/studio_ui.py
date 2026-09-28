@@ -502,52 +502,96 @@ STUDIO_HTML = r"""<!DOCTYPE html>
       box-shadow: 0 2px 12px rgba(255, 69, 58, 0.35);
     }
 
-    /* Indian Agent Options Grid (2 Best Options) */
-    .agent-options-grid {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 8px;
-    }
-    .agent-option-btn {
-      background: rgba(255, 255, 255, 0.04);
-      border: 1px solid var(--border-subtle);
-      border-radius: var(--radius-md);
-      padding: 10px 12px;
+    /* Top-Right Header Save Button with Apple Color Changing Transition */
+    .btn-header-save {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 14px;
+      font-size: 12px;
+      font-weight: 600;
+      color: #f5f5f7;
+      background: rgba(0, 113, 227, 0.22);
+      border: 1px solid rgba(41, 151, 255, 0.45);
+      border-radius: var(--radius-full);
       cursor: pointer;
-      text-align: left;
-      display: flex;
-      flex-direction: column;
-      gap: 3px;
-      transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+      box-shadow: 0 2px 10px rgba(0, 113, 227, 0.2);
     }
-    .agent-option-btn:hover {
-      background: rgba(255, 255, 255, 0.08);
-      border-color: var(--border-medium);
+    .btn-header-save:hover {
+      background: rgba(0, 113, 227, 0.38);
+      border-color: var(--apple-cyan);
+      box-shadow: 0 4px 16px rgba(41, 151, 255, 0.35);
       transform: translateY(-1px);
     }
-    .agent-option-btn.active {
-      background: rgba(41, 151, 255, 0.12);
-      border-color: var(--apple-cyan);
-      box-shadow: 0 0 16px rgba(41, 151, 255, 0.2);
+    .btn-header-save:active {
+      transform: scale(0.97);
     }
-    .agent-option-title {
-      font-size: 13px;
-      font-weight: 600;
+    .btn-header-save svg {
+      transition: transform 0.25s ease;
+    }
+    /* Dynamic Saved State: Color Shifts to Vibrant Apple Emerald Green */
+    .btn-header-save.saved {
+      background: var(--apple-green) !important;
+      border-color: var(--apple-green) !important;
+      color: #000000 !important;
+      font-weight: 700 !important;
+      box-shadow: 0 0 22px rgba(48, 209, 88, 0.7), 0 2px 10px rgba(48, 209, 88, 0.4) !important;
+      transform: scale(1.03);
+    }
+    .btn-header-save.saved svg {
+      stroke: #000000 !important;
+      stroke-width: 2.5;
+      transform: scale(1.1);
+    }
+
+    /* Single Voice Profile Card (Locked to One Voice & Tone) */
+    .single-agent-profile {
+      background: linear-gradient(135deg, rgba(41, 151, 255, 0.12), rgba(94, 92, 230, 0.08));
+      border: 1px solid rgba(41, 151, 255, 0.35);
+      border-radius: var(--radius-md);
+      padding: 12px 14px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25);
+    }
+    .profile-top {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .profile-name {
+      font-size: 14px;
+      font-weight: 700;
       color: #ffffff;
+      letter-spacing: -0.01em;
     }
-    .agent-option-sub {
-      font-size: 10.5px;
-      color: var(--text-secondary);
-    }
-    .agent-option-tag {
-      font-size: 9.5px;
+    .profile-badge {
+      font-size: 10px;
       color: var(--apple-cyan);
-      background: rgba(41, 151, 255, 0.12);
-      padding: 2px 6px;
+      background: rgba(41, 151, 255, 0.15);
+      border: 0.5px solid rgba(41, 151, 255, 0.3);
+      padding: 2px 7px;
       border-radius: 4px;
-      width: fit-content;
-      margin-top: 2px;
       font-family: var(--font-mono);
+      font-weight: 500;
+    }
+    .profile-desc {
+      font-size: 11.5px;
+      color: var(--text-secondary);
+      line-height: 1.4;
+    }
+    .profile-meta-row {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 11px;
+      color: var(--apple-cyan);
+      font-family: var(--font-mono);
+      margin-top: 2px;
     }
 
     /* Customizer Form & Save Agent */
@@ -680,6 +724,11 @@ STUDIO_HTML = r"""<!DOCTYPE html>
     </div>
 
     <div class="header-actions">
+      <button id="btn-header-save" class="btn-header-save" onclick="window.studioApp.saveActiveAgent()" title="Save Agent Profile &amp; Rules">
+        <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/></svg>
+        <span id="btn-header-save-text">Save Agent</span>
+      </button>
+
       <div id="status-pill" class="status-pill">
         <span class="status-dot"></span>
         <span id="status-text">Standby</span>
@@ -689,25 +738,24 @@ STUDIO_HTML = r"""<!DOCTYPE html>
 
   <!-- Main Container -->
   <div class="studio-container">
-    <!-- Left Column: Indian Voice Agent Customizer & 2 Best Options -->
+    <!-- Left Column: Indian Voice Agent Customizer (Locked to 1 Voice & 1 Tone) -->
     <div class="panel" style="overflow-y: auto;">
       <div class="panel-header">
         <span class="panel-title">Voice Agent</span>
         <span id="active-agent-badge" class="doc-badge" style="color: var(--apple-cyan);">Aarav</span>
       </div>
 
-      <!-- The Two Best Options -->
-      <div class="agent-options-grid">
-        <button class="agent-option-btn active" id="btn-agent-aarav" onclick="window.studioApp.selectAgentPreset('indian_pro')">
-          <div class="agent-option-title">Aarav</div>
-          <div class="agent-option-sub">Professional &amp; Articulate</div>
-          <span class="agent-option-tag">en-IN Prabhat</span>
-        </button>
-        <button class="agent-option-btn" id="btn-agent-rohan" onclick="window.studioApp.selectAgentPreset('indian_funny')">
-          <div class="agent-option-title">Rohan</div>
-          <div class="agent-option-sub">Friendly &amp; Funny</div>
-          <span class="agent-option-tag">en-IN Neerja</span>
-        </button>
+      <!-- Locked Single Voice & Tone Profile (Aarav • Indian English) -->
+      <div class="single-agent-profile">
+        <div class="profile-top">
+          <span class="profile-name">Aarav</span>
+          <span class="profile-badge">Locked Voice &amp; Tone</span>
+        </div>
+        <div class="profile-desc">Natural, articulate, and crystal-clear Indian English conversational voice agent.</div>
+        <div class="profile-meta-row">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3z"/><path d="M17 11c0 2.76-2.24 5-5 5s-5-2.24-5-5H5c0 3.53 2.61 6.43 6 6.92V21h2v-3.08c3.39-.49 6-3.39 6-6.92h-2z"/></svg>
+          <span>en-IN-PrabhatNeural (24 kHz PCM)</span>
+        </div>
       </div>
 
       <!-- Agent Settings & Live Customizer -->
@@ -719,24 +767,17 @@ STUDIO_HTML = r"""<!DOCTYPE html>
       <div class="customizer-form">
         <div class="form-group">
           <label class="form-label" for="cfg-agent-name">Agent Display Name</label>
-          <input type="text" id="cfg-agent-name" class="form-input" placeholder="Agent Name">
+          <input type="text" id="cfg-agent-name" class="form-input" value="Aarav (Indian English • Articulate &amp; Natural)" placeholder="Agent Name">
         </div>
 
         <div class="form-row">
           <div class="form-group flex-1">
-            <label class="form-label" for="cfg-character">Character Style</label>
-            <select id="cfg-character" class="form-select">
-              <option value="Professional">Professional</option>
-              <option value="Friendly & Funny">Friendly & Funny</option>
-            </select>
+            <label class="form-label">Voice Tone</label>
+            <input type="text" class="form-input" value="Natural &amp; Articulate" readonly style="opacity: 0.85; cursor: default;">
           </div>
           <div class="form-group flex-1">
-            <label class="form-label" for="cfg-neural-voice">Neural Voice</label>
-            <select id="cfg-neural-voice" class="form-select">
-              <option value="en-IN-PrabhatNeural">Prabhat (Male)</option>
-              <option value="en-IN-NeerjaExpressiveNeural">Neerja (Female - Expressive)</option>
-              <option value="en-IN-NeerjaNeural">Neerja (Female - Calm)</option>
-            </select>
+            <label class="form-label">Neural Voice</label>
+            <input type="text" id="cfg-neural-voice" class="form-input" value="en-IN-PrabhatNeural" readonly style="opacity: 0.85; cursor: default; font-family: var(--font-mono); font-size: 11px;">
           </div>
         </div>
 
@@ -745,13 +786,8 @@ STUDIO_HTML = r"""<!DOCTYPE html>
             <label class="form-label" for="cfg-system-prompt">System Prompt &amp; Rules</label>
             <span style="font-size:10px; color:var(--apple-green);">12 Principles Enforced</span>
           </div>
-          <textarea id="cfg-system-prompt" class="form-textarea" rows="7" placeholder="Agent system prompt..."></textarea>
+          <textarea id="cfg-system-prompt" class="form-textarea" rows="8" placeholder="Agent system prompt..."></textarea>
         </div>
-
-        <button id="btn-save-agent" class="btn-save-agent" onclick="window.studioApp.saveActiveAgent()">
-          <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/></svg>
-          <span>Save Agent</span>
-        </button>
       </div>
 
       <div class="panel-header" style="margin-top: 4px;">
@@ -793,7 +829,7 @@ STUDIO_HTML = r"""<!DOCTYPE html>
       <div class="chat-transcript" id="chat-transcript">
         <div class="message-row agent">
           <span class="message-author" id="initial-agent-author">Aarav</span>
-          <div class="bubble">Namaste! I am your Indian English voice assistant. Choose Aarav (Professional) or Rohan (Friendly &amp; Funny), customize the system prompt or voice settings and click &quot;Save Agent&quot;, then click Start Call to begin.</div>
+          <div class="bubble">Namaste! I'm Aarav, your Indian English AI voice assistant. I am ready to converse naturally and clearly with you. Click &quot;Start Call&quot; or type below to begin.</div>
         </div>
       </div>
 
@@ -1410,6 +1446,11 @@ STUDIO_HTML = r"""<!DOCTYPE html>
       }
 
       async boot() {
+        this.activePersona = 'indian_pro';
+        this.activeAgentName = 'Aarav';
+        this.activeNeuralVoice = 'en-IN-PrabhatNeural';
+        this.activeVoice = 'NATM0.pt';
+        this.activeCharacter = 'Professional';
         await this.loadPersonas();
       }
 
@@ -1418,90 +1459,86 @@ STUDIO_HTML = r"""<!DOCTYPE html>
           const res = await fetch('/v1/agents');
           const data = await res.json();
           this.personas = data.agents || [];
-          this.selectAgentPreset(this.activePersona || 'indian_pro');
+          this.populateCustomizer();
         } catch (e) {
           console.error('Failed loading personas', e);
         }
       }
 
       selectAgentPreset(presetId) {
-        this.activePersona = presetId;
-        const btnAarav = document.getElementById('btn-agent-aarav');
-        const btnRohan = document.getElementById('btn-agent-rohan');
-        if (btnAarav) btnAarav.classList.toggle('active', presetId === 'indian_pro');
-        if (btnRohan) btnRohan.classList.toggle('active', presetId === 'indian_funny');
-
+        this.activePersona = 'indian_pro';
         this.populateCustomizer();
       }
 
       populateCustomizer() {
-        const p = this.personas.find(item => item.id === this.activePersona);
+        const p = this.personas.find(item => item.id === 'indian_pro') || this.personas[0];
         if (!p) return;
 
-        this.activeAgentName = p.name.split(' ')[0];
-        this.activeCharacter = p.character;
-        this.activeNeuralVoice = p.neural_voice || (p.character === 'Professional' ? 'en-IN-PrabhatNeural' : 'en-IN-NeerjaExpressiveNeural');
-        this.activeVoice = p.voice_prompt;
+        this.activeAgentName = 'Aarav';
+        this.activeCharacter = 'Professional';
+        this.activeNeuralVoice = 'en-IN-PrabhatNeural';
+        this.activeVoice = 'NATM0.pt';
 
         const badge = document.getElementById('active-agent-badge');
-        if (badge) badge.innerText = this.activeAgentName;
+        if (badge) badge.innerText = 'Aarav';
 
         const neuralBadge = document.getElementById('active-neural-voice-badge');
-        if (neuralBadge) neuralBadge.innerText = this.activeNeuralVoice;
+        if (neuralBadge) neuralBadge.innerText = 'en-IN-PrabhatNeural';
 
         const nameInput = document.getElementById('cfg-agent-name');
-        if (nameInput) nameInput.value = p.name;
+        if (nameInput) nameInput.value = p.name || 'Aarav (Indian English • Articulate & Natural)';
 
-        const charSelect = document.getElementById('cfg-character');
-        if (charSelect) charSelect.value = p.character;
-
-        const voiceSelect = document.getElementById('cfg-neural-voice');
-        if (voiceSelect) voiceSelect.value = this.activeNeuralVoice;
+        const voiceInput = document.getElementById('cfg-neural-voice');
+        if (voiceInput) voiceInput.value = 'en-IN-PrabhatNeural';
 
         const promptArea = document.getElementById('cfg-system-prompt');
-        if (promptArea) promptArea.value = p.text_prompt;
+        if (promptArea && p.text_prompt) promptArea.value = p.text_prompt;
 
         const initialAuthor = document.getElementById('initial-agent-author');
-        if (initialAuthor && !this.isConnected) initialAuthor.innerText = this.activeAgentName;
+        if (initialAuthor && !this.isConnected) initialAuthor.innerText = 'Aarav';
       }
 
       async saveActiveAgent() {
         const nameInput = document.getElementById('cfg-agent-name');
-        const charSelect = document.getElementById('cfg-character');
-        const voiceSelect = document.getElementById('cfg-neural-voice');
         const promptArea = document.getElementById('cfg-system-prompt');
+        const headerSaveBtn = document.getElementById('btn-header-save');
+        const headerSaveText = document.getElementById('btn-header-save-text');
 
         const updatedPersona = {
-          id: this.activePersona,
-          name: nameInput.value.trim() || this.activeAgentName,
-          description: `${charSelect.value} Indian English conversational AI agent.`,
+          id: 'indian_pro',
+          name: (nameInput ? nameInput.value.trim() : '') || 'Aarav (Indian English • Articulate & Natural)',
+          description: 'Natural, articulate, and crystal-clear Indian English conversational AI voice agent.',
           accent: 'Indian English',
-          character: charSelect.value,
-          voice_prompt: this.activePersona === 'indian_pro' ? 'NATM0.pt' : 'NATM3.pt',
-          neural_voice: voiceSelect.value,
-          text_prompt: promptArea.value.trim(),
+          character: 'Professional',
+          voice_prompt: 'NATM0.pt',
+          neural_voice: 'en-IN-PrabhatNeural',
+          text_prompt: promptArea ? promptArea.value.trim() : '',
         };
 
         try {
-          const res = await fetch(`/v1/agents/${encodeURIComponent(this.activePersona)}`, {
+          const res = await fetch('/v1/agents/indian_pro', {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(updatedPersona)
           });
           const result = await res.json();
           if (result.agent) {
-            const idx = this.personas.findIndex(p => p.id === this.activePersona);
+            const idx = this.personas.findIndex(p => p.id === 'indian_pro');
             if (idx >= 0) this.personas[idx] = result.agent;
             else this.personas.push(result.agent);
 
-            this.activeAgentName = result.agent.name.split(' ')[0];
-            this.activeCharacter = result.agent.character;
-            this.activeNeuralVoice = result.agent.neural_voice;
+            this.activeAgentName = 'Aarav';
+            this.activeNeuralVoice = 'en-IN-PrabhatNeural';
 
-            const badge = document.getElementById('active-agent-badge');
-            if (badge) badge.innerText = this.activeAgentName;
-            const neuralBadge = document.getElementById('active-neural-voice-badge');
-            if (neuralBadge) neuralBadge.innerText = this.activeNeuralVoice;
+            // Visual feedback on Top-Right Header Save Button with color change
+            if (headerSaveBtn) {
+              headerSaveBtn.classList.add('saved');
+              if (headerSaveText) headerSaveText.innerText = '✓ Saved!';
+              setTimeout(() => {
+                headerSaveBtn.classList.remove('saved');
+                if (headerSaveText) headerSaveText.innerText = 'Save Agent';
+              }, 2500);
+            }
 
             const feedback = document.getElementById('agent-save-feedback');
             if (feedback) {

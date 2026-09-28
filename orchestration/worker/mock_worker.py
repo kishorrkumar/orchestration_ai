@@ -449,6 +449,12 @@ class PersonaPlexMockServer:
                         if step % token_step_interval == 0 and len(outbound_tokens) > 0:
                             token = outbound_tokens.pop(0)
                             await websocket.send(encode_message(TextMessage(text=token)))
+                    elif len(outbound_tokens) > 0:
+                        # Stream remaining or early tokens smoothly
+                        out_frame = generate_silence_frame()
+                        if step % token_step_interval == 0:
+                            token = outbound_tokens.pop(0)
+                            await websocket.send(encode_message(TextMessage(text=token)))
                     else:
                         # Clean silence when idle (NO buzz, NO tone)
                         out_frame = generate_silence_frame()

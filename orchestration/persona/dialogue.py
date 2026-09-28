@@ -50,29 +50,7 @@ class StrictVoiceDialogueEngine:
 
     def get_greeting(self) -> str:
         """Initial natural greeting (1 sentence, max 1 question)."""
-        if "indian" in self.accent:
-            if "funny" in self.character:
-                return "Namaste! All set and cheerful—what fun problem are we tackling today?"
-            elif "warm" in self.character:
-                return "Namaste! I'm here and ready to help. What's on your mind today?"
-            else: # Professional
-                return "Namaste. Good day. How may I assist you today?"
-
-        elif "british" in self.accent:
-            if "funny" in self.character:
-                return "Right then! Fully operational and ready. What shall we sort out first?"
-            elif "warm" in self.character:
-                return "Hello! Wonderful to connect with you. How can I help today?"
-            else: # Professional
-                return "Good day. I am ready to assist. Please let me know your goal."
-
-        else: # American English
-            if "funny" in self.character:
-                return "Hey! Ready to roll. What are we diving into today?"
-            elif "warm" in self.character:
-                return "Hello! Great to hear from you. What can I help you with today?"
-            else: # Professional
-                return "Hello. I'm here to help. What would you like to achieve today?"
+        return "Namaste! I'm Aarav, your AI voice assistant. How are you doing today, and how can I help you?"
 
     def reply(self, user_text: str) -> str:
         """
@@ -111,7 +89,6 @@ class StrictVoiceDialogueEngine:
 
     def _extract_entities_and_context(self, raw: str, u: str) -> None:
         """Maintains Context (Principle 11) & prevents repetition (Principle 5)."""
-        # Name detection: "my name is X", "I am X", "this is X"
         name_match = re.search(r"\b(?:my name is|i am|this is|call me)\s+([A-Z][a-z]+|[a-z]+)\b", raw, re.IGNORECASE)
         if name_match:
             detected_name = name_match.group(1).capitalize()
@@ -119,7 +96,6 @@ class StrictVoiceDialogueEngine:
                 self.caller_name = detected_name
                 self.known_facts["caller_name"] = detected_name
 
-        # Goal detection
         if any(p in u for p in ["i want to", "i need to", "looking to", "my goal is", "hoping to"]):
             clean_goal = re.sub(r"^(.*?\b(?:i want to|i need to|looking to|my goal is|hoping to)\s+)", "", raw, flags=re.IGNORECASE)
             clean_goal = clean_goal.rstrip(".?!")
@@ -128,105 +104,135 @@ class StrictVoiceDialogueEngine:
                 self.known_facts["current_goal"] = clean_goal
 
     def _synthesize_priority_response(self, raw: str, u: str) -> str:
-        """Determine most useful next response addressing the latest statement directly."""
-        # 1. Natural Acknowledgement (Principle 6) check
-        ack = self._get_selective_acknowledgement()
+        """Determine most useful next response addressing the latest statement directly like a real human."""
+        u_clean = re.sub(r"[^\w\s]", " ", u)
+        u_clean = " ".join(u_clean.split())
+        words = u_clean.split()
 
-        # 2. Direct Address: Personal / AI questions (Honest, zero hallucination, no bluffing)
-        if any(w in u for w in ["what did you eat", "did you eat", "have you eaten", "have food", "have lunch", "have dinner"]):
-            if "funny" in self.character:
-                return "I run strictly on electricity and code, so no biryani or pizza for me! What about you, did you have a good meal?"
-            elif "warm" in self.character:
-                return "I don't eat food since I'm an AI, but I'm fully energized and ready. How is your day going?"
-            else: # Professional
-                return "As an AI voice assistant, I do not consume food. How may I assist with your tasks today?"
+        # 1. Jokes & Humor
+        if any(w in u_clean for w in ["joke", "funny", "laugh", "make me laugh"]):
+            jokes = [
+                "Why do programmers prefer dark mode? Because light attracts bugs!",
+                "Why was the computer cold? Because it forgot to close its Windows!",
+                "Why don't skeletons fight each other? Because they just don't have the guts!",
+                "What do you call an alligator in a vest? An investigator!",
+                "Why did the scarecrow win an award? Because he was outstanding in his field!",
+                "Why did the smartphone need glasses? Because it lost its contacts!",
+            ]
+            joke = jokes[self.turn_count % len(jokes)]
+            return f"Here is a good one: {joke} What do you think?"
 
-        if any(w in u for w in ["who are you", "what are you", "what is your name"]):
-            name_part = f"I'm your {self.accent.title()} voice assistant"
-            if "funny" in self.character:
-                return f"{name_part}, sharp, fast, and ready to roll. What are we working on?"
-            elif "warm" in self.character:
-                return f"{name_part}, here to make things smooth and easy for you. What would you like to do?"
-            else:
-                return f"{name_part}. What objective can I help you accomplish today?"
+        # 2. Greetings
+        if u_clean in ["hello", "hi", "hey", "namaste", "good morning", "good evening", "good afternoon"] or (
+            len(words) <= 3 and any(w in words for w in ["hello", "hi", "hey", "namaste"])
+        ):
+            if "caller_name" in self.known_facts:
+                return f"Hello {self.caller_name}! Great to hear your voice. What can I do for you today?"
+            return "Namaste! Great to connect with you. How are you doing today?"
 
-        if any(w in u for w in ["how are you", "how's it going", "how are u doing"]):
-            if "funny" in self.character:
-                return "Running on all cylinders and ready for action! How are you doing?"
-            elif "warm" in self.character:
-                return "I'm doing great, thank you! How are you feeling today?"
-            else:
-                return "I am operating optimally and ready to assist you. How can I help?"
+        # 3. Connectivity & Audio Hearing
+        if any(w in u_clean for w in ["can you hear", "can u hear", "hear me", "you hear me", "are you there"]):
+            return "Yes, I hear you loud and clear! How can I help you today?"
 
-        # 3. Caller introduced both name and goal
+        # 4. Personal & AI Nature
+        if any(w in u_clean for w in ["what did you eat", "did you eat", "have you eaten", "have food", "have lunch", "have dinner"]):
+            return "I run strictly on electricity and code, so no biryani for me! Did you have a good meal today?"
+
+        if any(w in u_clean for w in ["who are you", "what are you", "what is your name", "who made you"]):
+            return "I'm Aarav, your real-time Indian English voice assistant. What can I help you accomplish today?"
+
+        if any(w in u_clean for w in ["how are you", "how are you doing", "hows it going", "how are u"]):
+            return "I'm doing great, feeling energized and ready to assist! How is your day going so far?"
+
+        # 5. Artificial Intelligence & Technology
+        if any(w in u_clean for w in ["artificial intelligence", "machine learning", "neural network", "deep learning"]) or (
+            "ai" in words or "a i" in u_clean or "about ai" in u_clean or "about a i" in u_clean
+        ):
+            return "Artificial Intelligence is about building systems that can learn patterns, understand language, and solve problems like humans do. Are you interested in voice AI or general technology?"
+
+        # 6. Helicopters / Gun Choppers / Aviation
+        if any(w in u_clean for w in ["gun chopper", "chopper", "helicopter", "gunship", "attack heli"]):
+            return "A gun chopper is an armored attack helicopter equipped with rapid-fire autocannons, rockets, and anti-tank guided missiles, like the Apache or India's Prachand. Were you curious about how they operate or military aviation in general?"
+
+        # 7. Stories / Narrative
+        if any(w in u_clean for w in ["narrative", "story", "tale", "tell me a story"]):
+            return "Here's a quick story: An engineer in Bengaluru built a voice AI, and on its first trial call, it unexpectedly solved a major logistics problem and made the client laugh! What kind of stories do you enjoy hearing most?"
+
+        # 8. Follow-up / Clarification on why agent said or did something
+        if any(w in u_clean for w in ["why didnt you", "why did you", "why did you say", "repeat", "second and again"]):
+            return "I wanted to keep our dialogue fresh and moving forward naturally rather than looping on the same words! What topic would you like to explore next?"
+
+        # 9. Context: Caller introduced both name and goal
         if "caller_name" in self.known_facts and self.caller_goals and self.turn_count <= 2:
             return f"Great to meet you, {self.caller_name}. Helping you with {self.caller_goals[-1]} sounds great—where should we start?"
 
-        # 4. Caller introduced their name
+        # 10. Context: Caller introduced their name
         if "caller_name" in self.known_facts and self.turn_count <= 2:
             return f"Great to meet you, {self.caller_name}. What is the main thing you'd like to work on today?"
 
-        # 5. Caller introduced a new goal
+        # 11. Context: Caller introduced a new goal
         if self.caller_goals and self.turn_count <= 3:
             goal = self.caller_goals[-1]
-            return f"{ack} Helping you with {goal} sounds like a solid plan. Where would you like to start?"
+            return f"Helping you with {goal} sounds like a solid plan. Where would you like to start?"
 
-        # 5. Direct Question Handling: Caller asked a question
-        if any(w in u for w in ["can you hear", "can u hear", "hear me", "you hear me", "are you there"]):
-            return "Yes, I hear you loud and clear! How can I help you today?"
+        # 12. Direct Questions (Answering directly and humanly)
+        if u.endswith("?") or any(u_clean.startswith(w) for w in ["what", "how", "why", "when", "where", "can you", "could you", "is it", "are you", "tell me", "explain"]):
+            return self._answer_direct_question(raw, u_clean)
 
-        if u.endswith("?") or any(u.startswith(w) for w in ["what", "how", "why", "when", "where", "can you", "could you", "is it", "are you"]):
-            return self._answer_direct_question(raw, u)
-
-        # 6. Handling Affirmations / Short caller responses ("yes", "okay", "sure", "no")
-        if u in ["yes", "yeah", "yep", "sure", "ok", "okay", "sounds good", "absolutely"]:
+        # 13. Affirmations & Short responses
+        if u_clean in ["yes", "yeah", "yep", "sure", "ok", "okay", "sounds good", "absolutely", "definitely"]:
             if self.caller_goals:
-                return f"{ack} Let's proceed with {self.caller_goals[-1]}. What is the first step you want to take?"
-            return f"{ack} What should we jump into next?"
+                return f"Let's proceed with {self.caller_goals[-1]}. What is the first step you'd like to take?"
+            return "Sounds great! What should we dive into next?"
 
-        if u in ["no", "nope", "not really", "never mind", "cancel"]:
-            return f"Understood. We can change direction—what would you prefer to focus on instead?"
+        if u_clean in ["no", "nope", "not really", "never mind", "cancel"]:
+            return "Understood. We can change direction—what would you prefer to focus on instead?"
 
-        # 7. Handling Uncertainty / Ambiguous or Incomplete Input (Principle 10)
-        if len(u.split()) <= 2 and u not in ["hello", "hi", "hey"]:
-            return f"I want to make sure I understand you correctly. Could you say a bit more about '{raw}'?"
+        # 14. Intent & Friendly conversation
+        if any(w in u_clean for w in ["looking for", "want to talk", "interested in", "someone who"]):
+            return "I am right here and happy to chat with you! What kind of topics do you enjoy talking about?"
 
-        # 8. Handling Intent & General Conversation
-        if any(w in u for w in ["looking for", "want to talk", "interested in", "someone who"]):
-            if "funny" in self.character:
-                return "Well, you found the right agent! I'm all ears and ready to chat. What shall we talk about first?"
-            elif "warm" in self.character:
-                return "I'm right here and happy to chat with you! What kind of topics do you enjoy talking about?"
-            else:
-                return "I am glad to assist. Please let me know what topics you would like to discuss."
+        # 15. Short input fallback - Positive human acknowledgment
+        if len(words) <= 2:
+            topic = raw.rstrip(".?!,")
+            return f"Understood, {topic}! Where would you like to take our conversation from here?"
 
-        # Human conversational responses without mechanical quoted repetitions
-        prefix = f"{ack} " if ack else ""
-        if "funny" in self.character:
-            return f"{prefix}That makes good sense to me. What outcome are you hoping for?"
-        elif "warm" in self.character:
-            return f"{prefix}I hear you. What would be the best next step for us?"
-        else: # Professional
-            return f"{prefix}I understand. How would you like to proceed from here?"
+        # 16. General natural human response
+        return "That makes good sense to me. What outcome or next step are you hoping for?"
 
-    def _answer_direct_question(self, raw: str, u: str) -> str:
-        """Answers caller questions directly, concisely, and factually without inventing facts."""
-        if any(w in u for w in ["can you hear", "can u hear", "hear me"]):
-            return "Yes, I hear you loud and clear! How can I help you today?"
-        if "weather" in u:
+    def _answer_direct_question(self, raw: str, u_clean: str) -> str:
+        """Answers caller questions directly, factually, and conversationally like a knowledgeable human."""
+        words = u_clean.split()
+
+        # Specific topic answers
+        if "weather" in u_clean:
             return "I don't have a live weather feed connected right now, but I hope the skies are clear where you are! What else can I help with?"
-        if "time" in u:
-            return "I don't track your local timezone directly, but I'm ready whenever you are. What task shall we tackle?"
-        if any(w in u for w in ["pricing", "cost", "price", "rate"]):
-            return "This open-source voice layer runs completely free and locally on your own machine. Is there a specific configuration you'd like to test?"
 
-        # Direct, concise conversational question reply
-        if "indian" in self.accent:
-            return "That's a good question. Could you clarify your exact use case so I can give you the most accurate answer?"
-        elif "british" in self.accent:
-            return "An excellent question. To be precise, what specific outcome are you aiming for?"
-        else:
-            return "Good question. What specific detail would be most helpful to explore?"
+        if "time" in u_clean:
+            return "I don't track your local clock directly, but I'm ready whenever you are. What should we tackle?"
+
+        if any(w in u_clean for w in ["pricing", "cost", "price", "rate"]):
+            return "This voice AI pipeline runs completely free and locally on your own machine. Is there a specific configuration you'd like to test?"
+
+        if any(w in u_clean for w in ["coding", "programming", "python", "javascript"]):
+            return "Coding is all about breaking down complex problems into clear, logical steps. Which language or project are you working on?"
+
+        if any(w in u_clean for w in ["india", "indian"]):
+            return "India is an amazing country known for its rich history, diverse languages, and incredible technology ecosystem. What aspect are you most curious about?"
+
+        if any(w in u_clean for w in ["food", "dish", "biryani", "cuisine"]):
+            return "Indian cuisine is celebrated worldwide for its incredible spices and rich flavors! What is your favorite dish to enjoy?"
+
+        if any(w in u_clean for w in ["movie", "cinema", "music", "song"]):
+            return "Music and movies are fantastic ways to connect and unwind! Do you have a favorite genre or artist you enjoy?"
+
+        # Direct, articulate conversational question reply (No evasive canned response!)
+        clean_topic = re.sub(r"^(what is|what are|how do|how does|why is|why are|tell me about|explain)\s+", "", u_clean, flags=re.IGNORECASE)
+        clean_topic = clean_topic.strip()
+        if clean_topic and len(clean_topic.split()) <= 4:
+            return f"Regarding {clean_topic}, it plays an important role in how things work and connect together. What specific part would you like to explore deeper?"
+
+        return "That is a great question. In most cases, it comes down to having clear goals and the right tools. What specific aspect should we explore next?"
 
     def _get_selective_acknowledgement(self) -> str:
         """Natural Acknowledgement (Principle 6) - only when appropriate, never robotic."""
