@@ -1,11 +1,32 @@
 import pytest
 from orchestration.persona.registry import default_registry, PersonaRegistry
-from orchestration.persona.dialogue import GroundedDialogueEngine
-from orchestration.rag.engine import RAGEngine
+from orchestration.persona.dialogue import StrictVoiceDialogueEngine, GroundedDialogueEngine
+from orchestration.persona.prompts import build_system_prompt, MASTER_VOICE_AGENT_SYSTEM_PROMPT
+
+
+def test_system_prompt_contains_12_principles():
+    """Verify that the master system prompt contains all 12 Conversation Principles verbatim."""
+    prompt = MASTER_VOICE_AGENT_SYSTEM_PROMPT
+    required_principles = [
+        "1. LISTEN FIRST",
+        "2. RESPOND TO THE LATEST MESSAGE",
+        "3. BE CONCISE",
+        "4. ONE QUESTION AT A TIME",
+        "5. DO NOT REPEAT INFORMATION",
+        "6. NATURAL ACKNOWLEDGEMENT",
+        "7. HUMAN-LIKE TURN TAKING",
+        "8. NEVER SOUND ROBOTIC",
+        "9. HANDLE INTERRUPTIONS",
+        "10. HANDLE UNCERTAINTY",
+        "11. MAINTAIN CONTEXT",
+        "12. CONVERSATION PRIORITY",
+    ]
+    for p in required_principles:
+        assert p in prompt, f"Expected principle {p} in master system prompt"
 
 
 def test_nine_accent_character_presets_registered():
-    """Verify all 3 accents x 3 characters (9 presets) are registered and well-formed."""
+    """Verify all 3 accents x 3 characters (9 presets) are registered with system prompts."""
     expected_ids = [
         ("indian_pro", "indian", "professional"),
         ("indian_funny", "indian", "funny"),
@@ -24,35 +45,52 @@ def test_nine_accent_character_presets_registered():
         assert expected_accent in persona.accent.lower(), f"Expected accent {expected_accent} for {persona_id}"
         assert expected_character in persona.character.lower(), f"Expected character {expected_character} for {persona_id}"
         prompt = persona.get_formatted_text_prompt()
-        assert len(prompt) > 20
+        assert "<system>" in prompt
+        assert "CONVERSATION PRINCIPLES" in prompt
         assert persona.voice_prompt.endswith(".pt")
 
 
 def test_dialogue_engine_truthful_personal_questions():
     """Verify the dialogue engine answers questions like 'What did you eat today?' honestly without bluffing."""
-    engine = GroundedDialogueEngine(accent="american", character="warm")
+    engine = StrictVoiceDialogueEngine(accent="american", character="warm")
     reply = engine.generate_reply("What did you eat today?")
     
-    # Must NOT hallucinate or regurgitate broken template like "operates on key fundamental principles"
     assert "operates on key fundamental principles" not in reply.lower()
     assert "[backchannel" not in reply.lower()
-    # Must state it is an AI / software / doesn't eat food
-    assert any(term in reply.lower() for term in ["ai", "software", "food", "eat", "digital", "data"])
+    assert any(term in reply.lower() for term in ["ai", "food", "eat", "electricity", "code"])
 
 
-def test_dialogue_engine_rag_grounded():
-    """Verify dialogue engine grounds answers on uploaded document knowledge."""
-    rag = RAGEngine()
-    rag.add_text(
-        title="PersonaPlex Protocol Specs",
-        text="PersonaPlex operates at 24000 Hz sample rate with 80 ms audio frames containing exactly 1920 PCM samples."
-    )
-    engine = GroundedDialogueEngine(accent="british", character="professional", rag_engine=rag)
+def test_strict_dialogue_engine_principles():
+    """Verify strict adherence to principles: conciseness, single question, memory retention, no robotic phrases."""
+    engine = StrictVoiceDialogueEngine(accent="indian", character="professional")
 
-    reply = engine.generate_reply("What is the sample rate and frame size of PersonaPlex?")
-    assert "24000" in reply or "24" in reply
-    assert "1920" in reply or "80" in reply
-    assert "[backchannel" not in reply
+    # Principle 11 & 5: Context memory (name introduction)
+    r1 = engine.reply("Hello, my name is Priya and I want to organize my schedule")
+    assert "Priya" in r1
+    assert "schedule" in r1.lower()
+    
+    # Principle 3: Conciseness (max 2 sentences)
+    sentences = [s.strip() for s in r1.split(".") if s.strip()]
+    assert len(sentences) <= 3  # short turn
+
+    # Principle 4: One question at a time
+    assert r1.count("?") <= 1
+
+    # Principle 8: Never sound robotic
+    robotic_phrases = [
+        "certainly",
+        "absolutely",
+        "thank you for providing that information",
+        "i understand your concern",
+    ]
+    for r in robotic_phrases:
+        assert r not in r1.lower()
+
+    # Next turn: caller answers question
+    r2 = engine.reply("Let's start with Monday morning meetings")
+    assert r2.count("?") <= 1
+    # Does not ask for caller's name again (Principle 5)
+    assert "what is your name" not in r2.lower()
 
 
 def test_dialogue_engine_all_accent_character_combinations():
@@ -62,8 +100,9 @@ def test_dialogue_engine_all_accent_character_combinations():
 
     for acc in accents:
         for char in characters:
-            engine = GroundedDialogueEngine(accent=acc, character=char)
+            engine = StrictVoiceDialogueEngine(accent=acc, character=char)
             greeting = engine.generate_reply("Hello, who are you?")
             assert len(greeting) > 10
             assert "[backchannel" not in greeting
             assert "operates on key fundamental principles" not in greeting
+            assert greeting.count("?") <= 1

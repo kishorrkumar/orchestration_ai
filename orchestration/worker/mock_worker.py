@@ -36,9 +36,7 @@ from ..protocol.audio import (
     AdaptiveNoiseCanceller,
 )
 
-from ..rag.engine import default_rag_engine
-
-from ..persona.dialogue import GroundedDialogueEngine
+from ..persona.dialogue import StrictVoiceDialogueEngine, GroundedDialogueEngine
 
 logger = logging.getLogger("orchestration.worker.mock")
 
@@ -156,8 +154,8 @@ def _synthesize_speech_offline(
 
 class DialogueSession:
     """
-    Intelligent conversational turn manager powered by GroundedDialogueEngine.
-    Truthful, zero hallucinations, tailored for 3 accents and 3 characters.
+    Intelligent conversational turn manager powered by StrictVoiceDialogueEngine.
+    Follows the 12 Conversation Principles, truthful, zero hallucinations, tailored for 3 accents and 3 characters.
     """
 
     def __init__(
@@ -167,7 +165,11 @@ class DialogueSession:
         character: str = "Confident, Warm & Concise",
     ):
         self.persona_prompt = persona_prompt
-        self.engine = GroundedDialogueEngine(accent=accent, character=character)
+        self.engine = StrictVoiceDialogueEngine(
+            accent=accent,
+            character=character,
+            custom_system_prompt=persona_prompt,
+        )
 
     def get_initial_greeting(self) -> str:
         return self.engine.get_greeting()

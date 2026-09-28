@@ -28,6 +28,7 @@ from ..persona.registry import (
     default_registry,
     OFFICIAL_VOICE_PRESETS,
 )
+from ..persona.prompts import build_system_prompt, MASTER_VOICE_AGENT_SYSTEM_PROMPT
 from ..worker.pool import WorkerPool, WorkerNodeConfig, PoolCapacityExceededError
 from ..session.manager import SessionManager, SessionState
 from ..protocol.messages import (
@@ -232,6 +233,18 @@ def create_app(
             "voices": VOICE_METADATA,
             "total": len(VOICE_METADATA),
             "categories": ["All", "Female", "Male", "Natural", "Variety"],
+        }
+
+    @app.get("/v1/system-prompt", tags=["Persona"])
+    async def get_system_prompt(
+        accent: str = Query(default="indian"),
+        character: str = Query(default="professional"),
+    ):
+        return {
+            "principles": 12,
+            "prompt": build_system_prompt(accent, character),
+            "accent": accent,
+            "character": character,
         }
 
     # ==========================================================

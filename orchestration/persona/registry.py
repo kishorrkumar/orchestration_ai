@@ -12,6 +12,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field, asdict
 from typing import Dict, List, Optional
 from pydantic import BaseModel, Field
+from .prompts import build_system_prompt, MASTER_VOICE_AGENT_SYSTEM_PROMPT
 
 # 18 official PersonaPlex voice preset IDs
 OFFICIAL_VOICE_PRESETS = [
@@ -86,7 +87,7 @@ class PersonaRegistry:
                 accent="Indian English",
                 character="Professional",
                 voice_prompt="NATM0.pt",
-                text_prompt="You speak with an articulate Indian English accent. You are professional, polite, direct, and efficient. No fluff, no hallucinations.",
+                text_prompt=build_system_prompt("indian", "professional"),
             )
         )
         self.register(
@@ -97,7 +98,7 @@ class PersonaRegistry:
                 accent="Indian English",
                 character="Funny",
                 voice_prompt="NATM3.pt",
-                text_prompt="You speak with a lively Indian English accent. You are funny, lighthearted, witty, and engaging, but always grounded in truth.",
+                text_prompt=build_system_prompt("indian", "funny"),
             )
         )
         self.register(
@@ -108,7 +109,7 @@ class PersonaRegistry:
                 accent="Indian English",
                 character="Confident, Warm & Concise",
                 voice_prompt="NATF2.pt",
-                text_prompt="You speak with a warm Indian English accent. You are confident, empathetic, concise, and direct in 1-2 clean sentences.",
+                text_prompt=build_system_prompt("indian", "warm"),
             )
         )
 
@@ -121,7 +122,7 @@ class PersonaRegistry:
                 accent="American English",
                 character="Professional",
                 voice_prompt="NATF1.pt",
-                text_prompt="You speak with a standard American accent. You are highly professional, structured, and factual with zero bluffing.",
+                text_prompt=build_system_prompt("american", "professional"),
             )
         )
         self.register(
@@ -132,7 +133,7 @@ class PersonaRegistry:
                 accent="American English",
                 character="Funny",
                 voice_prompt="VARM3.pt",
-                text_prompt="You speak with an energetic American accent. You are funny, witty, and tell clever jokes, while remaining completely truthful.",
+                text_prompt=build_system_prompt("american", "funny"),
             )
         )
         self.register(
@@ -143,7 +144,7 @@ class PersonaRegistry:
                 accent="American English",
                 character="Confident, Warm & Concise",
                 voice_prompt="NATF3.pt",
-                text_prompt="You speak with an American accent. You are confident, warm, and concise. You deliver punchy, truthful 1-2 sentence answers.",
+                text_prompt=build_system_prompt("american", "warm"),
             )
         )
 
@@ -156,7 +157,7 @@ class PersonaRegistry:
                 accent="British English",
                 character="Professional",
                 voice_prompt="NATM1.pt",
-                text_prompt="You speak with a refined British Received Pronunciation accent. You are poised, professional, and precise.",
+                text_prompt=build_system_prompt("british", "professional"),
             )
         )
         self.register(
@@ -167,7 +168,7 @@ class PersonaRegistry:
                 accent="British English",
                 character="Funny",
                 voice_prompt="VARM0.pt",
-                text_prompt="You speak with a charming British accent. You possess dry British wit, clever humor, and never invent false facts.",
+                text_prompt=build_system_prompt("british", "funny"),
             )
         )
         self.register(
@@ -178,7 +179,7 @@ class PersonaRegistry:
                 accent="British English",
                 character="Confident, Warm & Concise",
                 voice_prompt="VARF2.pt",
-                text_prompt="You speak with a gentle British accent. You are composed, warm, confident, and crisp in your explanations.",
+                text_prompt=build_system_prompt("british", "warm"),
             )
         )
 

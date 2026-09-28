@@ -9,7 +9,7 @@ Includes:
 - SOLID modular frontend JavaScript architecture
 """
 
-STUDIO_HTML = """<!DOCTYPE html>
+STUDIO_HTML = r"""<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
@@ -269,69 +269,45 @@ STUDIO_HTML = """<!DOCTYPE html>
     .persona-name { font-size: 13px; font-weight: 600; color: var(--text-primary); }
     .persona-role { font-size: 11px; color: var(--text-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
-    /* RAG Document Section */
-    .rag-section {
-      display: flex;
-      flex-direction: column;
-      gap: 10px;
-      flex: 1;
-      min-height: 0;
-    }
-
-    .dropzone {
-      border: 1.5px dashed rgba(255, 255, 255, 0.15);
+    /* System Prompt & Call Rules Card */
+    .system-prompt-card {
+      background: rgba(0, 0, 0, 0.45);
+      border: 0.5px solid var(--border-subtle);
       border-radius: var(--radius-md);
-      padding: 14px;
-      text-align: center;
-      background: rgba(0, 0, 0, 0.25);
-      cursor: pointer;
-      transition: all 0.2s ease;
+      padding: 10px 12px;
       display: flex;
       flex-direction: column;
+      gap: 6px;
+    }
+    .prompt-header {
+      display: flex;
+      justify-content: space-between;
       align-items: center;
-      gap: 6px;
     }
-    .dropzone:hover, .dropzone.dragover {
-      border-color: var(--apple-cyan);
-      background: rgba(41, 151, 255, 0.08);
-    }
-    .dropzone-icon {
-      width: 28px;
-      height: 28px;
+    .prompt-tag {
+      font-size: 11px;
+      font-family: var(--font-mono);
       color: var(--apple-cyan);
-    }
-    .dropzone-text {
-      font-size: 12px;
       font-weight: 500;
-      color: var(--text-primary);
     }
-    .dropzone-hint {
-      font-size: 10px;
+    .prompt-badge {
+      font-size: 9.5px;
+      padding: 2px 7px;
+      border-radius: var(--radius-full);
+      background: rgba(48, 209, 88, 0.15);
+      color: var(--apple-green);
+      font-weight: 600;
+    }
+    .prompt-body {
+      font-size: 10.5px;
+      line-height: 1.5;
       color: var(--text-secondary);
-    }
-
-    .document-list {
-      display: flex;
-      flex-direction: column;
-      gap: 6px;
+      font-family: var(--font-mono);
+      white-space: pre-wrap;
+      max-height: 135px;
       overflow-y: auto;
-      flex: 1;
       padding-right: 4px;
     }
-    .document-chip {
-      background: rgba(255, 255, 255, 0.04);
-      border: 0.5px solid var(--border-subtle);
-      border-radius: var(--radius-sm);
-      padding: 8px 10px;
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 8px;
-      animation: fadeIn 0.25s ease;
-    }
-    .doc-meta { display: flex; align-items: center; gap: 8px; min-width: 0; flex: 1; }
-    .doc-icon { font-size: 14px; }
-    .doc-name { font-size: 12px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .doc-badge {
       font-size: 10px;
       color: var(--apple-cyan);
@@ -340,18 +316,6 @@ STUDIO_HTML = """<!DOCTYPE html>
       border-radius: var(--radius-full);
       white-space: nowrap;
     }
-    .doc-delete {
-      background: transparent;
-      border: none;
-      color: var(--text-tertiary);
-      cursor: pointer;
-      font-size: 14px;
-      line-height: 1;
-      padding: 2px;
-      border-radius: 4px;
-      transition: color 0.2s;
-    }
-    .doc-delete:hover { color: var(--apple-red); }
 
     /* Center Stage: Siri Orb, Waveform & Chat */
     .center-panel {
@@ -647,23 +611,47 @@ STUDIO_HTML = """<!DOCTYPE html>
         <!-- Dynamically loaded -->
       </div>
 
-      <div class="panel-header" style="margin-top: 4px;">
-        <span class="panel-title">Knowledge Engine (RAG)</span>
-        <span id="rag-count-badge" class="doc-badge">0 documents</span>
+      <div class="panel-header" style="margin-top: 6px;">
+        <span class="panel-title">System Prompt &amp; Rules</span>
+        <span id="principles-badge" class="doc-badge" style="color: var(--apple-cyan);">12 Principles</span>
       </div>
 
-      <div class="rag-section">
-        <div class="dropzone" id="file-dropzone" onclick="document.getElementById('file-input').click()">
-          <svg class="dropzone-icon" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" d="M12 16.5V9.75m0 0l3 3m-3-3l-3 3M6.75 19.5a4.5 4.5 0 01-1.41-8.775 5.25 5.25 0 0110.233-2.33 3 3 0 013.758 3.848A3.752 3.752 0 0118 19.5H6.75z"/>
-          </svg>
-          <span class="dropzone-text">Upload PDF, TXT or Markdown</span>
-          <span class="dropzone-hint">Drag & drop or tap to browse files</span>
-          <input type="file" id="file-input" style="display: none;" accept=".pdf,.txt,.md,.json,.csv" onchange="window.studioApp.handleFileUpload(this.files)">
+      <div class="system-prompt-card">
+        <div class="prompt-header">
+          <span class="prompt-tag">Voice Conditioning</span>
+          <span class="prompt-badge">Strict Principles</span>
         </div>
+        <div class="prompt-body" id="system-prompt-display">1. Listen First
+2. Respond to Latest Message
+3. Be Concise (1–2 sentences)
+4. One Question at a Time
+5. Do Not Repeat Known Info
+6. Natural Acknowledgements
+7. Human-like Turn Taking
+8. Never Sound Robotic
+9. Handle Interruptions
+10. Handle Uncertainty
+11. Maintain Context &amp; Goals
+12. Priority (A → B → C → D → E)</div>
+      </div>
 
-        <div class="document-list" id="document-list">
-          <!-- Dynamically populated document chips -->
+      <div class="panel-header" style="margin-top: 6px;">
+        <span class="panel-title">Live Call Context</span>
+        <span id="call-flow-state" class="doc-badge" style="color: var(--apple-green);">Standby</span>
+      </div>
+
+      <div class="telemetry-group" style="padding: 8px 10px; font-size: 11.5px;">
+        <div class="telemetry-row">
+          <span class="telemetry-label">Caller Name</span>
+          <span class="telemetry-val" id="ctx-caller-name">—</span>
+        </div>
+        <div class="telemetry-row">
+          <span class="telemetry-label">Detected Goal</span>
+          <span class="telemetry-val" id="ctx-caller-goal">Conversational</span>
+        </div>
+        <div class="telemetry-row">
+          <span class="telemetry-label">Speech Turn Pacing</span>
+          <span class="telemetry-val" style="color: var(--apple-cyan);">Concise (1–2 sentences)</span>
         </div>
       </div>
     </div>
@@ -686,7 +674,7 @@ STUDIO_HTML = """<!DOCTYPE html>
       <div class="chat-transcript" id="chat-transcript">
         <div class="message-row agent">
           <span class="message-author" id="initial-agent-author">Aarav</span>
-          <div class="bubble">Welcome! Choose your preferred accent (Indian, American, British) and character (Professional, Funny, Warm & Concise). Speak into your mic or upload PDFs/notes. Accurate and grounded answers only — zero bluffs.</div>
+          <div class="bubble">Welcome! Choose your preferred accent (Indian, American, British) and character (Professional, Funny, Warm &amp; Concise). The agent follows strict conversation principles—concise turns, active listening, and clean talking.</div>
         </div>
       </div>
 
@@ -1076,27 +1064,16 @@ STUDIO_HTML = """<!DOCTYPE html>
     }
 
     /**
-     * Single Responsibility: RAG Document Management & API calls
+     * Single Responsibility: System Prompt & Call Flow Principles
      */
-    class RAGManager {
-      async listDocuments() {
-        const res = await fetch('/v1/rag/documents');
-        return await res.json();
-      }
-
-      async uploadFile(file) {
-        const formData = new FormData();
-        formData.append('file', file);
-        const res = await fetch('/v1/rag/upload', {
-          method: 'POST',
-          body: formData,
-        });
-        return await res.json();
-      }
-
-      async deleteDocument(docId) {
-        const res = await fetch(`/v1/rag/documents/${docId}`, { method: 'DELETE' });
-        return await res.json();
+    class SystemPromptManager {
+      async getSystemPrompt() {
+        try {
+          const res = await fetch('/v1/system-prompt');
+          return await res.json();
+        } catch (e) {
+          return { prompt: "12 Conversation Principles Active" };
+        }
       }
     }
 
@@ -1220,7 +1197,7 @@ STUDIO_HTML = """<!DOCTYPE html>
 
         this.personas = [];
         this.voices = [];
-        this.documents = [];
+        this.promptManager = new SystemPromptManager();
 
         this.recognizer = new SpeechRecognizer(
           (text, isFinal) => this.handleSpeechRecognized(text, isFinal),
@@ -1235,18 +1212,6 @@ STUDIO_HTML = """<!DOCTYPE html>
         const canvas = document.getElementById('orb-canvas');
         this.orb = new OrbRenderer(canvas);
         this.orb.start();
-
-        // Drag & drop dropzone setup
-        const dz = document.getElementById('file-dropzone');
-        dz.addEventListener('dragover', (e) => { e.preventDefault(); dz.classList.add('dragover'); });
-        dz.addEventListener('dragleave', () => dz.classList.remove('dragover'));
-        dz.addEventListener('drop', (e) => {
-          e.preventDefault();
-          dz.classList.remove('dragover');
-          if (e.dataTransfer.files.length) {
-            this.handleFileUpload(e.dataTransfer.files);
-          }
-        });
       }
 
       initSocketEvents() {
@@ -1257,6 +1222,8 @@ STUDIO_HTML = """<!DOCTYPE html>
           callBtn.classList.add('end');
           document.getElementById('call-btn-text').innerText = 'End Call';
           document.getElementById('speaker-status').innerText = `Listening (${this.activeAgentName} ready)`;
+          const stateBadge = document.getElementById('call-flow-state');
+          if (stateBadge) stateBadge.innerText = 'Active Call';
         };
 
         this.socket.onAudio = (floatSamples) => {
@@ -1296,8 +1263,16 @@ STUDIO_HTML = """<!DOCTYPE html>
       async boot() {
         await this.loadPersonas();
         await this.loadVoices();
-        await this.refreshDocuments();
+        await this.loadSystemPrompt();
         this.syncMatrixSelection();
+      }
+
+      async loadSystemPrompt() {
+        const data = await this.promptManager.getSystemPrompt();
+        const display = document.getElementById('system-prompt-display');
+        if (display && data.prompt) {
+          display.innerText = data.prompt;
+        }
       }
 
       selectAccent(accent) {
@@ -1456,49 +1431,6 @@ STUDIO_HTML = """<!DOCTYPE html>
         this.renderVoices();
       }
 
-      async refreshDocuments() {
-        const data = await this.rag.listDocuments();
-        this.documents = data.documents || [];
-        document.getElementById('rag-count-badge').innerText = `${this.documents.length} doc${this.documents.length === 1 ? '' : 's'}`;
-
-        const container = document.getElementById('document-list');
-        if (this.documents.length === 0) {
-          container.innerHTML = '<div style="font-size: 11px; color: var(--text-tertiary); text-align: center; padding: 10px;">No documents uploaded yet.</div>';
-          return;
-        }
-
-        container.innerHTML = this.documents.map(d => `
-          <div class="document-chip">
-            <div class="doc-meta">
-              <span class="doc-icon">${d.file_type === '.pdf' ? '📕' : '📄'}</span>
-              <span class="doc-name" title="${d.filename}">${d.filename}</span>
-              <span class="doc-badge">${d.chunks_count} chunks</span>
-            </div>
-            <button class="doc-delete" onclick="window.studioApp.deleteDocument('${d.doc_id}')" title="Delete">✕</button>
-          </div>
-        `).join('');
-      }
-
-      async handleFileUpload(files) {
-        if (!files || files.length === 0) return;
-        const dz = document.getElementById('file-dropzone');
-        dz.style.opacity = '0.5';
-        for (let i = 0; i < files.length; i++) {
-          try {
-            await this.rag.uploadFile(files[i]);
-          } catch (e) {
-            alert('Upload failed: ' + e);
-          }
-        }
-        dz.style.opacity = '1.0';
-        await this.refreshDocuments();
-      }
-
-      async deleteDocument(docId) {
-        await this.rag.deleteDocument(docId);
-        await this.refreshDocuments();
-      }
-
       updateStatus(text, className) {
         const pill = document.getElementById('status-pill');
         pill.className = `status-pill ${className || ''}`;
@@ -1516,6 +1448,19 @@ STUDIO_HTML = """<!DOCTYPE html>
       handleSpeechRecognized(text, isFinal) {
         if (!this.isConnected) return;
         this.updateUserLiveBubble(text, isFinal);
+
+        // Live Context Tracking (Principles 5 & 11)
+        const nameMatch = text.match(/\b(?:my name is|i am|this is|call me)\s+([A-Z][a-z]+|[a-z]+)\b/i);
+        if (nameMatch) {
+          const nm = nameMatch[1].charAt(0).toUpperCase() + nameMatch[1].slice(1);
+          const el = document.getElementById('ctx-caller-name');
+          if (el && !['Here', 'Good', 'Fine', 'Okay', 'Ready'].includes(nm)) el.innerText = nm;
+        }
+        const goalMatch = text.match(/\b(?:i want to|i need to|looking to|help me with)\s+(.+)/i);
+        if (goalMatch) {
+          const el = document.getElementById('ctx-caller-goal');
+          if (el) el.innerText = goalMatch[1].slice(0, 24);
+        }
 
         if (isFinal) {
           // Immediate barge-in cutoff
@@ -1648,6 +1593,8 @@ STUDIO_HTML = """<!DOCTYPE html>
         if (meter) meter.style.width = '0%';
 
         this.updateStatus('Standby', '');
+        const stateBadge = document.getElementById('call-flow-state');
+        if (stateBadge) stateBadge.innerText = 'Standby';
         const callBtn = document.getElementById('btn-call-action');
         callBtn.classList.remove('end');
         document.getElementById('call-btn-text').innerText = 'Start Call';
