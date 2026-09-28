@@ -1,0 +1,21 @@
+# Virtual environment
+.venv/
+env/
+venv/
+
+# Upstream reference clone (not committed)
+_personaplex_upstream/
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.pytest_cache/
+.coverage
+htmlcov/
+
+# Logs and outputs
+*.log
+output*.wav
+output*.json
+*.tmp
