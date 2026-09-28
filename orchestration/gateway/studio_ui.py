@@ -655,6 +655,9 @@ STUDIO_HTML = """<!DOCTYPE html>
         <div class="visualizer-overlay">
           <span class="speaker-label" id="speaker-status">Ready to Speak</span>
           <span class="cadence-badge" id="cadence-indicator">24 kHz • 12.5 Hz • Full-Duplex</span>
+          <div style="width: 140px; height: 5px; background: rgba(255,255,255,0.12); border-radius: 999px; overflow: hidden; margin-top: 4px; box-shadow: inset 0 1px 2px rgba(0,0,0,0.5);">
+            <div id="mic-meter" style="width: 0%; height: 100%; background: linear-gradient(90deg, var(--apple-green), var(--apple-cyan)); transition: width 0.06s ease;"></div>
+          </div>
         </div>
       </div>
 
@@ -778,6 +781,10 @@ STUDIO_HTML = """<!DOCTYPE html>
         this.onEnergyCallback = onEnergy;
         await this.initialize();
 
+        if (this.audioCtx && this.audioCtx.state === 'suspended') {
+          await this.audioCtx.resume();
+        }
+
         this.micStream = await navigator.mediaDevices.getUserMedia({
           audio: {
             channelCount: 1,
@@ -789,6 +796,7 @@ STUDIO_HTML = """<!DOCTYPE html>
 
         this.micSource = this.audioCtx.createMediaStreamSource(this.micStream);
         this.processor = this.audioCtx.createScriptProcessor(2048, 1, 1);
+        window._activeAudioProcessor = this.processor; // prevent Chromium GC
         this.silentGain = this.audioCtx.createGain();
         this.silentGain.gain.value = 0.0;
 
@@ -882,6 +890,82 @@ STUDIO_HTML = """<!DOCTYPE html>
           this.micSource = null;
         }
         this.micBuffer = [];
+      }
+    }
+
+    /**
+     * Single Responsibility: Browser Speech-to-Text Recognition
+     */
+    class SpeechRecognizer {
+      constructor(onTranscript, onError) {
+        this.onTranscript = onTranscript;
+        this.onError = onError;
+        this.recognition = null;
+        this.isRunning = false;
+        this.init();
+      }
+
+      init() {
+        const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+        if (!SpeechRecognition) {
+          console.warn('SpeechRecognition API not available in this browser');
+          return;
+        }
+
+        try {
+          this.recognition = new SpeechRecognition();
+          this.recognition.continuous = true;
+          this.recognition.interimResults = true;
+          this.recognition.lang = 'en-US';
+
+          this.recognition.onresult = (event) => {
+            let interim = '';
+            for (let i = event.resultIndex; i < event.results.length; ++i) {
+              const res = event.results[i];
+              const text = res[0].transcript;
+              if (res.isFinal) {
+                if (text.trim()) {
+                  this.onTranscript(text.trim(), true);
+                }
+              } else {
+                interim += text;
+              }
+            }
+            if (interim.trim()) {
+              this.onTranscript(interim.trim(), false);
+            }
+          };
+
+          this.recognition.onerror = (e) => {
+            console.warn('Speech recognition status:', e.error);
+            if (this.onError) this.onError(e);
+          };
+
+          this.recognition.onend = () => {
+            if (this.isRunning) {
+              try { this.recognition.start(); } catch (e) {}
+            }
+          };
+        } catch (e) {
+          console.warn('Speech recognition init error:', e);
+        }
+      }
+
+      start() {
+        if (!this.recognition) return;
+        this.isRunning = true;
+        try {
+          this.recognition.start();
+        } catch (e) {}
+      }
+
+      stop() {
+        this.isRunning = false;
+        if (this.recognition) {
+          try {
+            this.recognition.stop();
+          } catch (e) {}
+        }
       }
     }
 
@@ -1108,6 +1192,11 @@ STUDIO_HTML = """<!DOCTYPE html>
         this.voices = [];
         this.documents = [];
 
+        this.recognizer = new SpeechRecognizer(
+          (text, isFinal) => this.handleSpeechRecognized(text, isFinal),
+          (err) => console.log('Recognizer info:', err)
+        );
+
         this.initElements();
         this.initSocketEvents();
       }
@@ -1313,6 +1402,43 @@ STUDIO_HTML = """<!DOCTYPE html>
         }
       }
 
+      handleSpeechRecognized(text, isFinal) {
+        if (!this.isConnected) return;
+        this.updateUserLiveBubble(text, isFinal);
+
+        if (isFinal) {
+          // Immediate barge-in cutoff
+          this.audio.stopPlayback();
+          this.agentSpeaking = false;
+          this.orb.setAgentSpeaking(false);
+          document.getElementById('speaker-status').innerText = 'Processing speech...';
+
+          // Send recognized utterance as 0x02 text packet over WebSocket
+          this.socket.sendTextMessage(text);
+        }
+      }
+
+      updateUserLiveBubble(text, isFinal) {
+        const transcript = document.getElementById('chat-transcript');
+        let liveRow = document.getElementById('live-user-bubble');
+        if (!liveRow) {
+          liveRow = document.createElement('div');
+          liveRow.id = 'live-user-bubble';
+          liveRow.className = 'message-row user';
+          liveRow.innerHTML = `
+            <span class="message-author">You</span>
+            <div class="bubble"></div>
+          `;
+          transcript.appendChild(liveRow);
+        }
+        const bubble = liveRow.querySelector('.bubble');
+        bubble.innerText = text;
+        if (isFinal) {
+          liveRow.removeAttribute('id'); // Finalize bubble
+        }
+        transcript.scrollTop = transcript.scrollHeight;
+      }
+
       async startCall() {
         this.updateStatus('Connecting...', 'connecting');
 
@@ -1325,6 +1451,11 @@ STUDIO_HTML = """<!DOCTYPE html>
             },
             (energy) => {
               this.orb.setEnergy(energy);
+              const meter = document.getElementById('mic-meter');
+              if (meter) {
+                const pct = Math.min(100, Math.round(energy * 700));
+                meter.style.width = `${pct}%`;
+              }
             }
           );
         } catch (err) {
@@ -1332,6 +1463,9 @@ STUDIO_HTML = """<!DOCTYPE html>
           this.disconnect();
           return;
         }
+
+        // Start speech recognition
+        this.recognizer.start();
 
         const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
         const url = `${proto}//${window.location.host}/v1/realtime?persona_id=${encodeURIComponent(this.activePersona)}&voice_prompt=${encodeURIComponent(this.activeVoice)}`;
@@ -1371,7 +1505,7 @@ STUDIO_HTML = """<!DOCTYPE html>
       appendTranscriptToken(author, token) {
         const transcript = document.getElementById('chat-transcript');
         let lastRow = transcript.lastElementChild;
-        if (!lastRow || !lastRow.classList.contains(author)) {
+        if (!lastRow || !lastRow.classList.contains(author) || lastRow.id === 'live-user-bubble') {
           lastRow = document.createElement('div');
           lastRow.className = `message-row ${author}`;
           lastRow.innerHTML = `
@@ -1388,10 +1522,15 @@ STUDIO_HTML = """<!DOCTYPE html>
       disconnect() {
         this.socket.disconnect();
         this.audio.stop();
+        this.recognizer.stop();
+
         this.isConnected = false;
         this.agentSpeaking = false;
         this.orb.setAgentSpeaking(false);
         this.orb.setEnergy(0);
+
+        const meter = document.getElementById('mic-meter');
+        if (meter) meter.style.width = '0%';
 
         this.updateStatus('Standby', '');
         const callBtn = document.getElementById('btn-call-action');

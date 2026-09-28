@@ -386,8 +386,8 @@ class PersonaPlexMockServer:
                             clean_samples = noise_canceller.clean_frame(raw_samples)
                             rms = compute_rms(clean_samples)
 
-                            # Turn-taking VAD with 160ms onset debounce
-                            if rms > 0.025:
+                            # Turn-taking VAD with sensitive onset debounce for laptop microphones
+                            if rms > 0.008:
                                 speech_frame_count += 1
                                 last_speech_time = time.time()
                                 if speech_frame_count >= 2:
@@ -397,10 +397,10 @@ class PersonaPlexMockServer:
                                         if len(outbound_audio_frames) > 0:
                                             outbound_audio_frames.clear()
                                             outbound_tokens.clear()
-                            elif time.time() - last_speech_time > 0.6:
-                                # 600ms conversational hangtime
-                                if user_speaking and speech_frame_count > 10:
-                                    # User spoke and paused without text recognition
+                            elif time.time() - last_speech_time > 0.5:
+                                # 500ms conversational hangtime
+                                if user_speaking and speech_frame_count >= 3:
+                                    # User spoke audio frames and paused
                                     user_speaking = False
                                     speech_frame_count = 0
                                     reply = dialogue.reply("I hear you speaking")
