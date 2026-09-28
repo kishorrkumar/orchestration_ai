@@ -79,6 +79,55 @@ async def test_gateway_rest_routes():
         r = await client.delete("/v1/agents/drone_support")
         assert r.status_code == 200
 
+        # 7. Test Voice Presets catalog
+        r = await client.get("/v1/voices")
+        assert r.status_code == 200
+        voices_data = r.json()
+        assert "voices" in voices_data
+        assert len(voices_data["voices"]) == 18
+        assert any(v["id"] == "NATF2.pt" for v in voices_data["voices"])
+
+        # 8. Test RAG knowledge endpoints
+        # Clear first
+        await client.post("/v1/rag/clear")
+
+        # Ingest text document
+        rag_doc = {
+            "title": "server_specs.txt",
+            "text": "The primary compute cluster has 8 NVIDIA H100 GPUs connected via NVLink with 3.2 Terabits bandwidth.",
+        }
+        r = await client.post("/v1/rag/text", json=rag_doc)
+        assert r.status_code == 200
+        doc_info = r.json()["document"]
+        doc_id = doc_info["doc_id"]
+
+        # List documents
+        r = await client.get("/v1/rag/documents")
+        assert r.status_code == 200
+        assert len(r.json()["documents"]) == 1
+
+        # Query knowledge base
+        r = await client.post("/v1/rag/query", json={"query": "how many H100 GPUs in cluster?", "top_k": 2})
+        assert r.status_code == 200
+        query_res = r.json()
+        assert len(query_res["matches"]) >= 1
+        assert "8 NVIDIA H100 GPUs" in query_res["matches"][0]["text"]
+        assert query_res["grounded_response"] is not None
+
+        # Delete document
+        r = await client.delete(f"/v1/rag/documents/{doc_id}")
+        assert r.status_code == 200
+
+        # 9. Test Apple Studio UI (/console and /)
+        r = await client.get("/console")
+        assert r.status_code == 200
+        assert "PersonaPlex Studio" in r.text
+        assert "orb-canvas" in r.text
+
+        r = await client.get("/")
+        assert r.status_code == 200
+        assert "PersonaPlex Studio" in r.text
+
 
 @pytest.mark.asyncio
 async def test_gateway_websocket_realtime():

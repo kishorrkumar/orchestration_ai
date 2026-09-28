@@ -36,16 +36,21 @@ from ..protocol.audio import (
     AdaptiveNoiseCanceller,
 )
 
+from ..rag.engine import default_rag_engine
+
 logger = logging.getLogger("orchestration.worker.mock")
 
 # Thread pool for offline TTS synthesis
 _TTS_EXECUTOR = concurrent.futures.ThreadPoolExecutor(max_workers=2)
 
 
-def _synthesize_speech_offline(text: str, target_sr: int = 24000) -> Optional[np.ndarray]:
+def _synthesize_speech_offline(
+    text: str, target_sr: int = 24000, voice_preset: Optional[str] = None
+) -> Optional[np.ndarray]:
     """
     Synthesize speech offline using native system TTS (pyttsx3)
     and resample to 24,000 Hz float32 mono PCM.
+    Selects male vs female voice based on PersonaPlex voice preset.
     """
     try:
         import pythoncom
@@ -58,6 +63,25 @@ def _synthesize_speech_offline(text: str, target_sr: int = 24000) -> Optional[np
         engine = pyttsx3.init()
         engine.setProperty("rate", 185)  # Crisper, conversational pace
         engine.setProperty("volume", 0.95)
+
+        if voice_preset:
+            vp = voice_preset.upper()
+            voices = engine.getProperty("voices")
+            selected_voice = None
+            if any(k in vp for k in ["NATF", "VARF", "FEMALE", "SOPHIA", "AYELEN"]):
+                for v in voices:
+                    name_low = v.name.lower()
+                    if "zira" in name_low or "female" in getattr(v, "gender", "").lower() or "eva" in name_low:
+                        selected_voice = v.id
+                        break
+            elif any(k in vp for k in ["NATM", "VARM", "MALE", "OWEN", "TOMAZ", "ALEX"]):
+                for v in voices:
+                    name_low = v.name.lower()
+                    if "david" in name_low or "male" in getattr(v, "gender", "").lower() or "mark" in name_low or "george" in name_low:
+                        selected_voice = v.id
+                        break
+            if selected_voice:
+                engine.setProperty("voice", selected_voice)
 
         with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
             tmp_path = tmp.name
@@ -129,6 +153,12 @@ class DialogueSession:
         self.turn_count += 1
         u = user_text.lower().strip()
         p = self.persona_prompt
+
+        # Check RAG document knowledge base first
+        rag_resp = default_rag_engine.generate_grounded_response(user_text)
+        if rag_resp:
+            self.recent_responses.append(rag_resp)
+            return rag_resp
 
         # Determine topic and formulate fresh, efficient reply
         if "mars" in p or "reactor" in p:
@@ -270,8 +300,9 @@ class PersonaPlexMockServer:
             parsed = urllib.parse.urlparse(path)
             query = urllib.parse.parse_qs(parsed.query)
             text_prompt = query.get("text_prompt", [""])[0]
+            voice_prompt = query.get("voice_prompt", ["NATF2.pt"])[0]
 
-            logger.info(f"Mock server accepted session for prompt: {text_prompt[:50]}...")
+            logger.info(f"Mock server accepted session for prompt: {text_prompt[:50]}... voice: {voice_prompt}")
 
             if self.prompt_init_delay > 0:
                 await asyncio.sleep(self.prompt_init_delay)
@@ -303,6 +334,7 @@ class PersonaPlexMockServer:
                     _synthesize_speech_offline,
                     reply_text,
                     SAMPLE_RATE,
+                    voice_prompt,
                 )
 
                 if audio_samples is not None and len(audio_samples) > 0:
