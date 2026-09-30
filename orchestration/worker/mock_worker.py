@@ -21,6 +21,8 @@ from websockets.asyncio.server import Server, serve, ServerConnection
 
 from ..protocol.messages import (
     MessageType,
+    ControlAction,
+    ControlMessage,
     HandshakeMessage,
     AudioMessage,
     TextMessage,
@@ -440,6 +442,11 @@ class PersonaPlexMockServer:
                                 # 500ms conversational hangtime - end turn cleanly
                                 user_speaking = False
                                 speech_frame_count = 0
+
+                        elif msg.type == MessageType.CONTROL:
+                            if msg.action == ControlAction.PAUSE:
+                                outbound_audio_frames.clear()
+                                outbound_tokens.clear()
 
                 except websockets.ConnectionClosed:
                     pass
