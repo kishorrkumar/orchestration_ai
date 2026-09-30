@@ -1,13 +1,14 @@
 import pytest
+
 from orchestration.persona.registry import (
     OFFICIAL_VOICE_PRESETS,
     PRESET_METADATA,
     PersonaConfig,
     PersonaRegistry,
-    wrap_with_system_tags,
-    validate_system_prompt,
-    sanitize_system_prompt,
     normalize_voice_name,
+    sanitize_system_prompt,
+    validate_system_prompt,
+    wrap_with_system_tags,
 )
 
 

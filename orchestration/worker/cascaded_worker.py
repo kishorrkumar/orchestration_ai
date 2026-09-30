@@ -4,6 +4,7 @@ Re-exports LocalCascadeWorkerServer for backward compatibility.
 """
 
 from __future__ import annotations
-from .local_cascade import LocalCascadeWorkerServer, CascadedLocalWorkerServer
 
-__all__ = ["LocalCascadeWorkerServer", "CascadedLocalWorkerServer"]
+from .local_cascade import CascadedLocalWorkerServer, LocalCascadeWorkerServer
+
+__all__ = ["CascadedLocalWorkerServer", "LocalCascadeWorkerServer"]

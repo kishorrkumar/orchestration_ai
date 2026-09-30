@@ -15,10 +15,9 @@ Pipeline per session:
 """
 
 from __future__ import annotations
+
 import io
-import math
 import time
-from typing import List, Optional, Tuple
 
 import numpy as np
 import soundfile as sf
@@ -26,10 +25,9 @@ import soundfile as sf
 from ..protocol.audio import (
     FRAME_SIZE,
     SAMPLE_RATE,
-    float32_to_int16,
-    int16_to_float32,
     compute_rms,
     high_pass_filter,
+    int16_to_float32,
 )
 
 RNNOISE_FRAME_SIZE_48K = 480  # 10 ms at 48 kHz
@@ -70,8 +68,8 @@ class CallerAudioCleaner:
 
         # A/B Recording buffers (last 30 seconds for evaluation)
         self._max_history_samples = sample_rate * 30
-        self._raw_history: List[np.ndarray] = []
-        self._clean_history: List[np.ndarray] = []
+        self._raw_history: list[np.ndarray] = []
+        self._clean_history: list[np.ndarray] = []
 
         # RNNoise wrapper initialization
         self._rnnoise = None
@@ -90,7 +88,7 @@ class CallerAudioCleaner:
     def set_suppression_strength(self, strength: float) -> None:
         self.suppression_strength = max(0.0, min(1.0, strength))
 
-    def process_chunk(self, raw_audio: np.ndarray) -> List[np.ndarray]:
+    def process_chunk(self, raw_audio: np.ndarray) -> list[np.ndarray]:
         """
         Process incoming audio array (int16 or float32).
         Returns a list of clean, framed 1,920-sample float32 frames.
@@ -206,7 +204,7 @@ class CallerAudioCleaner:
         # Attenuate distant / secondary speakers gently by 20%
         return audio * 0.85
 
-    def _pop_frames(self) -> List[np.ndarray]:
+    def _pop_frames(self) -> list[np.ndarray]:
         frames = []
         while len(self._accumulator) >= self.frame_size:
             frame = self._accumulator[:self.frame_size]

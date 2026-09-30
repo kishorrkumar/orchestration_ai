@@ -3,10 +3,9 @@ Unit tests for Spoken Text Normalization for TTS and Indian English Prosody.
 """
 
 from orchestration.chunker.normalizer import (
-    strip_markdown_and_emojis,
     normalize_currency_inr,
     normalize_for_tts,
-    number_to_words,
+    strip_markdown_and_emojis,
 )
 
 

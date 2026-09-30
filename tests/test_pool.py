@@ -1,8 +1,13 @@
 import asyncio
+
 import pytest
 
 from orchestration.worker.client import WorkerStatus
-from orchestration.worker.pool import WorkerPool, WorkerNodeConfig, PoolCapacityExceededError
+from orchestration.worker.pool import (
+    PoolCapacityExceededError,
+    WorkerNodeConfig,
+    WorkerPool,
+)
 
 
 @pytest.mark.asyncio
@@ -59,7 +64,7 @@ async def test_worker_pool_queue_wakeup():
     pool.register_worker(cfg)
 
     # Acquire initially
-    w = await pool.acquire_worker(session_id="session-1")
+    await pool.acquire_worker(session_id="session-1")
 
     async def release_after_delay():
         await asyncio.sleep(0.05)

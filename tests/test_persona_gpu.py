@@ -9,6 +9,7 @@ Skippable in CI or environments without 16GB+ VRAM GPU.
 """
 
 import os
+
 import pytest
 import torch
 
@@ -28,8 +29,8 @@ def test_persona_conditioning_behavior_difference():
         pytest.skip(f"PersonaPlex weights not cached or accessible: {e}")
 
     try:
-        from moshi.models import loaders
         import sentencepiece
+        from moshi.models import loaders
     except ImportError:
         pytest.skip("moshi package not installed in environment.")
 

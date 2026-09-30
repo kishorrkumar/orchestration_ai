@@ -1,14 +1,14 @@
 import numpy as np
 import pytest
+
 from orchestration.protocol.audio import (
-    SAMPLE_RATE,
     FRAME_RATE,
     FRAME_SIZE,
+    SAMPLE_RATE,
     AudioFrameBuffer,
+    compute_rms,
     float32_to_int16,
     int16_to_float32,
-    compute_rms,
-    generate_silence_frame,
 )
 
 

@@ -1,20 +1,21 @@
 import asyncio
+
 import numpy as np
 import pytest
-from httpx import AsyncClient, ASGITransport
+from httpx import ASGITransport, AsyncClient
 
 from orchestration.gateway.app import create_app
-from orchestration.persona.registry import PersonaRegistry, PersonaConfig
-from orchestration.worker.pool import WorkerPool, WorkerNodeConfig
-from orchestration.worker.mock_worker import PersonaPlexMockServer
-from orchestration.session.manager import SessionManager
-from orchestration.protocol.messages import (
-    MessageType,
-    AudioMessage,
-    encode_message,
-    decode_message,
-)
+from orchestration.persona.registry import PersonaRegistry
 from orchestration.protocol.audio import FRAME_SIZE
+from orchestration.protocol.messages import (
+    AudioMessage,
+    MessageType,
+    decode_message,
+    encode_message,
+)
+from orchestration.session.manager import SessionManager
+from orchestration.worker.mock_worker import PersonaPlexMockServer
+from orchestration.worker.pool import WorkerNodeConfig, WorkerPool
 
 
 @pytest.mark.asyncio
@@ -206,14 +207,13 @@ async def test_gateway_websocket_realtime():
 
             # 4. Receive agent audio and text tokens
             got_audio = False
-            got_text = False
             for _ in range(5):
                 incoming = await asyncio.wait_for(ws.recv(), timeout=2.0)
                 d = decode_message(incoming)
                 if d.type == MessageType.AUDIO:
                     got_audio = True
                 elif d.type == MessageType.TEXT:
-                    got_text = True
+                    pass
 
             assert got_audio
 
@@ -232,8 +232,8 @@ async def test_gateway_websocket_realtime():
 @pytest.mark.asyncio
 async def test_gateway_worker_drop_releases_lease():
     """AUDIT-008: When upstream worker disconnects unexpectedly, gateway terminates session and releases lease."""
-    from websockets.asyncio.client import connect as ws_connect
     import uvicorn
+    from websockets.asyncio.client import connect as ws_connect
 
     mock_port = 9893
     mock = PersonaPlexMockServer(host="127.0.0.1", port=mock_port)

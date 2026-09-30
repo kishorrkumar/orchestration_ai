@@ -13,12 +13,13 @@ Features:
 """
 
 from __future__ import annotations
+
 import concurrent.futures
 import logging
 import os
 import pathlib
 import time
-from typing import Dict, List, Optional, Tuple
+from typing import Any
 
 import numpy as np
 import soundfile as sf
@@ -32,7 +33,7 @@ KOKORO_MODEL_FILE = MODEL_DIR / "kokoro-v1.0.onnx"
 KOKORO_VOICES_FILE = MODEL_DIR / "voices-v1.0.bin"
 
 # Mapping of voice identifiers to Kokoro voice embeddings
-INDIAN_VOICE_MAP: Dict[str, str] = {
+INDIAN_VOICE_MAP: dict[str, str] = {
     # Primary Indian English Male (Aarav)
     "aarav": "hm_omega",
     "indian_male": "hm_omega",
@@ -54,7 +55,7 @@ class OpenSourceTTSEngine:
 
     def __init__(self, target_sr: int = 24000) -> None:
         self.target_sr = target_sr
-        self._kokoro = None
+        self._kokoro: Any = None
         self._kokoro_available = False
         self._init_kokoro()
 
@@ -66,6 +67,7 @@ class OpenSourceTTSEngine:
 
         try:
             import platform
+
             import espeakng_loader
             if platform.system() == "Windows":
                 espeakng_loader.make_library_available()
@@ -125,7 +127,7 @@ class OpenSourceTTSEngine:
             try:
                 t0 = time.perf_counter()
                 samples, sr = self._kokoro.create(clean_text, voice=kokoro_voice, speed=speed, lang="en-us")
-                elapsed_ms = (time.perf_counter() - t0) * 1000.0
+                (time.perf_counter() - t0) * 1000.0
 
                 if samples is not None and len(samples) > 0:
                     if sr != self.target_sr:
@@ -162,8 +164,9 @@ class OpenSourceTTSEngine:
         """
         # 1. Try edge-tts for Indian male voice (en-IN-PrabhatNeural)
         try:
-            import io
             import asyncio
+            import io
+
             import edge_tts
 
             async def _run_edge():
@@ -204,8 +207,9 @@ class OpenSourceTTSEngine:
         # 2. Local native pyttsx3 fallback
         try:
             import io
-            import pyttsx3
+
             import pythoncom
+            import pyttsx3
             pythoncom.CoInitialize()
 
             engine = pyttsx3.init()
@@ -241,7 +245,7 @@ class OpenSourceTTSEngine:
 
 
 # Global singleton instance
-_GLOBAL_TTS_ENGINE: Optional[OpenSourceTTSEngine] = None
+_GLOBAL_TTS_ENGINE: OpenSourceTTSEngine | None = None
 
 
 def get_tts_engine() -> OpenSourceTTSEngine:

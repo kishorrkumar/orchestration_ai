@@ -3,12 +3,12 @@ Unit tests for Conversational Turn Detector and Trailing Incompleteness Detectio
 """
 
 import time
+
 import numpy as np
-import pytest
+
 from orchestration.audio.turn_detector import (
     TurnDetector,
     is_utterance_unfinished,
-    TRAILING_INCOMPLETE_WORDS,
 )
 
 

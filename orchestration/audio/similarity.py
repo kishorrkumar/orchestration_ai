@@ -10,9 +10,10 @@ Supports:
 """
 
 from __future__ import annotations
+
 import io
 import logging
-from typing import Tuple, Union
+
 import numpy as np
 import soundfile as sf
 import torch
@@ -23,7 +24,7 @@ logger = logging.getLogger(__name__)
 SIMILARITY_PASS_THRESHOLD = 0.65  # Documented threshold for voice cloning similarity
 
 
-def _load_audio_to_tensor(audio: Union[bytes, np.ndarray, torch.Tensor], target_sr: int = 16000) -> torch.Tensor:
+def _load_audio_to_tensor(audio: bytes | np.ndarray | torch.Tensor, target_sr: int = 16000) -> torch.Tensor:
     """Load audio input into a 1D float32 PyTorch tensor at target_sr."""
     if isinstance(audio, bytes):
         with io.BytesIO(audio) as bio:
@@ -42,8 +43,9 @@ def _load_audio_to_tensor(audio: Union[bytes, np.ndarray, torch.Tensor], target_
 
     # Simple resample to 16kHz for speaker embedding if needed
     if sr != target_sr:
-        from scipy.signal import resample_poly
         import math
+
+        from scipy.signal import resample_poly
         gcd = math.gcd(sr, target_sr)
         up = target_sr // gcd
         down = sr // gcd
@@ -119,8 +121,8 @@ def compute_spectral_speaker_embedding(waveform: torch.Tensor, n_mels: int = 64)
 
 
 def compute_speaker_similarity(
-    reference_audio: Union[bytes, np.ndarray, torch.Tensor],
-    generated_audio: Union[bytes, np.ndarray, torch.Tensor],
+    reference_audio: bytes | np.ndarray | torch.Tensor,
+    generated_audio: bytes | np.ndarray | torch.Tensor,
 ) -> float:
     """
     Computes cosine similarity between reference speaker audio and generated voice output.

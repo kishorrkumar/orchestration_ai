@@ -13,8 +13,8 @@ Expands:
 """
 
 from __future__ import annotations
+
 import re
-from typing import Optional
 
 # Indian English Number Maps
 UNITS = [
@@ -132,7 +132,7 @@ def normalize_indian_english_text(text: str, allow_fillers: bool = False) -> str
                 val *= 10000000
             elif scale == "lakh":
                 val *= 100000
-            
+
             if val.is_integer():
                 int_val = int(val)
                 return f"{number_to_spoken_words(int_val)} rupees"

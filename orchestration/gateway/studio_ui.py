@@ -26,11 +26,11 @@ STUDIO_HTML = r"""<!DOCTYPE html>
       --bg-pill: rgba(255, 255, 255, 0.08);
       --bg-pill-hover: rgba(255, 255, 255, 0.14);
       --bg-pill-active: rgba(255, 255, 255, 0.22);
-      
+
       --border-subtle: rgba(255, 255, 255, 0.08);
       --border-medium: rgba(255, 255, 255, 0.16);
       --border-highlight: rgba(255, 255, 255, 0.28);
-      
+
       --apple-blue: #0071e3;
       --apple-cyan: #2997ff;
       --apple-green: #30d158;
@@ -39,17 +39,17 @@ STUDIO_HTML = r"""<!DOCTYPE html>
       --apple-red: #ff453a;
       --apple-orange: #ff9f0a;
       --apple-yellow: #ffd60a;
-      
+
       --text-primary: #f5f5f7;
       --text-secondary: #86868b;
       --text-tertiary: #6e6e73;
-      
+
       --blur-glass: blur(28px) saturate(190%);
       --radius-sm: 8px;
       --radius-md: 14px;
       --radius-lg: 22px;
       --radius-full: 9999px;
-      
+
       --shadow-subtle: 0 4px 20px rgba(0, 0, 0, 0.35);
       --shadow-glow: 0 0 35px rgba(41, 151, 255, 0.25);
       --font-system: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "Helvetica Neue", sans-serif;
@@ -60,7 +60,7 @@ STUDIO_HTML = r"""<!DOCTYPE html>
 
     body {
       background-color: var(--bg-base);
-      background-image: 
+      background-image:
         radial-gradient(circle at 50% 0%, rgba(94, 92, 230, 0.15) 0%, transparent 60%),
         radial-gradient(circle at 10% 20%, rgba(41, 151, 255, 0.08) 0%, transparent 40%),
         radial-gradient(circle at 90% 80%, rgba(191, 90, 242, 0.1) 0%, transparent 50%);

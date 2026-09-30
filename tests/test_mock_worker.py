@@ -1,11 +1,16 @@
 import asyncio
+
 import numpy as np
 import pytest
 
 from orchestration.persona.registry import default_registry
-from orchestration.protocol.messages import MessageType
 from orchestration.protocol.audio import FRAME_SIZE
-from orchestration.worker.client import PersonaPlexWorkerClient, WorkerStatus, WorkerConnectionError
+from orchestration.protocol.messages import MessageType
+from orchestration.worker.client import (
+    PersonaPlexWorkerClient,
+    WorkerConnectionError,
+    WorkerStatus,
+)
 from orchestration.worker.mock_worker import PersonaPlexMockServer
 
 

@@ -11,10 +11,12 @@ Solves the mid-sentence cutoff problem (e.g. "Tell me a joke about... [500ms pau
 """
 
 from __future__ import annotations
+
 import collections
 import re
 import time
-from typing import Any, List, Optional, Tuple
+from typing import Any
+
 import numpy as np
 
 # Connectives, prepositions, conjunctions, and articles that signal an incomplete thought
@@ -107,7 +109,7 @@ class TurnDetector:
         min_speech_frames: int = 3,       # ~240 ms of speech to confirm onset
         preroll_frames: int = 4,          # ~320 ms pre-roll buffer
         speech_rms_threshold: float = 0.018,
-        vad: Optional[Any] = None,
+        vad: Any | None = None,
     ) -> None:
         self.sample_rate = sample_rate
         self.frame_size = frame_size
@@ -119,7 +121,7 @@ class TurnDetector:
 
         # Audio buffers
         self._preroll: collections.deque[np.ndarray] = collections.deque(maxlen=preroll_frames)
-        self._active_utterance_frames: List[np.ndarray] = []
+        self._active_utterance_frames: list[np.ndarray] = []
 
         # State tracking
         self.is_speaking: bool = False
@@ -132,12 +134,12 @@ class TurnDetector:
     def push_frame(
         self,
         frame: np.ndarray,
-        rms: Optional[float] = None,
+        rms: float | None = None,
         is_agent_speaking: bool = False,
-    ) -> Tuple[bool, bool, Optional[np.ndarray]]:
+    ) -> tuple[bool, bool, np.ndarray | None]:
         """
         Process a single audio frame (typically 80 ms).
-        
+
         Returns:
             (is_speaking_now, turn_completed, completed_audio_if_any)
         """
@@ -222,7 +224,7 @@ class TurnDetector:
 
             return (self.is_speaking, False, None)
 
-    def extend_turn(self, extra_sec: Optional[float] = None) -> None:
+    def extend_turn(self, extra_sec: float | None = None) -> None:
         """
         Extend the silence window when the transcript is detected as unfinished.
         Preserves active utterance frames and waits for additional speech.
@@ -231,7 +233,7 @@ class TurnDetector:
         self.waiting_for_extension = True
         self.extension_deadline = time.time() + add_time
 
-    def append_audio_and_extend(self, audio: np.ndarray, extra_sec: Optional[float] = None) -> None:
+    def append_audio_and_extend(self, audio: np.ndarray, extra_sec: float | None = None) -> None:
         """Put back previously emitted audio and extend deadline for merging."""
         self._active_utterance_frames.insert(0, audio)
         self.extend_turn(extra_sec)

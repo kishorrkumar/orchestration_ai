@@ -3,10 +3,9 @@ Voice AI System Prompts with Modular Agent Identity + Call Flow Architecture.
 """
 
 from __future__ import annotations
-from typing import Dict, Optional
 
 # Supported Call Flow Types
-CALL_FLOW_ROLES: Dict[str, Dict[str, str]] = {
+CALL_FLOW_ROLES: dict[str, dict[str, str]] = {
     "conversational_companion": {
         "title": "Colloquial Conversational Companion",
         "description": "Warm, witty, articulate companion for engaging, friendly voice chats.",
@@ -112,7 +111,7 @@ Colloquial Indian English Guidelines:
 def build_agent_system_prompt(
     agent_name: str = "Aarav",
     role: str = "conversational_companion",
-    custom_instructions: Optional[str] = None,
+    custom_instructions: str | None = None,
 ) -> str:
     """
     Build structured Agent Identity + Call Flow system prompt.
@@ -140,7 +139,7 @@ def build_agent_system_prompt(
 # Backwards compatibility alias
 MASTER_VOICE_AGENT_SYSTEM_PROMPT = build_agent_system_prompt("Aarav", "conversational_companion")
 
-def build_system_prompt(accent: str = "indian", character: str = "professional", custom_mission: Optional[str] = None) -> str:
+def build_system_prompt(accent: str = "indian", character: str = "professional", custom_mission: str | None = None) -> str:
     """Maintain backward compatibility with earlier build_system_prompt signature."""
     role = "tech_specialist" if "tech" in character.lower() else (
         "customer_support" if "support" in character.lower() or "professional" in character.lower() else "conversational_companion"

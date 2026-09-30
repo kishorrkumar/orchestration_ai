@@ -4,6 +4,7 @@ Intelligent Conversational Dialogue, and Full-Duplex Turn-Taking.
 """
 
 from __future__ import annotations
+
 import asyncio
 import concurrent.futures
 import logging
@@ -12,34 +13,31 @@ import os
 import tempfile
 import time
 import urllib.parse
-from typing import Optional, List, Set
 
 import numpy as np
 import soundfile as sf
 import websockets
-from websockets.asyncio.server import Server, serve, ServerConnection
+from websockets.asyncio.server import Server, ServerConnection, serve
 
-from ..protocol.messages import (
-    MessageType,
-    ControlAction,
-    ControlMessage,
-    HandshakeMessage,
-    AudioMessage,
-    TextMessage,
-    ErrorMessage,
-    encode_message,
-    decode_message,
-)
+from ..chunker.bridge import ClauseChunker
+from ..persona.dialogue import StrictVoiceDialogueEngine
 from ..protocol.audio import (
     FRAME_SIZE,
     SAMPLE_RATE,
+    AdaptiveNoiseCanceller,
     compute_rms,
     generate_silence_frame,
-    AdaptiveNoiseCanceller,
 )
-
-from ..persona.dialogue import StrictVoiceDialogueEngine, GroundedDialogueEngine
-from ..chunker.bridge import ClauseChunker
+from ..protocol.messages import (
+    AudioMessage,
+    ControlAction,
+    ErrorMessage,
+    HandshakeMessage,
+    MessageType,
+    TextMessage,
+    decode_message,
+    encode_message,
+)
 
 logger = logging.getLogger("orchestration.worker.mock")
 
@@ -50,18 +48,19 @@ _TTS_EXECUTOR = concurrent.futures.ThreadPoolExecutor(max_workers=2)
 async def _synthesize_speech_neural(
     text: str,
     target_sr: int = 24000,
-    voice_preset: Optional[str] = None,
-    accent: Optional[str] = None,
-    character: Optional[str] = None,
-    neural_voice: Optional[str] = None,
-) -> Optional[np.ndarray]:
+    voice_preset: str | None = None,
+    accent: str | None = None,
+    character: str | None = None,
+    neural_voice: str | None = None,
+) -> np.ndarray | None:
     """
     Synthesize high-fidelity Indian neural voice via edge_tts.
     Supports en-IN-PrabhatNeural (Professional) and en-IN-NeerjaExpressiveNeural (Friendly & Funny).
     """
     try:
-        import edge_tts
         import io
+
+        import edge_tts
 
         voice = neural_voice or ""
         if not voice:
@@ -106,10 +105,10 @@ async def _synthesize_speech_neural(
 def _synthesize_speech_offline(
     text: str,
     target_sr: int = 24000,
-    voice_preset: Optional[str] = None,
-    accent: Optional[str] = None,
-    character: Optional[str] = None,
-) -> Optional[np.ndarray]:
+    voice_preset: str | None = None,
+    accent: str | None = None,
+    character: str | None = None,
+) -> np.ndarray | None:
     """
     Synthesize speech offline using native system TTS (pyttsx3)
     and resample to 24,000 Hz float32 mono PCM.
@@ -255,7 +254,7 @@ class PersonaPlexMockServer:
         self.prompt_init_delay = prompt_init_delay
         self.frame_interval = frame_interval_sec
 
-        self._server: Optional[Server] = None
+        self._server: Server | None = None
         self._lock = asyncio.Lock()
         self._is_running = False
 
@@ -284,7 +283,8 @@ class PersonaPlexMockServer:
         logger.info("PersonaPlexMockServer stopped")
 
     async def _handle_connection(self, websocket: ServerConnection) -> None:
-        path = websocket.request.path if hasattr(websocket, "request") else ""
+        request = getattr(websocket, "request", None)
+        path = request.path if request is not None else ""
         self.active_connections += 1
 
         if self._lock.locked():
@@ -338,8 +338,8 @@ class PersonaPlexMockServer:
             dialogue = DialogueSession(text_prompt, accent=accent, character=character)
             noise_canceller = AdaptiveNoiseCanceller()
 
-            outbound_audio_frames: List[np.ndarray] = []
-            outbound_tokens: List[str] = []
+            outbound_audio_frames: list[np.ndarray] = []
+            outbound_tokens: list[str] = []
 
             loop = asyncio.get_running_loop()
 
@@ -351,7 +351,7 @@ class PersonaPlexMockServer:
 
                 # Streaming Clause Chunker: segment into immediate speakable chunks
                 chunker = ClauseChunker(first_chunk_min_words=3, first_chunk_max_words=5, later_chunk_min_words=6, later_chunk_max_words=12)
-                chunks: List[str] = []
+                chunks: list[str] = []
                 for w in words:
                     ready = chunker.feed_token(w + " ")
                     chunks.extend(ready)

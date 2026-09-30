@@ -1,4 +1,5 @@
 import asyncio
+
 import numpy as np
 import pytest
 
@@ -9,9 +10,9 @@ from orchestration.protocol.messages import (
     MessageType,
     encode_message,
 )
-from orchestration.worker.pool import WorkerPool, WorkerNodeConfig
-from orchestration.worker.mock_worker import PersonaPlexMockServer
 from orchestration.session.manager import SessionManager, SessionState
+from orchestration.worker.mock_worker import PersonaPlexMockServer
+from orchestration.worker.pool import WorkerNodeConfig, WorkerPool
 
 
 @pytest.mark.asyncio

@@ -1,7 +1,6 @@
-import pytest
-from orchestration.persona.registry import default_registry, PersonaRegistry
-from orchestration.persona.dialogue import StrictVoiceDialogueEngine, GroundedDialogueEngine
-from orchestration.persona.prompts import build_system_prompt, MASTER_VOICE_AGENT_SYSTEM_PROMPT
+from orchestration.persona.dialogue import StrictVoiceDialogueEngine
+from orchestration.persona.prompts import MASTER_VOICE_AGENT_SYSTEM_PROMPT
+from orchestration.persona.registry import default_registry
 
 
 def test_system_prompt_contains_12_principles():
@@ -48,7 +47,7 @@ def test_dialogue_engine_truthful_personal_questions():
     """Verify the dialogue engine answers questions like 'What did you eat today?' honestly without bluffing."""
     engine = StrictVoiceDialogueEngine(accent="american", character="warm")
     reply = engine.generate_reply("What did you eat today?")
-    
+
     assert "operates on key fundamental principles" not in reply.lower()
     assert "[backchannel" not in reply.lower()
     assert any(term in reply.lower() for term in ["ai", "food", "eat", "electricity", "code"])
@@ -62,7 +61,7 @@ def test_strict_dialogue_engine_principles():
     r1 = engine.reply("Hello, my name is Priya and I want to organize my schedule")
     assert "Priya" in r1
     assert "schedule" in r1.lower()
-    
+
     # Principle 3: Conciseness (max 2 sentences)
     sentences = [s.strip() for s in r1.split(".") if s.strip()]
     assert len(sentences) <= 3  # short turn
@@ -105,15 +104,15 @@ def test_dialogue_engine_all_accent_character_combinations():
 def test_dialogue_conversation_turns_no_mechanical_regarding():
     """Verify that turns like 'can you hear me', 'how are you', and 'looking for...' produce clean, natural responses."""
     engine = StrictVoiceDialogueEngine(accent="indian", character="professional")
-    
+
     r1 = engine.reply("Hi, can you hear me")
     assert "Yes, I hear you" in r1
     assert "Regarding" not in r1
-    
+
     r2 = engine.reply("How are you doing today?")
     assert "operating optimally" in r2 or "ready to assist" in r2
     assert "Regarding" not in r2
-    
+
     r3 = engine.reply("So I am looking for a man who is friendly and talks about these things like.")
     assert "Regarding" not in r3
     assert "I hear you speaking" not in r3

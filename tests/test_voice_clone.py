@@ -1,13 +1,17 @@
 import io
+
 import numpy as np
 import pytest
 import soundfile as sf
 
+from orchestration.audio.similarity import (
+    SIMILARITY_PASS_THRESHOLD,
+    compute_speaker_similarity,
+)
 from orchestration.tts.voice_clone import (
     VoiceCloner,
     VoiceCloningValidationError,
 )
-from orchestration.audio.similarity import compute_speaker_similarity, SIMILARITY_PASS_THRESHOLD
 
 
 def _generate_synthetic_speech_sample(duration_sec: float = 5.0, sr: int = 24000, f0: float = 180.0) -> bytes:

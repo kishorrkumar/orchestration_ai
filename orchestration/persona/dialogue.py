@@ -16,9 +16,10 @@ Follows the 12 Conversation Principles:
 """
 
 from __future__ import annotations
+
 import re
-from typing import Optional, List, Dict, Any
-from .prompts import build_system_prompt, MASTER_VOICE_AGENT_SYSTEM_PROMPT
+
+from .prompts import build_system_prompt
 
 
 class StrictVoiceDialogueEngine:
@@ -31,7 +32,7 @@ class StrictVoiceDialogueEngine:
         self,
         accent: str = "Indian English",
         character: str = "Professional",
-        custom_system_prompt: Optional[str] = None,
+        custom_system_prompt: str | None = None,
     ):
         self.accent = accent.lower()
         self.character = character.lower()
@@ -39,14 +40,14 @@ class StrictVoiceDialogueEngine:
 
         # Context State (Principle 11: Maintain Context)
         self.turn_count: int = 0
-        self.caller_name: Optional[str] = None
-        self.caller_goals: List[str] = []
-        self.known_facts: Dict[str, str] = {}
-        self.unresolved_questions: List[str] = []
-        self.decisions: List[str] = []
-        self.last_agent_question: Optional[str] = None
+        self.caller_name: str | None = None
+        self.caller_goals: list[str] = []
+        self.known_facts: dict[str, str] = {}
+        self.unresolved_questions: list[str] = []
+        self.decisions: list[str] = []
+        self.last_agent_question: str | None = None
         self.last_caller_utterance: str = ""
-        self.recent_replies: List[str] = []
+        self.recent_replies: list[str] = []
 
     def get_greeting(self) -> str:
         """Initial natural greeting — concise, one sentence, one question (Principle 4)."""
@@ -225,7 +226,7 @@ class StrictVoiceDialogueEngine:
 
     def _answer_direct_question(self, raw: str, u_clean: str) -> str:
         """Answers caller questions directly, factually, and conversationally like a knowledgeable human."""
-        words = u_clean.split()
+        u_clean.split()
 
         # Questions about capabilities or prompt
         if any(w in u_clean for w in ["talk a prompt", "talk prompt", "speak prompt", "give a prompt", "say prompt"]):

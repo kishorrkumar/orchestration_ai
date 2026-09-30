@@ -8,10 +8,11 @@ Features:
 """
 
 from __future__ import annotations
+
 import time
 from collections import defaultdict
-from typing import Dict, List, Optional
-from fastapi import Request, HTTPException, status
+
+from fastapi import HTTPException, Request, status
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import JSONResponse
 
@@ -23,7 +24,7 @@ class RateLimiter:
 
     def __init__(self, max_requests_per_minute: int = 60) -> None:
         self.max_requests = max_requests_per_minute
-        self._history: Dict[str, List[float]] = defaultdict(list)
+        self._history: dict[str, list[float]] = defaultdict(list)
 
     def is_allowed(self, client_ip: str) -> bool:
         now = time.time()
@@ -71,7 +72,7 @@ def verify_api_key(request: Request) -> None:
 class SecurityMiddleware(BaseHTTPMiddleware):
     """Applies Rate Limiting and optional API Key Authentication to Gateway requests."""
 
-    def __init__(self, app, rate_limiter: Optional[RateLimiter] = None) -> None:
+    def __init__(self, app, rate_limiter: RateLimiter | None = None) -> None:
         super().__init__(app)
         self.limiter = rate_limiter or default_rate_limiter
         # Endpoints that bypass authentication

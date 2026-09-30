@@ -9,15 +9,14 @@ Handles:
 """
 
 from __future__ import annotations
+
 import asyncio
-from dataclasses import dataclass, field
 import logging
 import time
-from typing import Dict, List, Optional
 
 from pydantic import BaseModel, Field
 
-from .client import PersonaPlexWorkerClient, WorkerStatus, WorkerConnectionError
+from .client import PersonaPlexWorkerClient, WorkerStatus
 
 logger = logging.getLogger(__name__)
 
@@ -28,7 +27,7 @@ class WorkerNodeConfig(BaseModel):
     port: int = Field(default=8998, ge=1, le=65535, description="Worker port")
     use_ssl: bool = Field(default=False, description="Use WSS if True")
     use_opus: bool = Field(default=False, description="Use Opus transcoding for upstream moshi server")
-    gpu_id: Optional[int] = Field(default=None, description="GPU device index worker is pinned to")
+    gpu_id: int | None = Field(default=None, description="GPU device index worker is pinned to")
 
 
 class PoolCapacityExceededError(Exception):
@@ -43,8 +42,8 @@ class WorkerPool:
 
     def __init__(self, wait_timeout: float = 5.0):
         self.wait_timeout = wait_timeout
-        self._workers: Dict[str, PersonaPlexWorkerClient] = {}
-        self._configs: Dict[str, WorkerNodeConfig] = {}
+        self._workers: dict[str, PersonaPlexWorkerClient] = {}
+        self._configs: dict[str, WorkerNodeConfig] = {}
         self._condition = asyncio.Condition()
 
     def register_worker(self, config: WorkerNodeConfig) -> PersonaPlexWorkerClient:
@@ -75,7 +74,7 @@ class WorkerPool:
             del self._configs[worker_id]
             logger.info(f"Unregistered worker {worker_id}")
 
-    async def acquire_worker(self, session_id: str, timeout: Optional[float] = None) -> PersonaPlexWorkerClient:
+    async def acquire_worker(self, session_id: str, timeout: float | None = None) -> PersonaPlexWorkerClient:
         """
         Lease an available IDLE worker.
         If all workers are BUSY, waits until a worker is released or timeout expires.
@@ -103,7 +102,7 @@ class WorkerPool:
 
                 try:
                     await asyncio.wait_for(self._condition.wait(), timeout=remaining)
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     raise PoolCapacityExceededError(
                         f"Timed out waiting for available worker ({wait_limit:.1f}s). All workers busy."
                     )
@@ -117,10 +116,10 @@ class WorkerPool:
                 logger.info(f"Released worker {worker_id} back to IDLE pool")
                 self._condition.notify_all()
 
-    def get_worker(self, worker_id: str) -> Optional[PersonaPlexWorkerClient]:
+    def get_worker(self, worker_id: str) -> PersonaPlexWorkerClient | None:
         return self._workers.get(worker_id)
 
-    def list_workers(self) -> List[dict]:
+    def list_workers(self) -> list[dict]:
         """Return status information for all registered workers."""
         result = []
         for wid, worker in self._workers.items():
@@ -153,9 +152,9 @@ class WorkerPool:
             "utilization_pct": round((busy / total * 100.0) if total > 0 else 0.0, 1),
         }
 
-    async def check_health(self) -> Dict[str, bool]:
+    async def check_health(self) -> dict[str, bool]:
         """Ping registered workers and transition unhealthy/recovered status."""
-        results: Dict[str, bool] = {}
+        results: dict[str, bool] = {}
         async with self._condition:
             changed = False
             for wid, worker in list(self._workers.items()):

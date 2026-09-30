@@ -41,7 +41,7 @@ def test_clause_chunker_first_chunk_early_flush():
 
 def test_clause_chunker_sentence_boundaries():
     chunker = ClauseChunker()
-    tokens = "Why do programmers prefer dark mode? Because light attracts bugs!".split()
+    tokens = ["Why", "do", "programmers", "prefer", "dark", "mode?", "Because", "light", "attracts", "bugs!"]
     emitted = []
     for token in tokens:
         res = chunker.feed_token(token + " ")

@@ -9,12 +9,13 @@ Manages:
 """
 
 from __future__ import annotations
-import re
-from pathlib import Path
-from typing import Any, Dict, List, Optional
-from pydantic import BaseModel, Field, model_validator
-from .prompts import build_system_prompt
 
+import re
+from typing import Any
+
+from pydantic import BaseModel, Field, model_validator
+
+from .prompts import build_system_prompt
 
 # 18 official PersonaPlex voice preset IDs
 OFFICIAL_VOICE_PRESETS = [
@@ -80,7 +81,7 @@ def estimate_token_count(text: str) -> int:
     return max(1, int(len(words) * 1.35))
 
 
-def validate_system_prompt(text: str, max_tokens: Optional[int] = None) -> str:
+def validate_system_prompt(text: str, max_tokens: int | None = None) -> str:
     """
     Validates that system prompt fits within safe latency bounds.
     Upstream steps each token sequentially during startup; long prompts cause connection timeouts.
@@ -98,7 +99,7 @@ def validate_system_prompt(text: str, max_tokens: Optional[int] = None) -> str:
     return cleaned
 
 
-def wrap_with_system_tags(text: str, max_tokens: Optional[int] = None) -> str:
+def wrap_with_system_tags(text: str, max_tokens: int | None = None) -> str:
     """
     Format text prompt with the exact system delimiters expected by PersonaPlex:
     '<system> {text} <system>'
@@ -132,13 +133,13 @@ class PersonaConfig(BaseModel):
     accent: str = Field(default="American English", description="Accent description")
     character: str = Field(default="Conversational", description="Character archetype")
     neural_voice: str = Field(default="NATF2.pt", description="Neural voice identifier")
-    text_prompt: Optional[str] = Field(default=None, description="Legacy alias for system_prompt")
-    voice_prompt: Optional[str] = Field(default=None, description="Legacy alias for voice_ref")
+    text_prompt: str | None = Field(default=None, description="Legacy alias for system_prompt")
+    voice_prompt: str | None = Field(default=None, description="Legacy alias for voice_ref")
     audio_temperature: float = Field(default=0.8, ge=0.0, le=2.0)
     text_temperature: float = Field(default=0.7, ge=0.0, le=2.0)
     top_k_audio: int = Field(default=250, ge=1)
     top_k_text: int = Field(default=25, ge=1)
-    seed: Optional[int] = Field(default=None, description="Optional seed for deterministic generation")
+    seed: int | None = Field(default=None, description="Optional seed for deterministic generation")
     speaking_rate: float = Field(default=1.0, ge=0.5, le=2.0)
     llm_model: str = Field(default="qwen2.5:1.5b")
     llm_temperature: float = Field(default=0.7, ge=0.0, le=2.0)
@@ -150,20 +151,20 @@ class PersonaConfig(BaseModel):
         if isinstance(data, dict):
             # Synchronize system_prompt <-> text_prompt
             if "system_prompt" not in data or not data["system_prompt"]:
-                if "text_prompt" in data and data["text_prompt"]:
+                if data.get("text_prompt"):
                     data["system_prompt"] = data["text_prompt"]
             if "text_prompt" not in data or not data["text_prompt"]:
                 data["text_prompt"] = data.get("system_prompt", "")
 
             # Synchronize voice_ref <-> voice_prompt
             if "voice_ref" not in data or not data["voice_ref"]:
-                if "voice_prompt" in data and data["voice_prompt"]:
+                if data.get("voice_prompt"):
                     data["voice_ref"] = data["voice_prompt"]
             if "voice_prompt" not in data or not data["voice_prompt"]:
                 data["voice_prompt"] = data.get("voice_ref", "NATF2.pt")
         return data
 
-    def get_formatted_text_prompt(self, max_tokens: Optional[int] = None) -> str:
+    def get_formatted_text_prompt(self, max_tokens: int | None = None) -> str:
         """Returns the system prompt properly delimited with <system> tags."""
         content = self.system_prompt or self.text_prompt or ""
         return wrap_with_system_tags(content, max_tokens=max_tokens)
@@ -178,7 +179,7 @@ class PersonaRegistry:
     """Thread-safe catalog of agent personas and voice profiles."""
 
     def __init__(self) -> None:
-        self._personas: Dict[str, PersonaConfig] = {}
+        self._personas: dict[str, PersonaConfig] = {}
         self._register_default_personas()
 
     def _register_default_personas(self) -> None:
@@ -313,10 +314,10 @@ class PersonaRegistry:
     def register(self, config: PersonaConfig) -> None:
         self._personas[config.id] = config
 
-    def get(self, persona_id: str) -> Optional[PersonaConfig]:
+    def get(self, persona_id: str) -> PersonaConfig | None:
         return self._personas.get(persona_id)
 
-    def list_all(self) -> List[PersonaConfig]:
+    def list_all(self) -> list[PersonaConfig]:
         return list(self._personas.values())
 
     def delete(self, persona_id: str) -> bool:
@@ -325,7 +326,7 @@ class PersonaRegistry:
             return True
         return False
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {pid: p.model_dump() for pid, p in self._personas.items()}
 
     def to_yaml(self) -> str:
@@ -342,7 +343,7 @@ class PersonaRegistry:
                     self.register(PersonaConfig(**cfg_data))
 
     @staticmethod
-    def get_official_voices() -> List[str]:
+    def get_official_voices() -> list[str]:
         return list(OFFICIAL_VOICE_PRESETS)
 
 

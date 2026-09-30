@@ -12,9 +12,10 @@ Byte 0:
 """
 
 from __future__ import annotations
+
+import json
 from dataclasses import dataclass
 from enum import IntEnum
-import json
 from typing import Any, Union
 
 

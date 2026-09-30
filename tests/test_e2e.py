@@ -1,15 +1,16 @@
 import asyncio
 import os
+
 import numpy as np
 import pytest
 import soundfile as sf
 import uvicorn
 
-from orchestration.gateway.app import create_app
-from orchestration.worker.mock_worker import PersonaPlexMockServer
-from orchestration.worker.pool import WorkerPool, WorkerNodeConfig
 from orchestration.cli.main import _test_call_cmd
+from orchestration.gateway.app import create_app
 from orchestration.protocol.audio import SAMPLE_RATE
+from orchestration.worker.mock_worker import PersonaPlexMockServer
+from orchestration.worker.pool import WorkerNodeConfig, WorkerPool
 
 
 class MockArgs:
@@ -70,7 +71,7 @@ async def test_full_duplex_e2e_call(tmp_path):
 
         assert os.path.exists(output_json_path)
         import json
-        with open(output_json_path, "r", encoding="utf-8") as f:
+        with open(output_json_path, encoding="utf-8") as f:
             transcript_data = json.load(f)
             assert "transcript" in transcript_data
             assert len(transcript_data["tokens"]) > 0

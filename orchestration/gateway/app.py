@@ -11,42 +11,50 @@ Provides:
 """
 
 from __future__ import annotations
+
 import asyncio
-from contextlib import asynccontextmanager
 import io
 import logging
 import time
-from typing import Any, Optional
+from contextlib import asynccontextmanager
+from typing import Any
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Query, HTTPException, status, UploadFile, File, Form
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi import (
+    FastAPI,
+    File,
+    Form,
+    HTTPException,
+    Query,
+    UploadFile,
+    WebSocket,
+    WebSocketDisconnect,
+    status,
+)
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
 
-from ..tts.voice_clone import default_voice_cloner
-from ..tts.base import KokoroTTSBackend
-
+from ..config import settings
+from ..persona.prompts import build_system_prompt
 from ..persona.registry import (
+    OFFICIAL_VOICE_PRESETS,
     PersonaConfig,
     PersonaRegistry,
     default_registry,
-    OFFICIAL_VOICE_PRESETS,
 )
-from ..persona.prompts import build_system_prompt, MASTER_VOICE_AGENT_SYSTEM_PROMPT
-from ..worker.pool import WorkerPool, WorkerNodeConfig, PoolCapacityExceededError
-from ..session.manager import SessionManager, SessionState
 from ..protocol.messages import (
-    MessageType,
-    HandshakeMessage,
     ErrorMessage,
+    HandshakeMessage,
     MetadataMessage,
     encode_message,
-    decode_message,
 )
 from ..rag.engine import default_rag_engine
-from ..config import settings
+from ..session.manager import SessionManager
+from ..tts.voice_clone import default_voice_cloner
+from ..worker.pool import PoolCapacityExceededError, WorkerNodeConfig, WorkerPool
 from .security import default_rate_limiter
 from .studio_ui import STUDIO_HTML
+
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
 logger = logging.getLogger("orchestration.gateway")
 
@@ -87,13 +95,14 @@ class RAGQueryRequest(BaseModel):
 
 
 def create_app(
-    pool: Optional[WorkerPool] = None,
-    registry: Optional[PersonaRegistry] = None,
-    session_manager: Optional[SessionManager] = None,
+    pool: WorkerPool | None = None,
+    registry: PersonaRegistry | None = None,
+    session_manager: SessionManager | None = None,
     worker_type: str = "auto",
     active_server = None,
 ) -> FastAPI:
     import os
+
     from fastapi import Response
     worker_pool = pool or WorkerPool()
     persona_registry = registry or default_registry
@@ -267,7 +276,7 @@ def create_app(
 
     @app.get("/v1/personas/{persona_id}", tags=["Personas"])
     @app.get("/v1/agents/{agent_id}", tags=["Agents"])
-    async def get_agent(persona_id: Optional[str] = None, agent_id: Optional[str] = None):
+    async def get_agent(persona_id: str | None = None, agent_id: str | None = None):
         target_id = persona_id or agent_id
         if not target_id:
             raise HTTPException(status_code=400, detail="Missing persona_id or agent_id")
@@ -285,7 +294,7 @@ def create_app(
 
     @app.put("/v1/personas/{persona_id}", tags=["Personas"])
     @app.put("/v1/agents/{agent_id}", tags=["Agents"])
-    async def update_agent(persona: PersonaConfig, persona_id: Optional[str] = None, agent_id: Optional[str] = None):
+    async def update_agent(persona: PersonaConfig, persona_id: str | None = None, agent_id: str | None = None):
         target_id = persona_id or agent_id
         if not target_id:
             raise HTTPException(status_code=400, detail="Missing persona_id or agent_id")
@@ -296,7 +305,7 @@ def create_app(
 
     @app.delete("/v1/personas/{persona_id}", tags=["Personas"])
     @app.delete("/v1/agents/{agent_id}", tags=["Agents"])
-    async def delete_agent(persona_id: Optional[str] = None, agent_id: Optional[str] = None):
+    async def delete_agent(persona_id: str | None = None, agent_id: str | None = None):
         target_id = persona_id or agent_id
         if not target_id:
             raise HTTPException(status_code=400, detail="Missing persona_id or agent_id")
@@ -455,7 +464,7 @@ def create_app(
         voice_name: str = Form(default="My Cloned Voice"),
         owner: str = Form(default="default_user"),
         consent: bool = Form(default=False),
-        gender: Optional[str] = Form(default=None),
+        gender: str | None = Form(default=None),
     ):
         if not consent:
             raise HTTPException(
@@ -479,7 +488,7 @@ def create_app(
             return {"status": "cloned", "voice": meta}
         except Exception as e:
             logger.warning(f"Voice cloning validation error: {e}")
-            raise HTTPException(status_code=400, detail=f"Voice cloning rejected: {str(e)}")
+            raise HTTPException(status_code=400, detail=f"Voice cloning rejected: {e!s}")
 
     @app.delete("/v1/voices/{voice_id}", tags=["Voices"])
     @app.delete("/v1/voices/cloned/{voice_id}", tags=["Voices"])
@@ -589,13 +598,13 @@ def create_app(
     async def realtime_endpoint(
         websocket: WebSocket,
         persona_id: str = Query(default="indian_pro", description="Registered persona ID"),
-        voice_prompt: Optional[str] = Query(default=None, description="Optional override for voice prompt"),
-        neural_voice: Optional[str] = Query(default=None, description="Optional override for neural TTS voice"),
-        text_prompt: Optional[str] = Query(default=None, description="Optional override for text prompt"),
-        session_id: Optional[str] = Query(default=None, description="Optional custom session ID"),
-        accent: Optional[str] = Query(default=None, description="Optional accent override (Indian English)"),
-        character: Optional[str] = Query(default=None, description="Optional character override (Professional, Friendly & Funny)"),
-        call_flow: Optional[str] = Query(default=None, description="Optional call flow role"),
+        voice_prompt: str | None = Query(default=None, description="Optional override for voice prompt"),
+        neural_voice: str | None = Query(default=None, description="Optional override for neural TTS voice"),
+        text_prompt: str | None = Query(default=None, description="Optional override for text prompt"),
+        session_id: str | None = Query(default=None, description="Optional custom session ID"),
+        accent: str | None = Query(default=None, description="Optional accent override (Indian English)"),
+        character: str | None = Query(default=None, description="Optional character override (Professional, Friendly & Funny)"),
+        call_flow: str | None = Query(default=None, description="Optional call flow role"),
     ):
         # 0. Check Rate Limit
         client_ip = websocket.client.host if websocket.client else "127.0.0.1"
@@ -653,7 +662,7 @@ def create_app(
             session = await mgr.create_session(persona=active_persona, session_id=session_id, timeout=6.0)
         except PoolCapacityExceededError as e:
             logger.warning(f"Capacity exceeded for session request: {e}")
-            err = encode_message(ErrorMessage(error=f"503 Service Unavailable: All workers busy. {str(e)}"))
+            err = encode_message(ErrorMessage(error=f"503 Service Unavailable: All workers busy. {e!s}"))
             await websocket.send_bytes(err)
             await websocket.close(code=1013, reason="Pool saturated")
             return
@@ -679,7 +688,7 @@ def create_app(
             )
         except Exception as e:
             logger.error(f"Failed to start session: {e}")
-            err = encode_message(ErrorMessage(error=f"Worker initialization failed: {str(e)}"))
+            err = encode_message(ErrorMessage(error=f"Worker initialization failed: {e!s}"))
             await websocket.send_bytes(err)
             await mgr.end_session(session.session_id)
             await websocket.close(code=1011, reason="Worker initialization failed")

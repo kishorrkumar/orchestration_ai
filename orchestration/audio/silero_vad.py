@@ -8,8 +8,9 @@ Runs on CPU with minimal latency (< 2 ms per 32 ms frame):
 """
 
 from __future__ import annotations
+
 import logging
-from typing import Optional, Tuple
+
 import numpy as np
 import torch
 
@@ -101,7 +102,7 @@ class SileroVADDetector:
             rms = float(np.sqrt(np.mean(np.square(audio_chunk_24k))))
             return min(1.0, rms * 25.0)
 
-    def is_speech(self, audio_chunk_24k: np.ndarray, threshold: Optional[float] = None) -> Tuple[bool, float]:
+    def is_speech(self, audio_chunk_24k: np.ndarray, threshold: float | None = None) -> tuple[bool, float]:
         """
         Check if speech is detected above threshold.
         Returns: (is_speech: bool, probability: float)

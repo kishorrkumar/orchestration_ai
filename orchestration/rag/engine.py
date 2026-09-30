@@ -6,14 +6,14 @@ Built with SOLID principles, 100% open-source, offline, and lightweight.
 """
 
 from __future__ import annotations
-from dataclasses import dataclass, field
+
 import io
 import math
 import os
 import re
 import threading
 import time
-from typing import Dict, List, Optional, Tuple, Set
+from dataclasses import dataclass, field
 
 
 @dataclass
@@ -23,7 +23,7 @@ class DocumentChunk:
     doc_name: str
     text: str
     chunk_index: int
-    metadata: Dict = field(default_factory=dict)
+    metadata: dict = field(default_factory=dict)
 
 
 @dataclass
@@ -32,7 +32,7 @@ class Document:
     filename: str
     file_type: str
     raw_text: str
-    chunks: List[DocumentChunk]
+    chunks: list[DocumentChunk]
     created_at: float = field(default_factory=time.time)
     num_pages: int = 1
 
@@ -41,7 +41,7 @@ class DocumentParser:
     """Extracts raw text from multiple document formats."""
 
     @staticmethod
-    def parse_bytes(filename: str, content: bytes) -> Tuple[str, int]:
+    def parse_bytes(filename: str, content: bytes) -> tuple[str, int]:
         """
         Parses byte content of a file and returns (extracted_text, num_pages).
         Supports: .txt, .md, .csv, .json, .log, .pdf
@@ -59,7 +59,7 @@ class DocumentParser:
             return text.strip(), 1
 
     @staticmethod
-    def _parse_pdf(content: bytes) -> Tuple[str, int]:
+    def _parse_pdf(content: bytes) -> tuple[str, int]:
         try:
             import pypdf
             reader = pypdf.PdfReader(io.BytesIO(content))
@@ -77,7 +77,7 @@ class DocumentParser:
             cleaned = re.sub(r"\s+", " ", printable).strip()
             return cleaned[:10000], 1
         except Exception as e:
-            return f"Error extracting PDF: {str(e)}", 1
+            return f"Error extracting PDF: {e!s}", 1
 
 
 class TextChunker:
@@ -87,13 +87,13 @@ class TextChunker:
         self.chunk_size = chunk_size
         self.overlap = overlap
 
-    def chunk(self, text: str, doc_id: str, doc_name: str) -> List[DocumentChunk]:
+    def chunk(self, text: str, doc_id: str, doc_name: str) -> list[DocumentChunk]:
         paragraphs = [p.strip() for p in re.split(r"\n\s*\n", text) if p.strip()]
         if not paragraphs:
             paragraphs = [text.strip()] if text.strip() else []
 
-        chunks: List[DocumentChunk] = []
-        current_words: List[str] = []
+        chunks: list[DocumentChunk] = []
+        current_words: list[str] = []
         chunk_idx = 0
 
         for para in paragraphs:
@@ -157,7 +157,7 @@ class BM25Retriever:
     Fast, local, offline, zero API keys or external services required.
     """
 
-    STOPWORDS: Set[str] = {
+    STOPWORDS: set[str] = {
         "a", "an", "and", "are", "as", "at", "be", "by", "for", "from",
         "has", "he", "in", "is", "it", "its", "of", "on", "that", "the",
         "to", "was", "were", "will", "with", "i", "you", "we", "they",
@@ -167,18 +167,18 @@ class BM25Retriever:
     def __init__(self, k1: float = 1.5, b: float = 0.75):
         self.k1 = k1
         self.b = b
-        self.chunks: List[DocumentChunk] = []
-        self.doc_len: List[int] = []
+        self.chunks: list[DocumentChunk] = []
+        self.doc_len: list[int] = []
         self.avg_doc_len: float = 0.0
-        self.doc_freqs: Dict[str, int] = {}
-        self.term_freqs: List[Dict[str, int]] = []
-        self.idf: Dict[str, float] = {}
+        self.doc_freqs: dict[str, int] = {}
+        self.term_freqs: list[dict[str, int]] = []
+        self.idf: dict[str, float] = {}
 
-    def _tokenize(self, text: str) -> List[str]:
+    def _tokenize(self, text: str) -> list[str]:
         words = re.findall(r"\b[a-zA-Z0-9_\-\.]{2,}\b", text.lower())
         return [w for w in words if w not in self.STOPWORDS]
 
-    def build_index(self, chunks: List[DocumentChunk]) -> None:
+    def build_index(self, chunks: list[DocumentChunk]) -> None:
         self.chunks = list(chunks)
         self.doc_len = []
         self.term_freqs = []
@@ -190,12 +190,12 @@ class BM25Retriever:
             self.doc_len.append(len(tokens))
             total_tokens += len(tokens)
 
-            tf: Dict[str, int] = {}
+            tf: dict[str, int] = {}
             for t in tokens:
                 tf[t] = tf.get(t, 0) + 1
             self.term_freqs.append(tf)
 
-            for t in tf.keys():
+            for t in tf:
                 self.doc_freqs[t] = self.doc_freqs.get(t, 0) + 1
 
         n_docs = len(self.chunks)
@@ -207,7 +207,7 @@ class BM25Retriever:
             # Standard Lucene/BM25 IDF formula
             self.idf[term] = math.log(1.0 + (n_docs - df + 0.5) / (df + 0.5))
 
-    def retrieve(self, query: str, top_k: int = 3) -> List[Tuple[DocumentChunk, float]]:
+    def retrieve(self, query: str, top_k: int = 3) -> list[tuple[DocumentChunk, float]]:
         if not self.chunks:
             return []
 
@@ -215,7 +215,7 @@ class BM25Retriever:
         if not query_tokens:
             return []
 
-        scores: List[float] = [0.0] * len(self.chunks)
+        scores: list[float] = [0.0] * len(self.chunks)
 
         for i, tf in enumerate(self.term_freqs):
             doc_len = self.doc_len[i]
@@ -255,10 +255,10 @@ class RAGEngine:
         self.parser = DocumentParser()
         self.chunker = TextChunker(chunk_size=chunk_size, overlap=overlap)
         self.retriever = BM25Retriever()
-        self._documents: Dict[str, Document] = {}
-        self._all_chunks: List[DocumentChunk] = []
+        self._documents: dict[str, Document] = {}
+        self._all_chunks: list[DocumentChunk] = []
 
-    def add_document(self, filename: str, content: bytes, doc_id: Optional[str] = None) -> Document:
+    def add_document(self, filename: str, content: bytes, doc_id: str | None = None) -> Document:
         with self._lock:
             doc_id = doc_id or f"doc_{int(time.time() * 1000)}"
             raw_text, num_pages = self.parser.parse_bytes(filename, content)
@@ -277,7 +277,7 @@ class RAGEngine:
             self._rebuild_index_locked()
             return doc
 
-    def add_text(self, title: str, text: str, doc_id: Optional[str] = None) -> Document:
+    def add_text(self, title: str, text: str, doc_id: str | None = None) -> Document:
         return self.add_document(filename=title, content=text.encode("utf-8"), doc_id=doc_id)
 
     def delete_document(self, doc_id: str) -> bool:
@@ -300,7 +300,7 @@ class RAGEngine:
             self._all_chunks.extend(doc.chunks)
         self.retriever.build_index(self._all_chunks)
 
-    def list_documents(self) -> List[Dict]:
+    def list_documents(self) -> list[dict]:
         with self._lock:
             return [
                 {
@@ -315,11 +315,11 @@ class RAGEngine:
                 for d in self._documents.values()
             ]
 
-    def query(self, query_text: str, top_k: int = 3) -> List[Tuple[DocumentChunk, float]]:
+    def query(self, query_text: str, top_k: int = 3) -> list[tuple[DocumentChunk, float]]:
         with self._lock:
             return self.retriever.retrieve(query_text, top_k=top_k)
 
-    def get_grounded_context(self, query_text: str, top_k: int = 2) -> Optional[str]:
+    def get_grounded_context(self, query_text: str, top_k: int = 2) -> str | None:
         results = self.query(query_text, top_k=top_k)
         if not results:
             return None
@@ -328,7 +328,7 @@ class RAGEngine:
             snippets.append(f"[{chunk.doc_name}]: {chunk.text.strip()}")
         return "\n\n".join(snippets)
 
-    def generate_grounded_response(self, query_text: str) -> Optional[str]:
+    def generate_grounded_response(self, query_text: str) -> str | None:
         """
         Synthesizes a crisp, natural spoken response directly answering
         the user's inquiry from retrieved knowledge chunks.

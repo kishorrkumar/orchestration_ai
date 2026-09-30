@@ -10,20 +10,17 @@ Automated Evaluation Harness for 7 Dimensions of Full-Duplex Conversation Qualit
 7. Task Success: Outcome tagging and scenario evaluation report.
 """
 
-import asyncio
 import numpy as np
 import pytest
 
+from orchestration.persona.registry import default_registry
 from orchestration.protocol.messages import (
-    MessageType,
     AudioMessage,
-    TextMessage,
     encode_message,
 )
-from orchestration.session.manager import SessionManager, SessionState, VoiceSession
-from orchestration.persona.registry import PersonaConfig, default_registry
-from orchestration.worker.pool import WorkerPool, WorkerNodeConfig
+from orchestration.session.manager import SessionManager, SessionState
 from orchestration.worker.mock_worker import PersonaPlexMockServer
+from orchestration.worker.pool import WorkerNodeConfig, WorkerPool
 
 
 @pytest.mark.asyncio

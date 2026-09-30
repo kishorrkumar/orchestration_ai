@@ -2,13 +2,12 @@
 Tests for RAG (Retrieval-Augmented Generation) Engine.
 """
 
-import pytest
 from orchestration.rag.engine import (
-    DocumentParser,
-    TextChunker,
     BM25Retriever,
-    RAGEngine,
     DocumentChunk,
+    DocumentParser,
+    RAGEngine,
+    TextChunker,
 )
 
 

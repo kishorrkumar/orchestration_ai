@@ -9,13 +9,12 @@ Commands:
 """
 
 from __future__ import annotations
+
 import argparse
 import asyncio
 import json
 import logging
-import sys
 import time
-from typing import Optional
 
 import numpy as np
 import soundfile as sf
@@ -23,23 +22,19 @@ import uvicorn
 from websockets.asyncio.client import connect as ws_connect
 
 from ..gateway.app import create_app
-from ..persona.registry import default_registry
 from ..protocol.audio import (
     FRAME_SIZE,
     SAMPLE_RATE,
-    float32_to_int16,
-    int16_to_float32,
 )
 from ..protocol.messages import (
-    MessageType,
     AudioMessage,
-    TextMessage,
+    MessageType,
     decode_message,
     encode_message,
 )
+from ..worker.local_cascade import CascadedLocalWorkerServer, LocalCascadeWorkerServer
 from ..worker.mock_worker import PersonaPlexMockServer
-from ..worker.local_cascade import LocalCascadeWorkerServer, CascadedLocalWorkerServer
-from ..worker.pool import WorkerPool, WorkerNodeConfig
+from ..worker.pool import WorkerNodeConfig, WorkerPool
 
 logging.basicConfig(
     level=logging.INFO,
@@ -213,14 +208,12 @@ def _doctor_cmd(args):
     print("=" * 60)
 
     # 1. Check Ollama
-    ollama_ok = False
     try:
         import httpx
         r = httpx.get("http://127.0.0.1:11434/api/tags", timeout=3.0)
         if r.status_code == 200:
-            ollama_ok = True
             models = [m.get("name", "") for m in r.json().get("models", [])]
-            print(f"[OK] Ollama Server: RUNNING on port 11434")
+            print("[OK] Ollama Server: RUNNING on port 11434")
             print(f"     Available Models: {', '.join(models) if models else 'None'}")
         else:
             print(f"[ERROR] Ollama Server: Error HTTP {r.status_code}")
@@ -238,7 +231,7 @@ def _doctor_cmd(args):
             print(f"[OK] CUDA: AVAILABLE ({torch.version.cuda})")
             print(f"     GPU: {dev_name} (Total: {vram_total:.0f} MB, Free: {mem_free_mb:.0f} MB)")
         else:
-            print(f"[WARN] CUDA: Not detected in PyTorch (running in CPU mode)")
+            print("[WARN] CUDA: Not detected in PyTorch (running in CPU mode)")
     except Exception as e:
         print(f"[ERROR] PyTorch/CUDA check error: {e}")
 
@@ -246,15 +239,14 @@ def _doctor_cmd(args):
     try:
         import faster_whisper
         print(f"[OK] faster-whisper: INSTALLED (version {faster_whisper.__version__})")
-        print(f"     ASR Configuration: base model on CPU int8 (4 threads, RTF ~0.15)")
+        print("     ASR Configuration: base model on CPU int8 (4 threads, RTF ~0.15)")
     except Exception as e:
         print(f"[ERROR] faster-whisper: NOT INSTALLED ({e})")
 
     # 4. Check TTS (Kokoro)
     try:
-        import kokoro_onnx
-        print(f"[OK] Kokoro TTS: INSTALLED (ONNX runtime 24 kHz)")
-        print(f"     Voices: aarav_colloquial (Male), priya_colloquial (Female)")
+        print("[OK] Kokoro TTS: INSTALLED (ONNX runtime 24 kHz)")
+        print("     Voices: aarav_colloquial (Male), priya_colloquial (Female)")
     except Exception as e:
         print(f"[ERROR] Kokoro TTS: NOT INSTALLED ({e})")
 

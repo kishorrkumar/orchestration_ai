@@ -15,46 +15,41 @@ Architected for Windows 11 with 4 GB VRAM GPU:
 """
 
 from __future__ import annotations
+
 import asyncio
-import io
 import json
 import logging
-import math
-import os
 import pathlib
 import time
 import urllib.parse
-from typing import AsyncGenerator, Dict, List, Optional, Tuple
+from typing import Any
 
 import numpy as np
-import soundfile as sf
 from websockets.asyncio.server import ServerConnection, serve
 
+from ..audio.cleaner import CallerAudioCleaner
+from ..audio.silero_vad import SileroVADDetector
+from ..audio.turn_detector import TurnDetector, is_utterance_unfinished
+from ..chunker.bridge import ClauseChunker
+from ..persona.dialogue import StrictVoiceDialogueEngine
+from ..persona.prompts import build_agent_system_prompt
 from ..protocol.audio import (
     FRAME_SIZE,
     SAMPLE_RATE,
-    float32_to_int16,
-    int16_to_float32,
+    AudioFrameBuffer,
     compute_rms,
     generate_silence_frame,
-    AudioFrameBuffer,
 )
 from ..protocol.messages import (
-    MessageType,
-    HandshakeMessage,
     AudioMessage,
+    HandshakeMessage,
+    MessageType,
+    MetadataMessage,
     TextMessage,
-    encode_message,
     decode_message,
+    encode_message,
 )
-from ..chunker.bridge import ClauseChunker, normalize_indian_english_text
-from ..chunker.normalizer import normalize_for_tts
-from ..audio.turn_detector import TurnDetector, is_utterance_unfinished
-from ..audio.silero_vad import SileroVADDetector
 from ..tts.base import StreamingCompositeTTS
-from ..audio.cleaner import CallerAudioCleaner
-from ..persona.dialogue import StrictVoiceDialogueEngine
-from ..persona.prompts import build_agent_system_prompt, CALL_FLOW_ROLES
 
 logger = logging.getLogger("orchestration.worker.local_cascade")
 
@@ -118,7 +113,7 @@ class LocalCascadeWorkerServer:
         self.frame_interval = frame_interval_sec
         self.jitter_buffer_frames = jitter_buffer_frames
 
-        self._server = None
+        self._server: Any = None
         self._is_running = False
         self.active_connections = 0
 
@@ -133,8 +128,8 @@ class LocalCascadeWorkerServer:
         # Lazy-loaded shared models
         self._whisper_model = None
         self._whisper_available = False
-        self._tts_engine: Optional[StreamingCompositeTTS] = None
-        self._vad: Optional[SileroVADDetector] = None
+        self._tts_engine: StreamingCompositeTTS | None = None
+        self._vad: SileroVADDetector | None = None
 
     def _init_vad(self) -> None:
         """Initialize Silero VAD ONNX engine for voice activity detection."""
@@ -236,8 +231,8 @@ class LocalCascadeWorkerServer:
             await websocket.close(1013, "Worker busy")
             return
 
-        self.active_connections += 1
-        path = websocket.request.path if hasattr(websocket, "request") else ""
+        request = getattr(websocket, "request", None)
+        path = request.path if request is not None else ""
         parsed = urllib.parse.urlparse(path)
         query = urllib.parse.parse_qs(parsed.query)
 
@@ -245,7 +240,7 @@ class LocalCascadeWorkerServer:
         accent = query.get("accent", ["Indian English"])[0]
         character = query.get("character", ["Professional"])[0]
         neural_voice = query.get("neural_voice", ["aarav_colloquial"])[0]
-        voice_prompt = query.get("voice_prompt", ["NATM0.pt"])[0]
+        query.get("voice_prompt", ["NATM0.pt"])[0]
         call_flow = query.get("call_flow", ["conversational_companion"])[0]
 
         # Handle standard, global, and custom cloned voices
@@ -293,7 +288,7 @@ class LocalCascadeWorkerServer:
             user_speaking = False
             last_speech_time = 0.0
             is_greeting_active = True
-            session_start_time = time.time()
+            time.time()
             last_agent_audio_time = 0.0
 
             # Session components
@@ -313,8 +308,8 @@ class LocalCascadeWorkerServer:
 
             # Frame buffer and queues
             frame_buffer = AudioFrameBuffer(dtype=np.float32, max_buffer_frames=200)
-            token_queue: asyncio.Queue[Optional[str]] = asyncio.Queue()
-            conversation_history: List[Dict[str, str]] = []
+            token_queue: asyncio.Queue[str | None] = asyncio.Queue()
+            conversation_history: list[dict[str, str]] = []
 
             # Construct modular Agent Identity + Call Flow system prompt
             clean_text_prompt = text_prompt.replace("<system>", "").replace("</system>", "").strip()
@@ -325,8 +320,8 @@ class LocalCascadeWorkerServer:
             )
 
             # Active streaming generation tasks
-            current_generation_task: Optional[asyncio.Task] = None
-            current_tts_tasks: List[asyncio.Task] = []
+            current_generation_task: asyncio.Task | None = None
+            current_tts_tasks: list[asyncio.Task] = []
             interrupted_in_turn = False
 
             def cancel_active_turn(record_interrupted: bool = True) -> None:
@@ -369,7 +364,7 @@ class LocalCascadeWorkerServer:
                     later_chunk_max_words=14,
                 )
 
-                chunk_queue: asyncio.Queue[Optional[str]] = asyncio.Queue(maxsize=10)
+                chunk_queue: asyncio.Queue[str | None] = asyncio.Queue(maxsize=10)
 
                 async def tts_consumer():
                     first_chunk = True
@@ -508,7 +503,7 @@ class LocalCascadeWorkerServer:
             # ---------- INBOUND AUDIO RECEIVER ----------
             async def receiver():
                 nonlocal user_speaking, last_speech_time, current_generation_task, is_greeting_active, current_tts_tasks
-                pending_audio_segment: Optional[np.ndarray] = None
+                pending_audio_segment: np.ndarray | None = None
 
                 try:
                     async for raw in websocket:

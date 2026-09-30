@@ -13,21 +13,23 @@ Supported Backends:
 """
 
 from __future__ import annotations
+
 import abc
 import asyncio
 import concurrent.futures
+import importlib.util
 import io
 import logging
 import os
 import pathlib
 import time
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 import numpy as np
 import soundfile as sf
 
-from .text_norm import normalize_indian_english_text
 from .post_process import post_process_speech
+from .text_norm import normalize_indian_english_text
 
 logger = logging.getLogger("orchestration.tts")
 
@@ -52,20 +54,17 @@ class BaseTTSBackend(abc.ABC):
     @abc.abstractmethod
     def is_available(self) -> bool:
         """Returns True if model weights and runtime dependencies are ready."""
-        pass
 
     @abc.abstractmethod
     def warm_up(self) -> None:
         """Run warm-up inference to eliminate initial cold-start latency."""
-        pass
 
     @abc.abstractmethod
-    async def synthesize(self, text: str, voice: Optional[str] = None) -> np.ndarray:
+    async def synthesize(self, text: str, voice: str | None = None) -> np.ndarray:
         """
         Synthesize text chunk to 24 kHz float32 mono PCM numpy array.
         Must be asynchronous and non-blocking to the main event loop.
         """
-        pass
 
     def resample_if_needed(self, audio: np.ndarray, source_sr: int) -> np.ndarray:
         """Resample audio array to target sample_rate (24 kHz)."""
@@ -130,7 +129,7 @@ class KokoroTTSBackend(BaseTTSBackend):
         self.default_voice = default_voice
         self._kokoro: Any = None
         self._available = False
-        self._voice_styles: Dict[str, Any] = {}
+        self._voice_styles: dict[str, Any] = {}
         self._init_runtime()
 
     def _init_runtime(self) -> None:
@@ -140,6 +139,7 @@ class KokoroTTSBackend(BaseTTSBackend):
 
         try:
             import platform
+
             import espeakng_loader
             if platform.system() == "Windows":
                 espeakng_loader.make_library_available()
@@ -224,7 +224,7 @@ class KokoroTTSBackend(BaseTTSBackend):
         trimmed = self.trim_edge_silence(resampled)
         return post_process_speech(trimmed, fs=self.sample_rate)
 
-    async def synthesize(self, text: str, voice: Optional[str] = None) -> np.ndarray:
+    async def synthesize(self, text: str, voice: str | None = None) -> np.ndarray:
         if not self.is_available():
             return np.zeros(0, dtype=np.float32)
         v = voice or self.default_voice
@@ -254,12 +254,7 @@ class EdgeTTSBackend(BaseTTSBackend):
     def __init__(self, sample_rate: int = 24000, speaking_rate: float = 1.0, default_voice: str = "en-IN-PrabhatNeural") -> None:
         super().__init__("edge_tts", sample_rate=sample_rate, speaking_rate=speaking_rate)
         self.default_voice = default_voice
-        self._available = False
-        try:
-            import edge_tts
-            self._available = True
-        except ImportError:
-            self._available = False
+        self._available = importlib.util.find_spec("edge_tts") is not None
 
     def is_available(self) -> bool:
         return self._available
@@ -267,7 +262,7 @@ class EdgeTTSBackend(BaseTTSBackend):
     def warm_up(self) -> None:
         self._is_warmed = True
 
-    async def synthesize(self, text: str, voice: Optional[str] = None) -> np.ndarray:
+    async def synthesize(self, text: str, voice: str | None = None) -> np.ndarray:
         if not self.is_available():
             return np.zeros(0, dtype=np.float32)
 
@@ -321,9 +316,7 @@ class IndicTTSBackend(BaseTTSBackend):
 
     def _init_backend(self) -> None:
         try:
-            import torch
             # Check if parler_tts or indic_tts is installed
-            import parler_tts
             self._available = True
             logger.info("IndicTTSBackend (Parler-TTS) found.")
         except Exception:
@@ -335,7 +328,7 @@ class IndicTTSBackend(BaseTTSBackend):
     def warm_up(self) -> None:
         self._is_warmed = True
 
-    async def synthesize(self, text: str, voice: Optional[str] = None) -> np.ndarray:
+    async def synthesize(self, text: str, voice: str | None = None) -> np.ndarray:
         return np.zeros(0, dtype=np.float32)
 
 
@@ -351,7 +344,7 @@ class XTTSBackend(BaseTTSBackend):
         self,
         sample_rate: int = 24000,
         speaking_rate: float = 1.0,
-        speaker_wav: Optional[str] = None,
+        speaker_wav: str | None = None,
     ) -> None:
         super().__init__("xtts_v2", sample_rate=sample_rate, speaking_rate=speaking_rate)
         self.speaker_wav = speaker_wav or str(MODELS_ROOT / "voices" / "indian_ref.wav")
@@ -361,7 +354,6 @@ class XTTSBackend(BaseTTSBackend):
 
     def _init_backend(self) -> None:
         try:
-            from TTS.api import TTS
             if os.path.exists(self.speaker_wav):
                 self._available = True
                 logger.info(f"XTTSBackend available with reference: {self.speaker_wav}")
@@ -374,7 +366,7 @@ class XTTSBackend(BaseTTSBackend):
     def warm_up(self) -> None:
         self._is_warmed = True
 
-    async def synthesize(self, text: str, voice: Optional[str] = None) -> np.ndarray:
+    async def synthesize(self, text: str, voice: str | None = None) -> np.ndarray:
         return np.zeros(0, dtype=np.float32)
 
 
@@ -386,12 +378,7 @@ class PiperTTSBackend(BaseTTSBackend):
 
     def __init__(self, sample_rate: int = 24000, speaking_rate: float = 1.0) -> None:
         super().__init__("piper", sample_rate=sample_rate, speaking_rate=speaking_rate)
-        self._available = False
-        try:
-            import piper
-            self._available = True
-        except ImportError:
-            self._available = False
+        self._available = importlib.util.find_spec("piper") is not None
 
     def is_available(self) -> bool:
         return self._available
@@ -399,7 +386,7 @@ class PiperTTSBackend(BaseTTSBackend):
     def warm_up(self) -> None:
         self._is_warmed = True
 
-    async def synthesize(self, text: str, voice: Optional[str] = None) -> np.ndarray:
+    async def synthesize(self, text: str, voice: str | None = None) -> np.ndarray:
         return np.zeros(0, dtype=np.float32)
 
 
@@ -420,8 +407,8 @@ class FallbackTTSBackend(BaseTTSBackend):
 
     def _synthesize_pyttsx3(self, text: str) -> np.ndarray:
         try:
-            import pyttsx3
             import pythoncom
+            import pyttsx3
             pythoncom.CoInitialize()
 
             engine = pyttsx3.init()
@@ -453,7 +440,7 @@ class FallbackTTSBackend(BaseTTSBackend):
             tone = 0.05 * np.sin(2 * np.pi * 440 * t)
             return tone.astype(np.float32)
 
-    async def synthesize(self, text: str, voice: Optional[str] = None) -> np.ndarray:
+    async def synthesize(self, text: str, voice: str | None = None) -> np.ndarray:
         loop = asyncio.get_running_loop()
         return await loop.run_in_executor(_EXECUTOR, self._synthesize_pyttsx3, text)
 
@@ -517,7 +504,7 @@ class StreamingCompositeTTS:
         """Pre-warm models to eliminate cold-start latency."""
         self.active_backend.warm_up()
 
-    async def synthesize_chunk(self, raw_chunk: str, voice: Optional[str] = None) -> np.ndarray:
+    async def synthesize_chunk(self, raw_chunk: str, voice: str | None = None) -> np.ndarray:
         """
         Synthesize a single text chunk with normalization and safety fallbacks.
         Returns 24 kHz float32 audio.

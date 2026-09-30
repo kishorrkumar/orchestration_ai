@@ -4,12 +4,13 @@ Async WebSocket Client communicating with an upstream PersonaPlex server instanc
 """
 
 from __future__ import annotations
+
 import asyncio
-from enum import Enum
 import logging
 import time
-from typing import AsyncGenerator, Optional
 import urllib.parse
+from collections.abc import AsyncGenerator
+from enum import StrEnum
 
 import numpy as np
 import websockets
@@ -17,25 +18,20 @@ from websockets.asyncio.client import ClientConnection
 
 from ..persona.registry import PersonaConfig
 from ..protocol.messages import (
-    WSMessage,
-    MessageType,
-    HandshakeMessage,
     AudioMessage,
-    TextMessage,
-    ControlMessage,
     ControlAction,
-    MetadataMessage,
-    ErrorMessage,
-    PingMessage,
-    encode_message,
+    ControlMessage,
+    MessageType,
+    TextMessage,
+    WSMessage,
     decode_message,
+    encode_message,
 )
-from ..protocol.audio import FRAME_SIZE, float32_to_int16
 
 logger = logging.getLogger(__name__)
 
 
-class WorkerStatus(str, Enum):
+class WorkerStatus(StrEnum):
     IDLE = "IDLE"
     CONNECTING = "CONNECTING"
     BUSY = "BUSY"
@@ -72,10 +68,10 @@ class PersonaPlexWorkerClient:
         self.connect_timeout = connect_timeout
         self.handshake_timeout = handshake_timeout
 
-        self._ws: Optional[ClientConnection] = None
+        self._ws: ClientConnection | None = None
         self._status: WorkerStatus = WorkerStatus.IDLE
-        self._active_session_id: Optional[str] = None
-        self._connected_at: Optional[float] = None
+        self._active_session_id: str | None = None
+        self._connected_at: float | None = None
 
         self._opus_reader = None
         self._opus_writer = None
@@ -103,7 +99,7 @@ class PersonaPlexWorkerClient:
         return self._status == WorkerStatus.IDLE
 
     @property
-    def active_session_id(self) -> Optional[str]:
+    def active_session_id(self) -> str | None:
         return self._active_session_id
 
     def build_url(self, persona: PersonaConfig) -> str:
@@ -177,7 +173,7 @@ class PersonaPlexWorkerClient:
             if self._ws is not None:
                 await self._ws.close()
                 self._ws = None
-            raise WorkerConnectionError(f"Failed to connect worker {self.worker_id}: {str(e)}") from e
+            raise WorkerConnectionError(f"Failed to connect worker {self.worker_id}: {e!s}") from e
 
     async def send_audio(self, audio_data: bytes | np.ndarray) -> None:
         """Send audio frame upstream (Kind 0x01)."""

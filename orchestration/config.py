@@ -8,20 +8,21 @@ Supports loading from:
 """
 
 from __future__ import annotations
+
 import os
 from pathlib import Path
-from typing import List, Optional
+
 from pydantic import BaseModel, Field
 
 
 class GatewayConfig(BaseModel):
     host: str = Field(default="0.0.0.0", description="Gateway host bind address")
     port: int = Field(default=8000, description="Gateway port")
-    workers: List[str] = Field(
+    workers: list[str] = Field(
         default_factory=lambda: ["127.0.0.1:8998"],
         description="List of backend worker endpoints (host:port or id:host:port)"
     )
-    api_key: Optional[str] = Field(
+    api_key: str | None = Field(
         default=None,
         description="Optional API key for gateway authentication"
     )
@@ -29,7 +30,7 @@ class GatewayConfig(BaseModel):
         default=60,
         description="Maximum requests/sessions per minute per IP"
     )
-    cors_origins: List[str] = Field(
+    cors_origins: list[str] = Field(
         default_factory=lambda: ["*"],
         description="Allowed CORS origins"
     )
@@ -48,11 +49,11 @@ class PersonaPlexConfig(BaseModel):
         default="nvidia/personaplex-7b-v1",
         description="Hugging Face model repository"
     )
-    hf_token: Optional[str] = Field(
+    hf_token: str | None = Field(
         default=None,
         description="Hugging Face auth token for model weights access"
     )
-    hf_home: Optional[str] = Field(
+    hf_home: str | None = Field(
         default=None,
         description="Custom directory for caching HF models on persistent disk"
     )
@@ -61,7 +62,7 @@ class PersonaPlexConfig(BaseModel):
         default=False,
         description="Enable CPU offloading via accelerate for low-VRAM GPUs"
     )
-    voice_prompt_dir: Optional[str] = Field(
+    voice_prompt_dir: str | None = Field(
         default=None,
         description="Path to pre-extracted voices directory containing .pt files"
     )
@@ -116,14 +117,14 @@ def _load_yaml(path: Path) -> dict:
         return {}
     try:
         import yaml
-        with open(path, "r", encoding="utf-8") as f:
+        with open(path, encoding="utf-8") as f:
             data = yaml.safe_load(f)
             return data if isinstance(data, dict) else {}
     except Exception:
         return {}
 
 
-def load_config(config_path: Optional[str | Path] = None) -> AppConfig:
+def load_config(config_path: str | Path | None = None) -> AppConfig:
     """
     Load AppConfig by cascading:
     1. Built-in defaults
@@ -131,7 +132,7 @@ def load_config(config_path: Optional[str | Path] = None) -> AppConfig:
     3. Environment variable overrides (e.g. HF_TOKEN, GATEWAY_PORT, etc.)
     """
     data: dict = {}
-    
+
     # Check default config.yaml paths
     search_paths = []
     if config_path:
@@ -141,7 +142,7 @@ def load_config(config_path: Optional[str | Path] = None) -> AppConfig:
         Path("config.yml"),
         Path(__file__).resolve().parent.parent / "config.yaml",
     ])
-    
+
     for p in search_paths:
         if p.exists() and p.is_file():
             data = _load_yaml(p)

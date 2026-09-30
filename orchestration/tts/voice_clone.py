@@ -11,15 +11,15 @@ Implements:
 """
 
 from __future__ import annotations
+
 import io
 import json
 import logging
 import math
-import os
 import pathlib
 import shutil
 import time
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any
 
 import numpy as np
 import soundfile as sf
@@ -32,16 +32,15 @@ DATA_DIR = pathlib.Path(__file__).resolve().parent.parent.parent / "data" / "clo
 
 class VoiceCloningValidationError(ValueError):
     """Raised when an uploaded audio sample violates quality or duration criteria."""
-    pass
 
 
 class VoiceCloner:
     """Manages cloned voice profiles and conditioning artifacts for PersonaPlex."""
 
-    def __init__(self, data_dir: Optional[pathlib.Path] = None) -> None:
+    def __init__(self, data_dir: pathlib.Path | None = None) -> None:
         self.data_dir = data_dir or DATA_DIR
         self.data_dir.mkdir(parents=True, exist_ok=True)
-        self._cached_voices: Dict[str, Dict[str, Any]] = {}
+        self._cached_voices: dict[str, dict[str, Any]] = {}
         self._load_cached_profiles()
 
     def _load_cached_profiles(self) -> None:
@@ -51,13 +50,13 @@ class VoiceCloner:
                 meta_file = v_dir / "metadata.json"
                 if meta_file.exists():
                     try:
-                        with open(meta_file, "r", encoding="utf-8") as f:
+                        with open(meta_file, encoding="utf-8") as f:
                             meta = json.load(f)
                         self._cached_voices[meta["id"]] = meta
                     except Exception as e:
                         logger.warning(f"Error loading voice profile {meta_file}: {e}")
 
-    def list_cloned_voices(self) -> List[Dict[str, Any]]:
+    def list_cloned_voices(self) -> list[dict[str, Any]]:
         """List all registered cloned voice profiles with metadata."""
         return list(self._cached_voices.values())
 
@@ -68,13 +67,13 @@ class VoiceCloner:
             clean = pathlib.Path(clean).stem
         return clean in self._cached_voices
 
-    def get_voice_metadata(self, voice_id: str) -> Optional[Dict[str, Any]]:
+    def get_voice_metadata(self, voice_id: str) -> dict[str, Any] | None:
         clean = voice_id.strip()
         if clean.endswith(".wav") or clean.endswith(".pt"):
             clean = pathlib.Path(clean).stem
         return self._cached_voices.get(clean)
 
-    def get_voice_path(self, voice_id: str) -> Optional[pathlib.Path]:
+    def get_voice_path(self, voice_id: str) -> pathlib.Path | None:
         """Return the conditioning artifact path (.wav or .pt)."""
         meta = self.get_voice_metadata(voice_id)
         if not meta:
@@ -89,7 +88,7 @@ class VoiceCloner:
             return wav_file
         return None
 
-    def get_cloned_style(self, voice_id: str) -> Optional[Any]:
+    def get_cloned_style(self, voice_id: str) -> Any | None:
         """Return cached neural style tensor or conditioning data for cloned voice."""
         artifact_path = self.get_voice_path(voice_id)
         if not artifact_path or not artifact_path.exists():
@@ -116,7 +115,7 @@ class VoiceCloner:
         return meta is not None
 
     @staticmethod
-    def _decode_audio(audio_bytes: bytes) -> Tuple[np.ndarray, int]:
+    def _decode_audio(audio_bytes: bytes) -> tuple[np.ndarray, int]:
         """Decode audio bytes (WAV, MP3, M4A, FLAC, WebM) into float32 mono array."""
         # 1. Try soundfile
         try:
@@ -132,7 +131,7 @@ class VoiceCloner:
         try:
             import av
             with io.BytesIO(audio_bytes) as bio:
-                container = av.open(bio)
+                container: Any = av.open(bio)
                 if container.streams.audio:
                     stream = container.streams.audio[0]
                     resampler = av.AudioResampler(format="fltp", layout="mono", rate=24000)
@@ -172,7 +171,7 @@ class VoiceCloner:
         sr: int,
         min_sec: float = 3.0,
         max_sec: float = 30.0
-    ) -> Dict[str, float]:
+    ) -> dict[str, float]:
         """Validate duration, clipping, silence, and noise levels."""
         duration = len(audio) / sr
         if duration < min_sec:
@@ -271,8 +270,8 @@ class VoiceCloner:
         voice_name: str,
         owner: str = "default_user",
         consent: bool = False,
-        preferred_gender: Optional[str] = None,
-    ) -> Dict[str, Any]:
+        preferred_gender: str | None = None,
+    ) -> dict[str, Any]:
         """
         Execute the end-to-end voice cloning pipeline:
         1. Explicit consent verification.

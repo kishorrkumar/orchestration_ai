@@ -1,16 +1,16 @@
 import pytest
+
 from orchestration.protocol.messages import (
-    MessageType,
-    ControlAction,
-    HandshakeMessage,
     AudioMessage,
-    TextMessage,
+    ControlAction,
     ControlMessage,
-    MetadataMessage,
     ErrorMessage,
+    HandshakeMessage,
+    MetadataMessage,
     PingMessage,
-    encode_message,
+    TextMessage,
     decode_message,
+    encode_message,
 )
 
 

@@ -4,8 +4,9 @@ Extracts GPU utilization, VRAM usage, temperature, and stage devices.
 """
 
 from __future__ import annotations
+
 import subprocess
-from typing import Dict, Any
+from typing import Any
 
 _pynvml_initialized = False
 _pynvml_handle = None
@@ -25,7 +26,7 @@ def _init_pynvml():
         return None
 
 
-def get_live_gpu_telemetry() -> Dict[str, Any]:
+def get_live_gpu_telemetry() -> dict[str, Any]:
     """Retrieve real-time GPU statistics via pynvml, torch or nvidia-smi."""
     info = {
         "cuda_available": False,

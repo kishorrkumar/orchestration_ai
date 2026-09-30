@@ -1,12 +1,14 @@
 import asyncio
+
 import pytest
-from httpx import AsyncClient, ASGITransport
-from orchestration.gateway.app import create_app
-from orchestration.gateway.security import RateLimiter, SecurityMiddleware
-from orchestration.persona.registry import PersonaRegistry
-from orchestration.worker.pool import WorkerPool
-from orchestration.session.manager import SessionManager
+from httpx import ASGITransport, AsyncClient
+
 from orchestration.config import settings
+from orchestration.gateway.app import create_app
+from orchestration.gateway.security import RateLimiter
+from orchestration.persona.registry import PersonaRegistry
+from orchestration.session.manager import SessionManager
+from orchestration.worker.pool import WorkerPool
 
 
 @pytest.mark.asyncio
@@ -65,9 +67,9 @@ async def test_api_key_authentication_enforcement():
 @pytest.mark.asyncio
 async def test_websocket_api_key_authentication_enforcement():
     """AUDIT-005: /v1/realtime WebSocket must enforce API key validation when configured."""
-    from websockets.asyncio.client import connect as ws_connect
     import uvicorn
     import websockets.exceptions
+    from websockets.asyncio.client import connect as ws_connect
 
     settings.gateway.api_key = "ws-secret-key-999"
     try:

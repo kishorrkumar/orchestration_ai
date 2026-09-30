@@ -10,35 +10,35 @@ Coordinates:
 """
 
 from __future__ import annotations
+
 import asyncio
-from enum import Enum
 import logging
 import time
 import uuid
-from typing import Dict, List, Optional, Any
+from enum import StrEnum
+from typing import Any
 
 import numpy as np
 
 from ..persona.registry import PersonaConfig
-from ..protocol.messages import (
-    WSMessage,
-    MessageType,
-    HandshakeMessage,
-    AudioMessage,
-    TextMessage,
-    ControlMessage,
-    ControlAction,
-    MetadataMessage,
-    ErrorMessage,
-    encode_message,
-    decode_message,
-)
 from ..protocol.audio import (
     FRAME_SIZE,
     SAMPLE_RATE,
+    AdaptiveNoiseCanceller,
     AudioFrameBuffer,
     compute_rms,
-    AdaptiveNoiseCanceller,
+)
+from ..protocol.messages import (
+    AudioMessage,
+    ControlAction,
+    ControlMessage,
+    ErrorMessage,
+    HandshakeMessage,
+    MetadataMessage,
+    TextMessage,
+    WSMessage,
+    decode_message,
+    encode_message,
 )
 from ..worker.client import PersonaPlexWorkerClient
 from ..worker.pool import WorkerPool
@@ -46,7 +46,7 @@ from ..worker.pool import WorkerPool
 logger = logging.getLogger(__name__)
 
 
-class SessionState(str, Enum):
+class SessionState(StrEnum):
     INITIALIZING = "INITIALIZING"
     PROMPTING = "PROMPTING"
     ACTIVE = "ACTIVE"
@@ -63,8 +63,8 @@ class SessionMetrics:
         self.worker_id = worker_id
         self.state = SessionState.INITIALIZING
         self.created_at = time.time()
-        self.connected_at: Optional[float] = None
-        self.ended_at: Optional[float] = None
+        self.connected_at: float | None = None
+        self.ended_at: float | None = None
 
         # 1. Listening
         self.user_frames_in = 0
@@ -73,11 +73,11 @@ class SessionMetrics:
 
         # 2. Understanding
         self.text_tokens_out = 0
-        self.transcript_tokens: List[str] = []
+        self.transcript_tokens: list[str] = []
 
         # 3. Reasoning & Goals
-        self.business_goal: Optional[Dict[str, Any]] = None
-        self.reasoning_notes: List[str] = []
+        self.business_goal: dict[str, Any] | None = None
+        self.reasoning_notes: list[str] = []
 
         # 4. Speaking
         self.agent_frames_out = 0
@@ -85,8 +85,8 @@ class SessionMetrics:
         self.underrun_events = 0
 
         # 5. Latency
-        self.ttfa_history_ms: List[float] = []
-        self.frame_step_times_ms: List[float] = []
+        self.ttfa_history_ms: list[float] = []
+        self.frame_step_times_ms: list[float] = []
 
         # 6. Conversation Dynamics
         self.barge_in_events = 0
@@ -96,7 +96,7 @@ class SessionMetrics:
 
         # 7. Task Success & Outcome Tagging
         self.outcome_tag: str = "in_progress"  # in_progress, success, resolved, escalated, dropped
-        self.outcome_metadata: Dict[str, Any] = {}
+        self.outcome_metadata: dict[str, Any] = {}
 
     @property
     def duration_sec(self) -> float:
@@ -127,7 +127,7 @@ class SessionMetrics:
     def record_frame_step(self, step_ms: float) -> None:
         self.frame_step_times_ms.append(round(step_ms, 2))
 
-    def tag_outcome(self, outcome: str, metadata: Optional[Dict[str, Any]] = None) -> None:
+    def tag_outcome(self, outcome: str, metadata: dict[str, Any] | None = None) -> None:
         self.outcome_tag = outcome
         if metadata:
             self.outcome_metadata.update(metadata)
@@ -243,7 +243,7 @@ class VoiceSession:
                 logger.warning(f"Error releasing worker after start failure: {rel_err}")
             raise e
 
-    async def ingest_client_message(self, raw_bytes: bytes) -> Optional[WSMessage]:
+    async def ingest_client_message(self, raw_bytes: bytes) -> WSMessage | None:
         """
         Process an incoming raw binary message from client:
         - If audio (0x01): de-noise, buffer, slice into 1920-sample frames, check barge-in, push to worker.
@@ -253,7 +253,7 @@ class VoiceSession:
         try:
             msg = decode_message(raw_bytes)
         except Exception as e:
-            return ErrorMessage(error=f"Malformed frame: {str(e)}")
+            return ErrorMessage(error=f"Malformed frame: {e!s}")
 
         if self._state not in (SessionState.ACTIVE, SessionState.INTERRUPTED):
             if isinstance(msg, AudioMessage):
@@ -362,13 +362,13 @@ class SessionManager:
 
     def __init__(self, pool: WorkerPool):
         self.pool = pool
-        self._active_sessions: Dict[str, VoiceSession] = {}
-        self._session_history: List[dict] = []
+        self._active_sessions: dict[str, VoiceSession] = {}
+        self._session_history: list[dict] = []
 
     async def create_session(
         self,
         persona: PersonaConfig,
-        session_id: Optional[str] = None,
+        session_id: str | None = None,
         timeout: float = 5.0,
     ) -> VoiceSession:
         """Acquire a worker and initialize a new VoiceSession."""
@@ -378,10 +378,10 @@ class SessionManager:
         self._active_sessions[sid] = session
         return session
 
-    def get_session(self, session_id: str) -> Optional[VoiceSession]:
+    def get_session(self, session_id: str) -> VoiceSession | None:
         return self._active_sessions.get(session_id)
 
-    async def end_session(self, session_id: str) -> Optional[dict]:
+    async def end_session(self, session_id: str) -> dict | None:
         session = self._active_sessions.pop(session_id, None)
         if session:
             await session.close()
@@ -392,12 +392,12 @@ class SessionManager:
             return metrics_dict
         return None
 
-    def list_active_sessions(self) -> List[dict]:
+    def list_active_sessions(self) -> list[dict]:
         return [sess.metrics.to_dict() for sess in self._active_sessions.values()]
 
-    def list_recent_history(self, limit: int = 50) -> List[dict]:
+    def list_recent_history(self, limit: int = 50) -> list[dict]:
         return self._session_history[-limit:]
 
 
 # Global default session manager placeholder (bound when pool is initialized)
-default_session_manager: Optional[SessionManager] = None
+default_session_manager: SessionManager | None = None

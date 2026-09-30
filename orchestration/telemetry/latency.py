@@ -13,10 +13,11 @@ Target: End-of-speech to first audio played < 800 ms p50 (stretch: 500 ms).
 """
 
 from __future__ import annotations
+
 import math
 import time
-from dataclasses import dataclass, field, asdict
-from typing import Dict, List, Optional, Any
+from dataclasses import dataclass
+from typing import Any
 
 
 @dataclass
@@ -69,7 +70,7 @@ class TurnTimestamps:
             return max(0.0, (self.t4_tts_audio_first - self.t0_eos) * 1000.0)
         return 0.0
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "turn_id": self.turn_id,
             "text_input": self.text_input,
@@ -88,32 +89,32 @@ class LatencyTracker:
 
     def __init__(self, session_id: str = "default") -> None:
         self.session_id = session_id
-        self.turns: List[TurnTimestamps] = []
-        self._current_turn: Optional[TurnTimestamps] = None
+        self.turns: list[TurnTimestamps] = []
+        self._current_turn: TurnTimestamps | None = None
 
-    def start_turn(self, turn_id: str, text_input: str = "", t0: Optional[float] = None) -> TurnTimestamps:
+    def start_turn(self, turn_id: str, text_input: str = "", t0: float | None = None) -> TurnTimestamps:
         now = t0 or time.perf_counter()
         turn = TurnTimestamps(turn_id=turn_id, text_input=text_input, t0_eos=now)
         self._current_turn = turn
         return turn
 
-    def mark_stt_final(self, t1: Optional[float] = None) -> None:
+    def mark_stt_final(self, t1: float | None = None) -> None:
         if self._current_turn:
             self._current_turn.t1_stt = t1 or time.perf_counter()
 
-    def mark_llm_first_token(self, t2: Optional[float] = None) -> None:
+    def mark_llm_first_token(self, t2: float | None = None) -> None:
         if self._current_turn:
             self._current_turn.t2_llm_first = t2 or time.perf_counter()
 
-    def mark_tts_chunk_sent(self, t3: Optional[float] = None) -> None:
+    def mark_tts_chunk_sent(self, t3: float | None = None) -> None:
         if self._current_turn:
             self._current_turn.t3_tts_chunk_sent = t3 or time.perf_counter()
 
-    def mark_tts_audio_first_byte(self, t4: Optional[float] = None) -> None:
+    def mark_tts_audio_first_byte(self, t4: float | None = None) -> None:
         if self._current_turn:
             self._current_turn.t4_tts_audio_first = t4 or time.perf_counter()
 
-    def mark_client_audio_played(self, t5: Optional[float] = None, text_output: str = "") -> TurnTimestamps:
+    def mark_client_audio_played(self, t5: float | None = None, text_output: str = "") -> TurnTimestamps:
         if self._current_turn:
             self._current_turn.t5_client_play = t5 or time.perf_counter()
             if text_output:
@@ -126,7 +127,7 @@ class LatencyTracker:
         return dummy
 
     @staticmethod
-    def _percentile(values: List[float], p: float) -> float:
+    def _percentile(values: list[float], p: float) -> float:
         if not values:
             return 0.0
         s = sorted(values)
@@ -138,7 +139,7 @@ class LatencyTracker:
         weight = idx - lower
         return s[lower] * (1.0 - weight) + s[upper] * weight
 
-    def get_summary(self) -> Dict[str, Any]:
+    def get_summary(self) -> dict[str, Any]:
         if not self.turns:
             return {
                 "turn_count": 0,
@@ -150,7 +151,7 @@ class LatencyTracker:
                 "e2e_ms": {"p50": 0.0, "p90": 0.0, "p95": 0.0, "mean": 0.0, "min": 0.0, "max": 0.0},
             }
 
-        def stats_for(metric: str) -> Dict[str, float]:
+        def stats_for(metric: str) -> dict[str, float]:
             vals = [getattr(t, metric) for t in self.turns]
             return {
                 "p50": round(self._percentile(vals, 50), 2),
@@ -185,7 +186,7 @@ class LatencyTracker:
             f"# {title}",
             "",
             f"- **Recorded Turns**: {tc}",
-            f"- **Target E2E Latency**: < 800 ms p50 (Stretch: < 500 ms)",
+            "- **Target E2E Latency**: < 800 ms p50 (Stretch: < 500 ms)",
             f"- **Measured E2E Latency (p50)**: **{e2e['p50']} ms**",
             f"- **Measured E2E Latency (p95)**: **{e2e['p95']} ms**",
             "",

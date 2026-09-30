@@ -9,7 +9,9 @@ PersonaPlex specifications:
 """
 
 from __future__ import annotations
+
 import math
+
 import numpy as np
 
 SAMPLE_RATE: int = 24000
