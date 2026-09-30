@@ -13,6 +13,7 @@ Provides:
 from __future__ import annotations
 import asyncio
 from contextlib import asynccontextmanager
+import io
 import logging
 import time
 from typing import Optional
@@ -238,37 +239,61 @@ def create_app(
     # Persona & Agent Catalog
     # ==========================================================
 
+    def _validate_persona(p: PersonaConfig) -> None:
+        voice = p.get_normalized_voice_prompt()
+        if voice not in OFFICIAL_VOICE_PRESETS and not default_voice_cloner.has_voice(voice):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid voice '{voice}'. Must be an official preset ({', '.join(OFFICIAL_VOICE_PRESETS)}) or a registered cloned voice."
+            )
+        try:
+            from ..persona.registry import validate_system_prompt
+            validate_system_prompt(p.system_prompt or p.text_prompt or "")
+        except ValueError as e:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
+    @app.get("/v1/personas", tags=["Personas"])
     @app.get("/v1/agents", tags=["Agents"])
     async def list_agents():
         return {
+            "personas": [p.model_dump() for p in persona_registry.list_all()],
             "agents": [p.model_dump() for p in persona_registry.list_all()],
             "voice_presets": OFFICIAL_VOICE_PRESETS,
         }
 
+    @app.get("/v1/personas/{persona_id}", tags=["Personas"])
     @app.get("/v1/agents/{agent_id}", tags=["Agents"])
-    async def get_agent(agent_id: str):
-        agent = persona_registry.get(agent_id)
+    async def get_agent(persona_id: Optional[str] = None, agent_id: Optional[str] = None):
+        target_id = persona_id or agent_id
+        agent = persona_registry.get(target_id)
         if not agent:
-            raise HTTPException(status_code=404, detail=f"Agent '{agent_id}' not found")
+            raise HTTPException(status_code=404, detail=f"Persona '{target_id}' not found")
         return agent.model_dump()
 
+    @app.post("/v1/personas", tags=["Personas"], status_code=status.HTTP_201_CREATED)
     @app.post("/v1/agents", tags=["Agents"], status_code=status.HTTP_201_CREATED)
     async def register_agent(persona: PersonaConfig):
+        _validate_persona(persona)
         persona_registry.register(persona)
-        return {"status": "created", "agent": persona.model_dump()}
+        return {"status": "created", "persona": persona.model_dump(), "agent": persona.model_dump()}
 
+    @app.put("/v1/personas/{persona_id}", tags=["Personas"])
     @app.put("/v1/agents/{agent_id}", tags=["Agents"])
-    async def update_agent(agent_id: str, persona: PersonaConfig):
-        persona.id = agent_id
+    async def update_agent(persona: PersonaConfig, persona_id: Optional[str] = None, agent_id: Optional[str] = None):
+        target_id = persona_id or agent_id
+        persona.id = target_id
+        _validate_persona(persona)
         persona_registry.register(persona)
-        return {"status": "updated", "agent": persona.model_dump()}
+        return {"status": "updated", "persona": persona.model_dump(), "agent": persona.model_dump()}
 
+    @app.delete("/v1/personas/{persona_id}", tags=["Personas"])
     @app.delete("/v1/agents/{agent_id}", tags=["Agents"])
-    async def delete_agent(agent_id: str):
-        deleted = persona_registry.delete(agent_id)
+    async def delete_agent(persona_id: Optional[str] = None, agent_id: Optional[str] = None):
+        target_id = persona_id or agent_id
+        deleted = persona_registry.delete(target_id)
         if not deleted:
-            raise HTTPException(status_code=404, detail=f"Agent '{agent_id}' not found")
-        return {"status": "deleted", "agent_id": agent_id}
+            raise HTTPException(status_code=404, detail=f"Persona '{target_id}' not found")
+        return {"status": "deleted", "persona_id": target_id, "agent_id": target_id}
 
     # ==========================================================
     # Worker Pool Management
@@ -316,15 +341,38 @@ def create_app(
         return {"status": "terminated", "metrics": metrics}
 
     # ==========================================================
-    # Voice Catalog & Presets
+    # Voice Catalog, Presets & Voice Cloning API
     # ==========================================================
 
     @app.get("/v1/voices", tags=["Voices"])
     async def list_voices():
+        # Built-in presets with preview URLs
+        presets = []
+        for vm in VOICE_METADATA:
+            entry = dict(vm)
+            entry["preview_url"] = f"/v1/voices/{vm['id']}/preview"
+            entry["is_cloned"] = False
+            presets.append(entry)
+
+        # Append registered cloned voices
+        cloned = default_voice_cloner.list_cloned_voices()
+        for cv in cloned:
+            presets.append({
+                "id": cv["id"],
+                "name": cv.get("name", cv["id"]),
+                "gender": cv.get("gender", "Neutral"),
+                "category": "Cloned",
+                "tag": cv.get("tag", "Custom Cloned Voice"),
+                "description": cv.get("description", "User-cloned voice profile"),
+                "preview_url": f"/v1/voices/{cv['id']}/preview",
+                "is_cloned": True,
+                "duration_sec": cv.get("duration_sec", 0.0),
+            })
+
         return {
-            "voices": VOICE_METADATA,
-            "total": len(VOICE_METADATA),
-            "categories": ["All", "Female", "Male", "Natural", "Variety"],
+            "voices": presets,
+            "total": len(presets),
+            "categories": ["All", "Female", "Male", "Natural", "Variety", "Cloned"],
         }
 
     @app.get("/v1/voices/cloned", tags=["Voices"])
@@ -333,34 +381,99 @@ def create_app(
             "cloned_voices": default_voice_cloner.list_cloned_voices(),
         }
 
-    @app.post("/v1/voices/clone", tags=["Voices"])
+    @app.get("/v1/voices/{voice_id}", tags=["Voices"])
+    async def get_voice_details(voice_id: str):
+        # 1. Check presets
+        for vm in VOICE_METADATA:
+            if vm["id"].lower() == voice_id.lower() or vm["name"].lower() == voice_id.lower():
+                entry = dict(vm)
+                entry["preview_url"] = f"/v1/voices/{vm['id']}/preview"
+                entry["is_cloned"] = False
+                return entry
+
+        # 2. Check cloned
+        if default_voice_cloner.has_voice(voice_id):
+            meta = default_voice_cloner.get_voice_metadata(voice_id)
+            if meta:
+                return meta
+
+        raise HTTPException(
+            status_code=404,
+            detail=f"Voice '{voice_id}' not found. Must be one of the 18 official presets or a registered cloned voice."
+        )
+
+    @app.get("/v1/voices/{voice_id}/preview", tags=["Voices"])
+    async def get_voice_preview(voice_id: str):
+        # 1. Cloned voice: serve stored artifact wav
+        if default_voice_cloner.has_voice(voice_id):
+            wav_path = default_voice_cloner.get_voice_path(voice_id)
+            if wav_path and wav_path.exists() and wav_path.suffix == ".wav":
+                with open(wav_path, "rb") as f:
+                    content = f.read()
+                return Response(content=content, media_type="audio/wav")
+
+        # 2. Official preset: check if file or sample exists, else synthesize preview tone
+        clean_id = voice_id.upper()
+        if not clean_id.endswith(".PT") and not clean_id.endswith(".WAV"):
+            clean_id = f"{clean_id}.pt"
+
+        valid_preset = any(vm["id"].upper() == clean_id for vm in VOICE_METADATA)
+        if not valid_preset:
+            raise HTTPException(status_code=404, detail=f"Voice preset '{voice_id}' not found.")
+
+        # Synthesize harmonic preview chime at 24kHz
+        import numpy as np
+        import soundfile as sf
+        sr = 24000
+        dur = 1.8
+        t = np.linspace(0, dur, int(sr * dur), endpoint=False)
+        f0 = 220.0 if "F" in clean_id else 140.0
+        sig = 0.4 * np.sin(2 * np.pi * f0 * t) * np.exp(-1.5 * t) + 0.2 * np.sin(2 * np.pi * f0 * 1.5 * t) * np.exp(-2.0 * t)
+        bio = io.BytesIO()
+        sf.write(bio, sig.astype(np.float32), sr, format="WAV")
+        return Response(content=bio.getvalue(), media_type="audio/wav")
+
+    @app.post("/v1/voices/clone", tags=["Voices"], status_code=status.HTTP_201_CREATED)
     async def clone_voice_endpoint(
         audio: UploadFile = File(...),
         voice_name: str = Form(default="My Cloned Voice"),
+        owner: str = Form(default="default_user"),
+        consent: bool = Form(default=False),
         gender: Optional[str] = Form(default=None),
     ):
+        if not consent:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Voice cloning requires explicit user consent. Please check the consent box."
+            )
+
         content = await audio.read()
         if not content:
             raise HTTPException(status_code=400, detail="Uploaded audio file is empty.")
 
         try:
-            tts_backend = KokoroTTSBackend()
             meta = default_voice_cloner.clone_voice(
                 audio_bytes=content,
                 voice_name=voice_name,
-                kokoro_backend=tts_backend,
+                owner=owner,
+                consent=consent,
                 preferred_gender=gender,
             )
             return {"status": "cloned", "voice": meta}
         except Exception as e:
-            logger.exception(f"Voice cloning error: {e}")
-            raise HTTPException(status_code=500, detail=f"Failed to clone voice: {e}")
+            logger.warning(f"Voice cloning validation error: {e}")
+            raise HTTPException(status_code=400, detail=f"Voice cloning rejected: {str(e)}")
 
+    @app.delete("/v1/voices/{voice_id}", tags=["Voices"])
     @app.delete("/v1/voices/cloned/{voice_id}", tags=["Voices"])
     async def delete_cloned_voice_endpoint(voice_id: str):
+        # Prevent deletion of official presets
+        if any(vm["id"].lower() == voice_id.lower() for vm in VOICE_METADATA):
+            raise HTTPException(status_code=400, detail=f"Cannot delete official preset voice '{voice_id}'.")
+
         success = default_voice_cloner.delete_voice(voice_id)
         if not success:
-            raise HTTPException(status_code=404, detail=f"Voice '{voice_id}' not found.")
+            raise HTTPException(status_code=404, detail=f"Cloned voice '{voice_id}' not found.")
         return {"status": "deleted", "voice_id": voice_id}
 
     @app.get("/v1/system-prompt", tags=["Persona"])
@@ -486,7 +599,16 @@ def create_app(
         if call_flow:
             active_persona.call_flow = call_flow
 
-        # 2. Acquire Worker and Create Session
+        # 2. Validate Voice Selection (must be one of 18 presets or a cloned voice)
+        req_voice = active_persona.get_normalized_voice_prompt()
+        if req_voice not in OFFICIAL_VOICE_PRESETS and not default_voice_cloner.has_voice(req_voice):
+            logger.warning(f"Rejected invalid voice selection: '{req_voice}'")
+            err = encode_message(ErrorMessage(error=f"400 Bad Request: Voice '{req_voice}' not found."))
+            await websocket.send_bytes(err)
+            await websocket.close(code=1008, reason="Invalid voice selection")
+            return
+
+        # 3. Acquire Worker and Create Session
         try:
             session = await mgr.create_session(persona=active_persona, session_id=session_id, timeout=6.0)
         except PoolCapacityExceededError as e:

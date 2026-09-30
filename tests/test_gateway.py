@@ -90,8 +90,36 @@ async def test_gateway_rest_routes():
         assert r.status_code == 200
         voices_data = r.json()
         assert "voices" in voices_data
-        assert len(voices_data["voices"]) == 18
+        assert len(voices_data["voices"]) >= 18
         assert any(v["id"] == "NATF2.pt" for v in voices_data["voices"])
+
+        # 7b. Voice detail and preview
+        r = await client.get("/v1/voices/NATF0.pt")
+        assert r.status_code == 200
+        assert r.json()["gender"] == "Female"
+
+        r = await client.get("/v1/voices/NATF0.pt/preview")
+        assert r.status_code == 200
+        assert "audio/wav" in r.headers["content-type"]
+        assert len(r.content) > 1000
+
+        r = await client.get("/v1/voices/NONEXISTENT_VOICE.pt")
+        assert r.status_code == 404
+
+        # 7c. Reject persona with invalid voice
+        bad_persona = {
+            "id": "bad_voice_agent",
+            "name": "Bad Agent",
+            "voice_ref": "TOTALLY_FAKE_VOICE.pt",
+            "system_prompt": "Hello world",
+        }
+        r = await client.post("/v1/personas", json=bad_persona)
+        assert r.status_code == 400
+        assert "Invalid voice" in r.json()["detail"]
+
+        # 7d. Prevent deleting official preset
+        r = await client.delete("/v1/voices/NATF0.pt")
+        assert r.status_code == 400
 
         # 8. Test RAG knowledge endpoints
         # Clear first
