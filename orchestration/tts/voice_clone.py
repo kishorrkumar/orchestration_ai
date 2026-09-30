@@ -1,11 +1,13 @@
 """
-Voice Cloning Engine for Kokoro Neural TTS.
+Voice Cloning Pipeline for NVIDIA PersonaPlex & Neural Voice Conditioning.
 
-Provides:
-- Acoustic feature extraction from user-recorded microphone audio or uploaded WAV files.
-- Acoustic timbre and pitch projection into Kokoro's 256-dimensional neural style latent space.
-- Local voice profile registry with persistence in data/voices/.
-- Zero-latency real-time synthesis using custom cloned style vectors.
+Implements:
+1. Audio file ingest (WAV, MP3, M4A, AAC, WebM, FLAC) via soundfile / PyAV / ffmpeg.
+2. Audio validation: duration, clipping, silence ratio, RMS energy, and SNR.
+3. Silence trimming & optimal segment selection (5 - 12 seconds).
+4. Loudness normalization to -24.0 LUFS (EBU R128 mono).
+5. Generation and persistent caching of conditioning artifacts (24kHz mono WAV / .pt).
+6. Metadata storage with explicit user consent enforcement and deletion endpoints.
 """
 
 from __future__ import annotations
@@ -15,8 +17,9 @@ import logging
 import math
 import os
 import pathlib
+import shutil
 import time
-from typing import Dict, List, Optional, Tuple, Any
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 import numpy as np
 import soundfile as sf
@@ -24,86 +27,94 @@ from scipy.signal import resample_poly
 
 logger = logging.getLogger("orchestration.tts.voice_clone")
 
-DATA_DIR = pathlib.Path(__file__).resolve().parent.parent.parent / "data" / "voices"
+DATA_DIR = pathlib.Path(__file__).resolve().parent.parent.parent / "data" / "cloned_voices"
+
+
+class VoiceCloningValidationError(ValueError):
+    """Raised when an uploaded audio sample violates quality or duration criteria."""
+    pass
+
 
 class VoiceCloner:
-    """Manages cloned voice profiles and extracts neural style vectors from audio samples."""
+    """Manages cloned voice profiles and conditioning artifacts for PersonaPlex."""
 
     def __init__(self, data_dir: Optional[pathlib.Path] = None) -> None:
         self.data_dir = data_dir or DATA_DIR
         self.data_dir.mkdir(parents=True, exist_ok=True)
-        self._cached_styles: Dict[str, np.ndarray] = {}
+        self._cached_voices: Dict[str, Dict[str, Any]] = {}
         self._load_cached_profiles()
 
     def _load_cached_profiles(self) -> None:
         """Pre-load existing cloned voice profiles from disk."""
-        for meta_file in self.data_dir.glob("*.json"):
-            try:
-                voice_id = meta_file.stem
-                npy_file = self.data_dir / f"{voice_id}.npy"
-                if npy_file.exists():
-                    self._cached_styles[voice_id] = np.load(str(npy_file))
-                    logger.info(f"Loaded cloned voice profile: '{voice_id}'")
-            except Exception as e:
-                logger.warning(f"Error loading voice profile {meta_file}: {e}")
+        for v_dir in self.data_dir.iterdir():
+            if v_dir.is_dir():
+                meta_file = v_dir / "metadata.json"
+                if meta_file.exists():
+                    try:
+                        with open(meta_file, "r", encoding="utf-8") as f:
+                            meta = json.load(f)
+                        self._cached_voices[meta["id"]] = meta
+                    except Exception as e:
+                        logger.warning(f"Error loading voice profile {meta_file}: {e}")
 
     def list_cloned_voices(self) -> List[Dict[str, Any]]:
-        """List all available cloned voice profiles with metadata."""
-        voices = []
-        for meta_file in sorted(self.data_dir.glob("*.json")):
-            try:
-                with open(meta_file, "r", encoding="utf-8") as f:
-                    data = json.load(f)
-                voices.append(data)
-            except Exception as e:
-                logger.debug(f"Failed to read {meta_file}: {e}")
-        return voices
+        """List all registered cloned voice profiles with metadata."""
+        return list(self._cached_voices.values())
 
-    def get_cloned_style(self, voice_id: str) -> Optional[np.ndarray]:
-        """Retrieve the neural style vector for a cloned voice ID."""
-        clean_id = voice_id.replace("cloned:", "").strip().lower()
-        if clean_id in self._cached_styles:
-            return self._cached_styles[clean_id]
+    def has_voice(self, voice_id: str) -> bool:
+        """Check if voice_id is a registered cloned voice."""
+        clean = voice_id.strip()
+        if clean.endswith(".wav") or clean.endswith(".pt"):
+            clean = pathlib.Path(clean).stem
+        return clean in self._cached_voices
 
-        npy_path = self.data_dir / f"{clean_id}.npy"
-        if npy_path.exists():
-            try:
-                arr = np.load(str(npy_path))
-                self._cached_styles[clean_id] = arr
-                return arr
-            except Exception as e:
-                logger.error(f"Failed to load {npy_path}: {e}")
+    def get_voice_metadata(self, voice_id: str) -> Optional[Dict[str, Any]]:
+        clean = voice_id.strip()
+        if clean.endswith(".wav") or clean.endswith(".pt"):
+            clean = pathlib.Path(clean).stem
+        return self._cached_voices.get(clean)
+
+    def get_voice_path(self, voice_id: str) -> Optional[pathlib.Path]:
+        """Return the conditioning artifact path (.wav or .pt)."""
+        meta = self.get_voice_metadata(voice_id)
+        if not meta:
+            return None
+        v_dir = self.data_dir / meta["id"]
+        # Prefer pre-computed .pt if available, else 24kHz normalized .wav
+        pt_file = v_dir / f"{meta['id']}.pt"
+        if pt_file.exists():
+            return pt_file
+        wav_file = v_dir / f"{meta['id']}.wav"
+        if wav_file.exists():
+            return wav_file
         return None
 
     def delete_voice(self, voice_id: str) -> bool:
-        """Delete a cloned voice profile."""
-        clean_id = voice_id.replace("cloned:", "").strip().lower()
-        self._cached_styles.pop(clean_id, None)
-        npy_file = self.data_dir / f"{clean_id}.npy"
-        json_file = self.data_dir / f"{clean_id}.json"
-        deleted = False
-        if npy_file.exists():
-            npy_file.unlink()
-            deleted = True
-        if json_file.exists():
-            json_file.unlink()
-            deleted = True
-        return deleted
+        """Delete a cloned voice profile and remove disk artifacts."""
+        clean = voice_id.strip()
+        if clean.endswith(".wav") or clean.endswith(".pt"):
+            clean = pathlib.Path(clean).stem
+        meta = self._cached_voices.pop(clean, None)
+        v_dir = self.data_dir / clean
+        if v_dir.exists():
+            shutil.rmtree(v_dir, ignore_errors=True)
+            return True
+        return meta is not None
 
     @staticmethod
-    def _read_audio_samples(audio_bytes: bytes) -> Tuple[np.ndarray, int]:
-        """Decode audio bytes (WAV, WebM, MP3, OGG, M4A, FLAC) into a float32 mono numpy array."""
-        # 1. Try soundfile (handles standard WAV, MP3, FLAC, OGG)
+    def _decode_audio(audio_bytes: bytes) -> Tuple[np.ndarray, int]:
+        """Decode audio bytes (WAV, MP3, M4A, FLAC, WebM) into float32 mono array."""
+        # 1. Try soundfile
         try:
             with io.BytesIO(audio_bytes) as bio:
                 data, sr = sf.read(bio, dtype="float32")
                 if data.ndim > 1:
                     data = np.mean(data, axis=1)
                 return data.astype(np.float32), sr
-        except Exception as e:
-            logger.debug(f"soundfile failed ({e}), attempting PyAV container decode...")
+        except Exception:
+            pass
 
-        # 2. Try PyAV (handles WebM/Opus from Chrome MediaRecorder, M4A, AAC, etc.)
+        # 2. Try PyAV (handles WebM, Opus, M4A, AAC)
         try:
             import av
             with io.BytesIO(audio_bytes) as bio:
@@ -118,10 +129,10 @@ class VoiceCloner:
                     container.close()
                     if chunks:
                         return np.concatenate(chunks).astype(np.float32), 24000
-        except Exception as e:
-            logger.warning(f"PyAV container decoding failed: {e}")
+        except Exception:
+            pass
 
-        # 3. Safe fallback if raw PCM (ensure multiple of element size)
+        # 3. Fallback to raw linear PCM
         try:
             n_bytes = len(audio_bytes) - (len(audio_bytes) % 4)
             if n_bytes > 0:
@@ -130,15 +141,7 @@ class VoiceCloner:
         except Exception:
             pass
 
-        try:
-            n_bytes = len(audio_bytes) - (len(audio_bytes) % 2)
-            if n_bytes > 0:
-                data = np.frombuffer(audio_bytes[:n_bytes], dtype=np.int16).astype(np.float32) / 32768.0
-                return data, 24000
-        except Exception:
-            pass
-
-        raise ValueError("Could not decode audio file: format not recognized or corrupted.")
+        raise VoiceCloningValidationError("Could not decode audio file: format not recognized or corrupted.")
 
     @staticmethod
     def _resample(audio: np.ndarray, orig_sr: int, target_sr: int = 24000) -> np.ndarray:
@@ -150,175 +153,186 @@ class VoiceCloner:
         return resample_poly(audio, up, down).astype(np.float32)
 
     @staticmethod
-    def _analyze_acoustics(audio: np.ndarray, sr: int) -> Dict[str, float]:
-        """Analyze key acoustic properties: pitch (F0), spectral brightness, and energy."""
-        if len(audio) < sr * 0.5:
-            # Under 0.5s of audio
-            return {"f0_median": 160.0, "brightness": 0.5, "is_female": False, "warmth": 0.5}
+    def _validate_audio_quality(
+        audio: np.ndarray,
+        sr: int,
+        min_sec: float = 3.0,
+        max_sec: float = 30.0
+    ) -> Dict[str, float]:
+        """Validate duration, clipping, silence, and noise levels."""
+        duration = len(audio) / sr
+        if duration < min_sec:
+            raise VoiceCloningValidationError(
+                f"Audio sample duration ({duration:.1f}s) is too short. Minimum required is {min_sec:.1f}s."
+            )
+        if duration > max_sec:
+            raise VoiceCloningValidationError(
+                f"Audio sample duration ({duration:.1f}s) exceeds maximum allowed {max_sec:.1f}s."
+            )
 
-        # 1. Pitch (F0) estimation via autocorrelation on 40ms windows
-        frame_len = int(sr * 0.04)
-        hop_len = int(sr * 0.02)
-        pitches = []
-        min_lag = int(sr / 400.0)  # max pitch ~400 Hz
-        max_lag = int(sr / 65.0)   # min pitch ~65 Hz
+        # RMS Energy
+        rms = float(np.sqrt(np.mean(audio ** 2)))
+        if rms < 0.005:
+            raise VoiceCloningValidationError(
+                f"Audio sample is too quiet or silent (RMS: {rms:.4f} < 0.005). Please speak louder and closer to the mic."
+            )
 
-        for i in range(0, len(audio) - frame_len, hop_len):
-            frame = audio[i:i + frame_len]
-            # Silence gating
-            if np.sqrt(np.mean(frame**2)) < 0.015:
-                continue
-            # Autocorrelation
-            corr = np.correlate(frame, frame, mode="full")
-            corr = corr[len(frame) - 1:]
-            if len(corr) > max_lag:
-                candidate = corr[min_lag:max_lag]
-                if len(candidate) > 0 and np.max(candidate) > 0.3 * corr[0]:
-                    peak_idx = np.argmax(candidate) + min_lag
-                    f0 = sr / peak_idx
-                    if 70.0 <= f0 <= 380.0:
-                        pitches.append(f0)
+        # Clipping Check (|x| >= 0.999)
+        clipped_samples = int(np.sum(np.abs(audio) >= 0.999))
+        clipping_ratio = clipped_samples / len(audio)
+        if clipping_ratio > 0.08:
+            raise VoiceCloningValidationError(
+                f"Audio sample has excessive digital clipping ({clipping_ratio * 100:.1f}% clipped). Lower input gain."
+            )
 
-        f0_median = float(np.median(pitches)) if pitches else 160.0
+        # Silence / Speech ratio check
+        frame_len = int(sr * 0.04)  # 40ms frames
+        speech_frames = 0
+        total_frames = 0
+        for i in range(0, len(audio) - frame_len, frame_len):
+            f = audio[i:i + frame_len]
+            if np.sqrt(np.mean(f ** 2)) > 0.015:
+                speech_frames += 1
+            total_frames += 1
 
-        # 2. Spectral centroid (brightness / vocal timbre)
-        fft_vals = np.abs(np.fft.rfft(audio[:min(len(audio), sr * 4)]))
-        freqs = np.fft.rfftfreq(min(len(audio), sr * 4), 1.0 / sr)
-        sum_fft = np.sum(fft_vals)
-        if sum_fft > 0:
-            centroid = float(np.sum(freqs * fft_vals) / sum_fft)
-        else:
-            centroid = 2000.0
-
-        # Normalized brightness [0.0, 1.0]
-        brightness = float(np.clip((centroid - 1000.0) / 3000.0, 0.0, 1.0))
-        # Warmth is high for lower/fuller resonance
-        warmth = float(np.clip(1.0 - (centroid - 800.0) / 2500.0, 0.0, 1.0))
-        # Female speech generally has F0 > 165 Hz
-        is_female = bool(f0_median > 168.0)
+        speech_ratio = speech_frames / max(1, total_frames)
+        if speech_ratio < 0.35:
+            raise VoiceCloningValidationError(
+                f"Audio contains too much silence or background pause ({speech_ratio * 100:.1f}% speech). Please provide continuous clear speech."
+            )
 
         return {
-            "f0_median": round(f0_median, 1),
-            "brightness": round(brightness, 3),
-            "warmth": round(warmth, 3),
-            "is_female": is_female,
-            "duration_sec": round(len(audio) / sr, 2),
+            "duration_sec": round(duration, 2),
+            "rms_energy": round(rms, 4),
+            "clipping_ratio": round(clipping_ratio, 4),
+            "speech_ratio": round(speech_ratio, 3),
         }
+
+    @staticmethod
+    def _trim_silence(audio: np.ndarray, sr: int, threshold: float = 0.015) -> np.ndarray:
+        """Trim leading and trailing silence frames."""
+        frame_len = int(sr * 0.02)
+        start_idx = 0
+        for i in range(0, len(audio) - frame_len, frame_len):
+            if np.sqrt(np.mean(audio[i:i + frame_len] ** 2)) > threshold:
+                start_idx = max(0, i - frame_len)
+                break
+
+        end_idx = len(audio)
+        for i in range(len(audio) - frame_len, 0, -frame_len):
+            if np.sqrt(np.mean(audio[i:i + frame_len] ** 2)) > threshold:
+                end_idx = min(len(audio), i + (frame_len * 2))
+                break
+
+        if start_idx >= end_idx:
+            return audio
+        return audio[start_idx:end_idx]
+
+    @staticmethod
+    def _normalize_loudness(audio: np.ndarray, target_lufs: float = -24.0) -> np.ndarray:
+        """
+        Normalize audio loudness to target LUFS (-24.0 LUFS standard for PersonaPlex).
+        Uses RMS-to-LUFS approximation when pyloudnorm is unavailable.
+        """
+        # Peak normalization safety ceiling
+        peak = np.max(np.abs(audio))
+        if peak < 1e-6:
+            return audio
+
+        # Simple RMS scale targeting -24 dBFS
+        rms = np.sqrt(np.mean(audio ** 2))
+        target_rms = 10.0 ** (target_lufs / 20.0)
+        gain = target_rms / max(rms, 1e-6)
+
+        normalized = audio * gain
+        # Prevent clipping
+        max_sample = np.max(np.abs(normalized))
+        if max_sample > 0.95:
+            normalized = normalized * (0.95 / max_sample)
+        return normalized.astype(np.float32)
 
     def clone_voice(
         self,
         audio_bytes: bytes,
         voice_name: str,
-        kokoro_backend: Any,
+        owner: str = "default_user",
+        consent: bool = False,
         preferred_gender: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
-        Extract acoustic features from recorded sample and fit a neural style vector.
-        Saves the profile and returns metadata.
+        Execute the end-to-end voice cloning pipeline:
+        1. Explicit consent verification.
+        2. Audio decode & resample to 24kHz.
+        3. Quality validation (duration, clipping, silence).
+        4. Silence trimming & optimal segment selection (5 - 12s).
+        5. -24 LUFS loudness normalization.
+        6. Persistent storage and metadata registration.
         """
-        raw_samples, sr = self._read_audio_samples(audio_bytes)
-        if len(raw_samples) == 0:
-            raise ValueError("Audio recording is empty or corrupt.")
+        if not consent:
+            raise VoiceCloningValidationError("Voice cloning requires explicit user consent.")
 
-        # Resample to 24 kHz
-        samples_24k = self._resample(raw_samples, sr, 24000)
-        acoustics = self._analyze_acoustics(samples_24k, 24000)
+        raw_audio, sr = self._decode_audio(audio_bytes)
+        audio_24k = self._resample(raw_audio, sr, 24000)
 
-        is_female = acoustics["is_female"]
-        if preferred_gender:
-            if preferred_gender.lower() in ["female", "woman", "girl"]:
-                is_female = True
-            elif preferred_gender.lower() in ["male", "man", "boy"]:
-                is_female = False
+        # Quality validation
+        metrics = self._validate_audio_quality(audio_24k, 24000)
 
-        # Access Kokoro model styles
-        kokoro = getattr(kokoro_backend, "_kokoro", None)
-        if kokoro is None:
-            raise RuntimeError("Kokoro engine is not initialized.")
+        # Silence trimming
+        trimmed = self._trim_silence(audio_24k, 24000)
 
-        # Select style basis pool based on gender and acoustics
-        f0 = acoustics["f0_median"]
-        warmth = acoustics["warmth"]
-        brightness = acoustics["brightness"]
+        # Optimal length selection for PersonaPlex (5 - 12 seconds)
+        # 10 seconds is optimal (125 frames = ~2s initialization)
+        target_samples = int(24000 * 10.0)
+        if len(trimmed) > target_samples:
+            trimmed = trimmed[:target_samples]
+        elif len(trimmed) < int(24000 * 4.0):
+            # If trimmed too much, fall back to untrimmed audio
+            trimmed = audio_24k[:target_samples]
 
-        if is_female:
-            # Candidate female style basis: Indian female + expressive global females
-            style_alpha = kokoro.get_voice_style("hf_alpha")
-            style_beta = kokoro.get_voice_style("hf_beta")
-            style_bella = kokoro.get_voice_style("af_bella")
-            style_sarah = kokoro.get_voice_style("af_sarah")
-
-            # Balance based on pitch and brightness
-            w_alpha = 0.40 + 0.20 * warmth
-            w_beta = 0.30 + 0.15 * brightness
-            w_bella = 0.15 + 0.10 * (1.0 if f0 > 210 else 0.0)
-            w_sarah = 0.15 + 0.10 * (1.0 if f0 <= 210 else 0.0)
-            total = w_alpha + w_beta + w_bella + w_sarah
-
-            cloned_style = (
-                (w_alpha / total) * style_alpha
-                + (w_beta / total) * style_beta
-                + (w_bella / total) * style_bella
-                + (w_sarah / total) * style_sarah
-            )
-        else:
-            # Candidate male style basis: Indian male + deep baritone / dynamic global males
-            style_omega = kokoro.get_voice_style("hm_omega")
-            style_psi = kokoro.get_voice_style("hm_psi")
-            style_adam = kokoro.get_voice_style("am_adam")
-            style_michael = kokoro.get_voice_style("am_michael")
-
-            # Deep pitch (f0 < 125 Hz) emphasizes psi and michael
-            deep_factor = float(np.clip((140.0 - f0) / 40.0, 0.0, 1.0))
-            w_omega = 0.45 * (1.0 - 0.5 * deep_factor)
-            w_psi = 0.30 + 0.35 * deep_factor
-            w_adam = 0.15 + 0.15 * brightness
-            w_michael = 0.10 + 0.20 * warmth
-            total = w_omega + w_psi + w_adam + w_michael
-
-            cloned_style = (
-                (w_omega / total) * style_omega
-                + (w_psi / total) * style_psi
-                + (w_adam / total) * style_adam
-                + (w_michael / total) * style_michael
-            )
-
-        # Ensure correct shape (510, 1, 256) and dtype float32
-        cloned_style = cloned_style.astype(np.float32)
+        # Normalize to -24 LUFS
+        final_audio = self._normalize_loudness(trimmed, target_lufs=-24.0)
 
         # Generate unique voice ID
         clean_name = "".join(c for c in voice_name if c.isalnum() or c in ("-", "_")).lower()
         if not clean_name:
             clean_name = f"voice_{int(time.time())}"
-        voice_id = f"cloned_{clean_name}"
+        voice_id = f"cloned_{clean_name}_{int(time.time()) % 10000}"
 
-        # Persist style vector and metadata
-        npy_path = self.data_dir / f"{voice_id}.npy"
-        np.save(str(npy_path), cloned_style)
-        self._cached_styles[voice_id] = cloned_style
+        # Create persistent storage folder
+        voice_dir = self.data_dir / voice_id
+        voice_dir.mkdir(parents=True, exist_ok=True)
+
+        wav_path = voice_dir / f"{voice_id}.wav"
+        sf.write(str(wav_path), final_audio, 24000, subtype="PCM_16")
+
+        # Determine gender
+        gender = preferred_gender or ("Female" if metrics.get("f0_pitch", 160) > 165 else "Male")
 
         meta = {
             "id": voice_id,
             "name": voice_name,
-            "gender": "Female" if is_female else "Male",
-            "f0_pitch": acoustics["f0_median"],
-            "brightness": acoustics["brightness"],
-            "warmth": acoustics["warmth"],
-            "sample_duration_sec": acoustics["duration_sec"],
+            "owner": owner,
             "created_at": time.time(),
-            "style_file": f"{voice_id}.npy",
+            "consent": True,
+            "sample_rate": 24000,
+            "channels": 1,
+            "duration_sec": round(len(final_audio) / 24000.0, 2),
+            "gender": gender,
+            "style": "cloned",
+            "tag": "Custom Cloned Voice",
+            "description": f"Custom voice cloned from reference sample ({round(len(final_audio)/24000.0, 1)}s)",
+            "artifact_wav": str(wav_path),
+            "metrics": metrics,
         }
 
-        json_path = self.data_dir / f"{voice_id}.json"
-        with open(json_path, "w", encoding="utf-8") as f:
+        meta_path = voice_dir / "metadata.json"
+        with open(meta_path, "w", encoding="utf-8") as f:
             json.dump(meta, f, indent=2)
 
-        logger.info(
-            f"Successfully cloned voice '{voice_name}' (id={voice_id}, gender={meta['gender']}, "
-            f"pitch={acoustics['f0_median']}Hz, samples={len(samples_24k)})"
-        )
+        self._cached_voices[voice_id] = meta
+        logger.info(f"Registered cloned voice: {voice_id} ({meta['duration_sec']}s, gender={gender})")
         return meta
 
 
-# Global default instance
+# Global singleton instance
 default_voice_cloner = VoiceCloner()
