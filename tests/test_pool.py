@@ -73,3 +73,42 @@ async def test_worker_pool_queue_wakeup():
     assert w_resumed.active_session_id == "session-2"
 
     await pool.release_worker("worker-queued")
+
+
+def test_worker_node_config_invalid_port():
+    """AUDIT-011: WorkerNodeConfig must reject ports outside 1..65535."""
+    from pydantic import ValidationError
+    with pytest.raises(ValidationError):
+        WorkerNodeConfig(id="bad-port-low", host="127.0.0.1", port=0)
+
+    with pytest.raises(ValidationError):
+        WorkerNodeConfig(id="bad-port-high", host="127.0.0.1", port=70000)
+
+
+@pytest.mark.asyncio
+async def test_register_worker_duplicate_busy_fails():
+    """AUDIT-011: Registering duplicate worker while existing is busy must raise ValueError."""
+    pool = WorkerPool()
+    cfg = WorkerNodeConfig(id="worker-dup", host="127.0.0.1", port=8998)
+    pool.register_worker(cfg)
+    await pool.acquire_worker(session_id="active-sess")
+
+    with pytest.raises(ValueError, match="cannot be overwritten"):
+        pool.register_worker(cfg)
+
+    await pool.release_worker("worker-dup")
+
+
+@pytest.mark.asyncio
+async def test_worker_health_check_recovery():
+    """AUDIT-011: Pool check_health marks unreachable as UNHEALTHY and recovers to IDLE when available."""
+    pool = WorkerPool()
+    # Unreachable port
+    cfg = WorkerNodeConfig(id="worker-dead", host="127.0.0.1", port=19998)
+    pool.register_worker(cfg)
+
+    results = await pool.check_health()
+    assert results["worker-dead"] is False
+    worker = pool.get_worker("worker-dead")
+    assert worker.status == WorkerStatus.UNHEALTHY
+

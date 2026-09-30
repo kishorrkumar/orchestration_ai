@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 class WorkerNodeConfig(BaseModel):
     id: str = Field(..., description="Unique worker node identifier")
     host: str = Field(default="localhost", description="Worker host or IP")
-    port: int = Field(default=8998, description="Worker port")
+    port: int = Field(default=8998, ge=1, le=65535, description="Worker port")
     use_ssl: bool = Field(default=False, description="Use WSS if True")
     gpu_id: Optional[int] = Field(default=None, description="GPU device index worker is pinned to")
 
@@ -48,6 +48,13 @@ class WorkerPool:
 
     def register_worker(self, config: WorkerNodeConfig) -> PersonaPlexWorkerClient:
         """Register a worker node with the pool."""
+        if config.id in self._workers:
+            existing = self._workers[config.id]
+            if not existing.is_available:
+                raise ValueError(
+                    f"Worker {config.id} is currently busy with session {existing.active_session_id} and cannot be overwritten"
+                )
+
         client = PersonaPlexWorkerClient(
             worker_id=config.id,
             host=config.host,
@@ -143,3 +150,33 @@ class WorkerPool:
             "unhealthy_workers": unhealthy,
             "utilization_pct": round((busy / total * 100.0) if total > 0 else 0.0, 1),
         }
+
+    async def check_health(self) -> Dict[str, bool]:
+        """Ping registered workers and transition unhealthy/recovered status."""
+        results: Dict[str, bool] = {}
+        async with self._condition:
+            changed = False
+            for wid, worker in list(self._workers.items()):
+                cfg = self._configs[wid]
+                try:
+                    _, writer = await asyncio.wait_for(
+                        asyncio.open_connection(cfg.host, cfg.port),
+                        timeout=0.5,
+                    )
+                    writer.close()
+                    await writer.wait_closed()
+                    results[wid] = True
+                    if worker.status == WorkerStatus.UNHEALTHY:
+                        worker._status = WorkerStatus.IDLE
+                        changed = True
+                        logger.info(f"Worker {wid} recovered and marked IDLE")
+                except Exception:
+                    results[wid] = False
+                    if worker.is_available:
+                        worker._status = WorkerStatus.UNHEALTHY
+                        changed = True
+                        logger.warning(f"Worker {wid} unreachable, marked UNHEALTHY")
+            if changed:
+                self._condition.notify_all()
+        return results
+
