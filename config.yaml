@@ -1,16 +1,56 @@
-# Local Cascade Real-Time Voice Agent Configuration
+# ==============================================================================
+# PersonaPlex Full-Duplex Orchestration Layer Configuration
+# ==============================================================================
+
+environment: "production"
+
+gateway:
+  host: "0.0.0.0"
+  port: 8000
+  workers:
+    - "127.0.0.1:8998"
+  rate_limit_per_minute: 60
+  cors_origins:
+    - "*"
+  cloned_voices_dir: "data/cloned_voices"
+  personas_dir: "personas"
+
+personaplex:
+  hf_repo: "nvidia/personaplex-7b-v1"
+  device: "cuda"
+  cpu_offload: false
+  default_voice: "NATF2.pt"
+  max_system_prompt_tokens: 350
+  min_voice_prompt_duration_sec: 3.0
+  max_voice_prompt_duration_sec: 15.0
+
+audio:
+  sample_rate: 24000
+  frame_rate: 12.5
+  frame_size: 1920
+  frame_duration_ms: 80.0
+  jitter_buffer_frames: 2
+  loudness_lufs_target: -24.0
+
+latency:
+  target_ttfa_ms: 300.0
+  target_frame_processing_ms: 80.0
+
+# ==============================================================================
+# Local Cascaded Voice Agent Fallback Configuration (Indic Multilingual)
+# ==============================================================================
 
 agent:
   persona_id: "indian_pro"
   agent_name: "Aarav"
-  language_style: "indian_english"  # Options: indian_english, plain_english
-  voice: "aarav_colloquial"          # Options: aarav_colloquial (Male), priya_colloquial (Female)
+  language_style: "indian_english"
+  voice: "aarav_colloquial"
   speaking_rate: 0.98
 
 llm:
   backend: "ollama"
-  model: "qwen2.5:1.5b"             # Tested low-latency default (1.5B fits easily in 4 GB VRAM)
-  alternative_model: "qwen2.5:3b"   # High-quality 3B model
+  model: "qwen2.5:1.5b"
+  alternative_model: "qwen2.5:3b"
   ollama_url: "http://127.0.0.1:11434"
   temperature: 0.7
   num_ctx: 2048
@@ -18,7 +58,7 @@ llm:
 
 asr:
   backend: "faster-whisper"
-  model_size: "base"                # 470ms latency on CPU int8; zero VRAM contention
+  model_size: "base"
   device: "cpu"
   compute_type: "int8"
   language: "en"

@@ -7,7 +7,7 @@ Evaluates:
 - Saves audio WAV files to benchmarks/ directory for listening comparison.
 
 Usage:
-    .venv\\Scripts\\python scripts/tts_bench.py
+    .venv/bin/python scripts/tts_bench.py
 """
 
 import asyncio
