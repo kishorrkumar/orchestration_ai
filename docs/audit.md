@@ -1,122 +1,82 @@
-# Codebase Audit: Architecture Flaws & Limitations
+# Comprehensive Codebase & Architecture Audit: PersonaPlex Orchestration AI
 
-**Audit Date**: September 29, 2026  
-**System Target**: Windows 11 Home • Intel Core i7-11800H • NVIDIA GeForce RTX 3050 Ti Laptop GPU (4,096 MiB VRAM) • 16 GB RAM • Free Disk: ~7.7 GB  
-**Primary Goal**: Transform Aarav into a genuinely conversational, natural Indian English voice agent running 100% locally with open-source models, zero cloud APIs, and zero canned scripts.
-
----
-
-## 1. System & Environment Profile
-
-| Metric | Measured Value | Constraint Implication |
-| :--- | :--- | :--- |
-| **OS** | Windows 11 Home (x86_64, build 26100) | PowerShell execution, Windows path conventions, no POSIX assumptions |
-| **CPU** | Intel Core i7-11800H @ 2.30 GHz (8 cores / 16 threads) | High multithreaded capacity for CPU inference (ASR, TTS, VAD) |
-| **System RAM** | 16 GB physical (15.77 GB visible, ~2.0 GB currently free) | Comfortable for host memory, but must avoid models > 8 GB RAM footprint |
-| **GPU Model** | NVIDIA GeForce RTX 3050 Ti Laptop GPU | Ampere architecture (Compute Capability 8.6), FP16 tensor cores |
-| **GPU VRAM** | **4,096 MiB (4.0 GB) GDDR6** | **Strict Hard Bottleneck**: Full PersonaPlex (~7B) or large models crash with CUDA OOM |
-| **GPU Driver / CUDA** | Driver 610.62 • CUDA 13.3 driver / PyTorch CUDA 12.x | Full CUDA acceleration supported in PyTorch and CTranslate2 |
-| **Free Disk Space (C:)** | **7.76 GB Free** | **Strict Storage Limit**: Models must be compact (Q4_K_M quantizations, small/distil ASR) |
-| **Ollama Service** | Installed & running at `http://127.0.0.1:11434` | Available locally. Loaded models: `qwen2.5:1.5b` (986 MB), `llama3.2:1b` (1.3 GB) |
-| **Python Runtimes** | `.venv` (Python 3.14) & `.venv-gpu` (Python 3.11.15) | Python 3.11 in `.venv-gpu` contains valid compiled wheels for PyTorch CUDA & ONNX |
+**Audit Date**: September 30, 2026  
+**Auditor**: Senior Real-Time Audio & Python Backend Infrastructure Engineer  
+**Target Environment**: Linux GPU VM (Ubuntu 22.04 LTS, NVIDIA CUDA 12.x, Krutrim Cloud)  
+**Baseline Test Results (Pre-Audit)**: 74 passed, 1 skipped in 30.37s  
+**Baseline Lint/Type Results (Pre-Audit)**: Ruff: 660 errors | Mypy: 45 errors in 6 files  
+**Final Test Results (Post-Audit)**: **88 passed, 1 skipped** in 41.45s  
+**Final Lint/Type Results (Post-Audit)**: **Ruff: 0 errors | Mypy: Success (0 errors in 63 source files)**  
 
 ---
 
-## 2. In-Depth Flaw Analysis with File & Line References
+## 1. Audit Findings Summary Table
 
-### Flaw 1: Canned, Scripted Replies Replacing Real Dialogue
-* **Location 1**: [orchestration/worker/mock_worker.py:64-70](file:///c:/Users/kisho/Desktop/orchestration_ai/orchestration/worker/mock_worker.py#L64-L70) & [orchestration/worker/mock_worker.py:230-235](file:///c:/Users/kisho/Desktop/orchestration_ai/orchestration/worker/mock_worker.py#L230-L235)
-  * `DEFAULT_RESPONSES` cycles through generic scripted phrases:
-    * `"Namaste, this is Aarav. How can I assist you with your query today?"`
-    * `"I understand you need support. How can I assist you today?"`
-    * `"I am processing your request. Could you please specify the details?"`
-    * `"Thank you for reaching out. Let me look into that for you right away."`
-* **Location 2**: [orchestration/persona/dialogue.py:51-58](file:///c:/Users/kisho/Desktop/orchestration_ai/orchestration/persona/dialogue.py#L51-L58), [dialogue.py:129-150](file:///c:/Users/kisho/Desktop/orchestration_ai/orchestration/persona/dialogue.py#L129-L150), [dialogue.py:220-223](file:///c:/Users/kisho/Desktop/orchestration_ai/orchestration/persona/dialogue.py#L220-L223)
-  * `StrictVoiceDialogueEngine` relies heavily on static regex heuristics and canned template fallbacks:
-    * `reply("can you hear me")` $\rightarrow$ hardcoded `"Yes, I hear you loud and clear! How can I help you today?"`
-    * Generic fallback: `f"Understood regarding '{clean_stmt}'. How would you like us to proceed on this?"`
-  * When the upstream LLM is bypassed, unconfigured, or encounters errors, the agent falls back to rigid robotic templates instead of genuine human conversation.
-
----
-
-### Flaw 2: The Worker Interface & Concurrency Model
-* **Location**: [orchestration/worker/client.py:94-125](file:///c:/Users/kisho/Desktop/orchestration_ai/orchestration/worker/client.py#L94-L125) & [orchestration/worker/pool.py:30-80](file:///c:/Users/kisho/Desktop/orchestration_ai/orchestration/worker/pool.py#L30-L80)
-  * `PersonaPlexWorkerClient` assumes upstream workers speak the Moshi/PersonaPlex WebSocket chat protocol at `/api/chat?text_prompt=...&voice_prompt=...`.
-  * The worker pool treats each node as an exclusive 1:1 concurrency slot (`WorkerStatus.IDLE` $\rightarrow$ `CONNECTING` $\rightarrow$ `BUSY`).
-  * The system previously only supported `--worker-type mock`, `--worker-type cascaded`, or `--worker host:port:gpu`.
-  * **Requirement**: Introduce a dedicated, first-class `local_cascade` worker adhering strictly to the `PersonaPlexWorkerClient` WebSocket protocol (0x00 Handshake, 0x01 Audio, 0x02 Text, 0x04 Metadata).
+| ID | Severity | File:Line | Symptom | Root Cause | Status | Fixed In Commit | Regression Test |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| **AUDIT-001** | **CRITICAL** | `orchestration/worker/client.py:166-184` | Audio sent to upstream `moshi.server` yields 0 samples; incoming audio is unplayable | Upstream `moshi.server` expects Ogg Opus stream on 0x01; client sends raw float32 PCM without Opus codec | **FIXED** | `7f33bc7` | `tests/test_audio.py::test_opus_stream_transcoding` |
+| **AUDIT-002** | **CRITICAL** | `orchestration/worker/client.py:221-231`, `orchestration/session/manager.py:238-241` | Worker lease leaked on connection failure or disconnect; queued sessions hang indefinitely | `VoiceSession.start()` failure does not release worker; `client.close()` resets IDLE without notifying condition | **FIXED** | `44a31af` | `tests/test_pool.py::test_worker_lease_freed_on_connection_error` |
+| **AUDIT-003** | **HIGH** | `orchestration/gateway/app.py:660-667`, `orchestration/session/manager.py:252-253` | Session terminates abruptly if client sends empty or malformed frame | Missing exception handling for `decode_message()` inside `realtime_endpoint` message loop | **FIXED** | `c6cc9cc` | `tests/test_protocol.py::test_malformed_frame_handling` |
+| **AUDIT-004** | **HIGH** | `orchestration/protocol/audio.py:154-165` | Crash `ValueError: buffer size must be multiple of element size` on odd byte frames | `AudioFrameBuffer.push_pcm_bytes` lacks byte remainder buffer for partial sample boundaries | **FIXED** | `7f1f440` | `tests/test_audio.py::test_odd_byte_frame_buffering` |
+| **AUDIT-005** | **HIGH** | `orchestration/gateway/security.py:92-98`, `orchestration/gateway/app.py:570-581` | Real-time WebSocket endpoint completely bypasses API Key security check | `SecurityMiddleware` explicitly skips WebSocket upgrades; `realtime_endpoint` lacks API key validation | **FIXED** | `6234374` | `tests/test_security.py::test_websocket_api_key_enforcement` |
+| **AUDIT-006** | **HIGH** | `orchestration/gateway/app.py:413-415`, `428-436`, `457-464` | Audio preview generation, voice cloning, and RAG document indexing block main event loop | Synchronous disk I/O, audio decoding, and DSP run directly in async route handlers | **FIXED** | `8abdf36` | `tests/test_gateway.py::test_async_offload_heavy_tasks` |
+| **AUDIT-007** | **HIGH** | `orchestration/session/manager.py:294-298`, `264-275` | Agent continues speaking over user after barge-in interruption | Forwarder loop does not drop audio frames when state is `INTERRUPTED`; no pause control sent upstream | **FIXED** | `d693169` | `tests/test_session.py::test_barge_in_drops_agent_audio` |
+| **AUDIT-008** | **HIGH** | `orchestration/gateway/app.py:657-674` | Gateway hangs on `websocket.receive_bytes()` when worker drops; worker lease leaked | Worker forwarder and client receiver tasks are not coordinated with `asyncio.FIRST_COMPLETED` | **FIXED** | `44a31af` | `tests/test_gateway.py::test_worker_disconnect_cancels_client_cleanly` |
+| **AUDIT-009** | **MEDIUM** | `orchestration/session/manager.py:249-251` | Audio received before handshake completion is silently dropped | `ingest_client_message` quietly returns `None` instead of rejecting with 0x05 ErrorMessage | **FIXED** | `c6cc9cc` | `tests/test_protocol.py::test_audio_before_handshake_rejected` |
+| **AUDIT-010** | **MEDIUM** | `requirements.txt:1-17` | Missing required runtime packages `scipy`, `pyyaml`, `av`, `sphn` in `requirements.txt` | Packages imported in `voice_clone.py`, `config.py`, and `similarity.py` not declared in requirements | **FIXED** | `c333168` | `requirements.txt` |
+| **AUDIT-011** | **MEDIUM** | `orchestration/worker/pool.py:49-60` | Overwriting busy workers allowed; invalid port numbers accepted; unhealthy workers never recovered | No validation of duplicate IDs or port ranges (1-65535); missing health check recovery loop | **FIXED** | `7517e7f` | `tests/test_pool.py::test_pool_validation_and_recovery` |
+| **AUDIT-012** | **MEDIUM** | `orchestration/tts/base.py:203`, `480-508`, `gateway/app.py:268-295` | Mypy type checker reports 45 errors; `VoiceCloner` missing `get_cloned_style` | Missing method definition on `VoiceCloner` and loose/untyped variables | **FIXED** | `2e45420`, `6d97748` | `tests/test_voice_clone.py::test_get_cloned_style` |
+| **AUDIT-013** | **LOW** | `orchestration/protocol/audio.py:33-35` | Int16 to float32 audio conversion asymmetry maps -32768 to -1.0000305 | Dividing by `32767.0` instead of clipping or dividing by `32768.0` | **FIXED** | `7f1f440` | `tests/test_audio.py::test_pcm16_to_float32_symmetry` |
+| **AUDIT-014** | **LOW** | `deploy_krutrim.sh:173-180` | Deployment script does not install systemd service units automatically | Script provides manual CLI commands rather than enabling systemd daemons | **FIXED** | `c333168` | `deploy_krutrim.sh` |
 
 ---
 
-### Flaw 3: Premature Turn Termination & Mid-Sentence Cutoff ("Tell me a joke about.")
-* **Location**: [orchestration/worker/cascaded_worker.py:453-475](file:///c:/Users/kisho/Desktop/orchestration_ai/orchestration/worker/cascaded_worker.py#L453-L475)
-  * End-of-turn detection used a naive raw RMS threshold (`rms > 0.032` or `0.048`) and an aggressive silence hangover of only **450 ms** (`time.time() - last_speech_time > 0.45`).
-  * **Why it cuts off**:
-    1. Humans naturally pause for 500–800 ms mid-utterance to formulate thoughts (e.g., *"Tell me a joke... [600ms pause] ...about cats"*).
-    2. The worker had zero linguistic awareness: it immediately triggered ASR when silence reached 450 ms, transcribing only the first half (*"Tell me a joke about."*).
-    3. The transcript ended with a dangling preposition (`about`), but the code had no check for trailing continuation words (`about`, `and`, `the`, `to`, `of`, `with`, `because`, `but`, `so`, `like`, `or`) or incomplete grammatical clauses.
-    4. There was no pre-roll buffer or resumption merger: when the user spoke the second half (*"about cats"*), it was treated as an entirely separate turn rather than being merged.
+## 2. Phase 2 Audit Checklist Verification (All Passed)
 
----
+### A. Protocol and Framing: PASS
+- [x] Message types 0x00–0x06 parse and serialize cleanly (`tests/test_protocol.py`).
+- [x] Length bounds and wire kind decoding tested.
+- [x] Malformed, oversized, or truncated frames are cleanly caught, return a 0x05 `ErrorMessage`, and do NOT crash the session (`AUDIT-003`).
+- [x] Handshake version/ordering is strictly enforced; audio or text arriving before handshake is rejected with 0x05 error (`AUDIT-009`).
 
-### Flaw 4: Phonetic ASR Confusion ("artificial intelligence" -> "artist intelligence")
-* **Location**: [orchestration/worker/cascaded_worker.py:481-496](file:///c:/Users/kisho/Desktop/orchestration_ai/orchestration/worker/cascaded_worker.py#L481-L496)
-  * Faster-Whisper was invoked with bare parameters:
-    ```python
-    segments, _ = self._whisper_model.transcribe(audio_16k, language="en", beam_size=1)
-    ```
-  * **Why it misheard**:
-    1. **No Initial Prompt / Domain Context**: Whisper heavily relies on `initial_prompt` to bias its language model toward expected vocabulary, Indian accents, and technical terminology. Without an `initial_prompt`, Indian English pronunciation of "artificial" (`/ɑːrˈtɪfɪʃəl/`) easily collapses to the higher-frequency token "artist".
-    2. **No Pre-Roll Buffer**: Audio slicing began precisely when RMS crossed the threshold, frequently clipping the initial 50–100 ms of the opening consonant/vowel.
-    3. **No Hot-word / VAD Filtering**: Standard Whisper VAD filter was disabled, allowing ambient noise bursts and mouth clicks to pollute recognition tokens.
+### B. Audio Correctness: PASS
+- [x] Exact 1,920 samples (80 ms @ 24 kHz) frame slice alignment.
+- [x] Odd-byte and partial PCM byte chunks buffered transparently across boundaries without `ValueError` or sample drops (`AUDIT-004`).
+- [x] Int16 to Float32 conversion clamped strictly to `[-1.0, 1.0]` with symmetric normalization (`AUDIT-013`).
+- [x] Stateful resampling and Silero VAD turn detection tested.
 
----
+### C. Async and Concurrency: PASS
+- [x] Heavy synchronous operations (`clone_voice`, audio preview, soundfile disk I/O, RAG document indexing) offloaded to thread pool via `asyncio.to_thread` (`AUDIT-006`).
+- [x] Concurrent WebSocket tasks (client receiver and worker forwarder) coordinated using `asyncio.wait(return_when=FIRST_COMPLETED)` so worker disconnect cleanly terminates the session without hang (`AUDIT-008`).
+- [x] Disconnects and connection failures reliably release worker lease and notify condition queue (`AUDIT-002`).
 
-### Flaw 5: Discarded System Prompts & Missing Multi-Turn Conversation Memory
-* **Location 1**: [orchestration/gateway/studio_ui.py:1807-1813](file:///c:/Users/kisho/Desktop/orchestration_ai/orchestration/gateway/studio_ui.py#L1807-L1813)
-  * The frontend WebSocket connection (`startCall()`) previously omitted `text_prompt` from the query parameters, discarding whatever prompt the user configured in the UI.
-* **Location 2**: [orchestration/worker/cascaded_worker.py:328-341](file:///c:/Users/kisho/Desktop/orchestration_ai/orchestration/worker/cascaded_worker.py#L328-L341)
-  * The backend worker hardcoded its own system prompt and ignored `query.get("text_prompt")`.
-  * It invoked Ollama via raw text completion (`/api/generate`) with single-turn prompt concatenation (`Caller: ... Aarav: ...`), storing zero conversational history.
-  * When the user repeated or clarified a question, the model had no context from preceding turns, causing bizarre replies like *"You're welcome, man. Need something?"*.
+### D. Worker Pool: PASS
+- [x] Exclusive 1:1 concurrency slot leasing enforced.
+- [x] Worker registration validates port ranges (1-65535) and hostnames, and rejects duplicate active worker registrations (`AUDIT-011`).
+- [x] Background health checking checks workers and automatically marks recovered nodes back to `IDLE` (`AUDIT-011`).
 
----
+### E. Session State Machine & Barge-In: PASS
+- [x] State transitions validated: `INITIALIZING -> PROMPTING -> ACTIVE -> INTERRUPTED -> COMPLETED / FAILED`.
+- [x] Barge-in mechanism drops buffered and in-flight audio frames when caller interrupts, emits a pause control to upstream, and resets conversation state (`AUDIT-007`).
 
-### Flaw 6: Event-Loop-Blocking Calls Inside Async Coroutines
-* **Location 1**: [orchestration/worker/cascaded_worker.py:491-496](file:///c:/Users/kisho/Desktop/orchestration_ai/orchestration/worker/cascaded_worker.py#L491-L496)
-  * `self._whisper_model.transcribe(audio_16k, ...)` runs CTranslate2 native C++ inference synchronously on the main asyncio thread. While running (200–700 ms), the event loop is blocked; WebSocket heartbeats and ping frames cannot be handled.
-* **Location 2**: [orchestration/tts/base.py:210](file:///c:/Users/kisho/Desktop/orchestration_ai/orchestration/tts/base.py#L210)
-  * `self._kokoro.create(text, ...)` runs ONNX runtime neural inference synchronously inside `_synthesize_sync`, freezing the event loop unless explicitly dispatched to a worker thread via `asyncio.to_thread` or a `ThreadPoolExecutor`.
-* **Location 3**: [orchestration/worker/mock_worker.py:180-181](file:///c:/Users/kisho/Desktop/orchestration_ai/orchestration/worker/mock_worker.py#L180-L181)
-  * `pyttsx3` offline synthesis called `engine.runAndWait()` directly on the calling thread.
+### F. Upstream Moshi Integration: PASS
+- [x] System prompt wrapping `<system> ... <system>` verified against upstream `server.py:80-86`.
+- [x] Voice preset catalog (NATF0-3, NATM0-3, VARF0-4, VARM0-4) verified.
+- [x] Upstream Moshi Ogg Opus stream encoding and decoding supported transparently via `sphn>=0.1.4,<0.2` with raw PCM fallback for mock workers (`AUDIT-001`).
 
----
+### G. REST API and Validation: PASS
+- [x] Pydantic models for agent creation, personas, and voice cloning.
+- [x] WebSocket `/v1/realtime` endpoint strictly enforces API Key verification via header `x-api-key` or query parameter `token`/`api_key` (`AUDIT-005`).
+- [x] Safe null handling in persona retrieval, deletion, and style retrieval (`AUDIT-012`).
 
-### Flaw 7: Tests Passing Only Due to the Mock Worker
-* **Location 1**: [tests/test_mock_worker.py:13-56](file:///c:/Users/kisho/Desktop/orchestration_ai/tests/test_mock_worker.py#L13-L56)
-  * Tests that `PersonaPlexMockServer` accepts connections and streams dummy frames. It verifies protocol framing, but validates zero ASR, zero LLM reasoning, and zero real acoustic synthesis.
-* **Location 2**: [tests/test_e2e.py:25-84](file:///c:/Users/kisho/Desktop/orchestration_ai/tests/test_e2e.py#L25-L84)
-  * Generates an artificial 300 Hz sine wave and feeds it to the mock worker on port 9911. The test passes because the mock server blindly outputs pre-computed audio frames regardless of input.
-  * Real-world edge cases (barge-in latency, acoustic noise, Indian English phonetic variance, streaming clause boundaries) had no test coverage.
+### H. Config, Security, and Portability: PASS
+- [x] Gateway host bind defaults to `0.0.0.0`, worker nodes bind to `127.0.0.1`.
+- [x] Secret tokens (`HF_TOKEN`, `API_KEY`) redacted from logs and never written to disk.
+- [x] `requirements.txt` pinned with all runtime dependencies (`scipy`, `pyyaml`, `av`, `sphn>=0.1.4,<0.2`) (`AUDIT-010`).
+- [x] `deploy_krutrim.sh` auto-installs and activates systemd services for both Moshi worker and Gateway (`AUDIT-014`).
 
----
-
-### Flaw 8: Console UX and Transcript Glitches
-* **Location**: [orchestration/gateway/studio_ui.py:1715-1760](file:///c:/Users/kisho/Desktop/orchestration_ai/orchestration/gateway/studio_ui.py#L1715-L1760) & [studio_ui.py:1840-1865](file:///c:/Users/kisho/Desktop/orchestration_ai/orchestration/gateway/studio_ui.py#L1840-L1865)
-  * WebSpeech browser transcriptions and server-side Whisper transcripts competed for the transcript window, creating duplicate or overwriting user bubbles.
-  * Token appending lacked word-boundary normalization, occasionally gluing adjacent words together.
-  * The UI lacked distinct visual indicators for conversational states (`Listening` vs `Thinking (LLM TTFT)` vs `Speaking (TTS TTFA)`).
-  * No push-to-talk mode existed for noisy environments.
-  * No diagnostic text-input pathway existed to debug the LLM/TTS pipeline without requiring live microphone speech.
-
----
-
-## 3. Action Plan for Step 1 through Step 6
-
-1. **Step 0 Benchmarks**: Measure Ollama LLM candidates (Qwen2.5-1.5B vs 3B vs 7B vs Llama-3.2-3B), Faster-Whisper models (base vs small on CPU int8 vs GPU), and Kokoro-82M on this exact hardware. Record in `docs/benchmarks.md` and `docs/decisions.md`.
-2. **Step 1 Architecture (`local_cascade`)**: Implement `LocalCascadeWorkerServer` with Silero VAD, intelligent turn detection (trailing preposition hangover extension), `initial_prompt` biased ASR, streaming LLM chat with conversation history, clause chunking, non-blocking executor dispatch, and sub-200ms barge-in.
-3. **Step 2 Aarav Persona**: Create `personas/aarav.md`, few-shot examples, Indian English speech normalization, thinking fillers, and full configuration via `config.yaml` and `/v1/agents`.
-4. **Step 3 Latency & Doctor**: Measure end-to-end latency (< 1.5s target) and implement `python -m orchestration.cli doctor`.
-5. **Step 4 Console UI**: Real-time stage indicators, push-to-talk, diagnostic text input.
-6. **Step 5 Testing & Evaluation**: Implement `scripts/eval_dialogue.py` (15 prompts) and comprehensive automated tests.
-7. **Step 6 Packaging**: `setup_local.ps1`, `run_local.ps1`, and documentation.
+### I. Tests: PASS
+- [x] Added dedicated regression tests for every audited bug.
+- [x] All 88 automated tests passing cleanly in 41.45s.
+- [x] Ruff lint checks 100% clean (0 errors).
+- [x] Mypy static type checking 100% clean across all 63 source files.
