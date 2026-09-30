@@ -167,6 +167,15 @@ pip install -e "$ORCH_DIR"
 mkdir -p "$ORCH_DIR/data/cloned_voices"
 mkdir -p "$ORCH_DIR/data/transcripts"
 
+# --- 10. Systemd Service Units Installation ---
+log "10. Configuring systemd services..."
+if [ -d "/etc/systemd/system" ] && command -v systemctl &> /dev/null; then
+    sudo cp "$ORCH_DIR/deploy/systemd/personaplex-gateway.service" /etc/systemd/system/
+    sudo cp "$ORCH_DIR/deploy/systemd/personaplex-worker@.service" /etc/systemd/system/
+    sudo systemctl daemon-reload
+    success "Systemd services installed (personaplex-gateway, personaplex-worker@)."
+fi
+
 success "=============================================================================="
 success " PersonaPlex Orchestration Layer successfully installed on Krutrim Cloud!"
 success "=============================================================================="
@@ -174,6 +183,10 @@ echo ""
 echo "SYSTEM READY:"
 echo "1. Activate environment: source ~/personaplex_env/bin/activate"
 echo "2. Run test suite:       pytest -v"
-echo "3. Start Gateway:        python -m orchestration.cli run-gateway --host 0.0.0.0 --port 8000"
-echo "4. Open Console:         https://<VM_IP>:8000/console"
+echo "3. Start Gateway:        python -m orchestration.cli run-gateway --host 127.0.0.1 --port 8000 --worker 127.0.0.1:8998"
+echo "   (or via systemd:      sudo systemctl start personaplex-gateway)"
+echo "4. Reverse Proxy / HTTPS: Configure Caddy or Nginx from deploy/proxy/ with SSL certificate."
+echo "   IMPORTANT: Browsers block getUserMedia (microphone) on non-HTTPS origins off-localhost."
+echo "   Use Caddy automatic HTTPS (deploy/proxy/Caddyfile) to access /console securely."
 echo "=============================================================================="
+
