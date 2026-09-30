@@ -412,8 +412,10 @@ def create_app(
         if default_voice_cloner.has_voice(voice_id):
             wav_path = default_voice_cloner.get_voice_path(voice_id)
             if wav_path and wav_path.exists() and wav_path.suffix == ".wav":
-                with open(wav_path, "rb") as f:
-                    content = f.read()
+                def _read_wav_file():
+                    with open(wav_path, "rb") as f:
+                        return f.read()
+                content = await asyncio.to_thread(_read_wav_file)
                 return Response(content=content, media_type="audio/wav")
 
         # 2. Official preset: check if file or sample exists, else synthesize preview tone
@@ -425,17 +427,21 @@ def create_app(
         if not valid_preset:
             raise HTTPException(status_code=404, detail=f"Voice preset '{voice_id}' not found.")
 
-        # Synthesize harmonic preview chime at 24kHz
-        import numpy as np
-        import soundfile as sf
-        sr = 24000
-        dur = 1.8
-        t = np.linspace(0, dur, int(sr * dur), endpoint=False)
-        f0 = 220.0 if "F" in clean_id else 140.0
-        sig = 0.4 * np.sin(2 * np.pi * f0 * t) * np.exp(-1.5 * t) + 0.2 * np.sin(2 * np.pi * f0 * 1.5 * t) * np.exp(-2.0 * t)
-        bio = io.BytesIO()
-        sf.write(bio, sig.astype(np.float32), sr, format="WAV")
-        return Response(content=bio.getvalue(), media_type="audio/wav")
+        # Synthesize harmonic preview chime at 24kHz off the event loop
+        def _synth_preview_tone():
+            import numpy as np
+            import soundfile as sf
+            sr = 24000
+            dur = 1.8
+            t = np.linspace(0, dur, int(sr * dur), endpoint=False)
+            f0 = 220.0 if "F" in clean_id else 140.0
+            sig = 0.4 * np.sin(2 * np.pi * f0 * t) * np.exp(-1.5 * t) + 0.2 * np.sin(2 * np.pi * f0 * 1.5 * t) * np.exp(-2.0 * t)
+            bio = io.BytesIO()
+            sf.write(bio, sig.astype(np.float32), sr, format="WAV")
+            return bio.getvalue()
+
+        wav_bytes = await asyncio.to_thread(_synth_preview_tone)
+        return Response(content=wav_bytes, media_type="audio/wav")
 
     @app.post("/v1/voices/clone", tags=["Voices"], status_code=status.HTTP_201_CREATED)
     async def clone_voice_endpoint(
@@ -456,7 +462,8 @@ def create_app(
             raise HTTPException(status_code=400, detail="Uploaded audio file is empty.")
 
         try:
-            meta = default_voice_cloner.clone_voice(
+            meta = await asyncio.to_thread(
+                default_voice_cloner.clone_voice,
                 audio_bytes=content,
                 voice_name=voice_name,
                 owner=owner,
@@ -508,7 +515,11 @@ def create_app(
         content = await file.read()
         if not content:
             raise HTTPException(status_code=400, detail="Uploaded file is empty.")
-        doc = default_rag_engine.add_document(filename=file.filename or "uploaded_doc", content=content)
+        doc = await asyncio.to_thread(
+            default_rag_engine.add_document,
+            filename=file.filename or "uploaded_doc",
+            content=content,
+        )
         return {
             "status": "indexed",
             "document": {
