@@ -18,8 +18,11 @@ from typing import AsyncGenerator, Generator, List, Optional
 
 
 # Regex patterns for clause boundaries
-CLAUSE_PUNCTUATION_REGEX = re.compile(r"([,;:!?.—–\n]+)")
-CURRENCY_INR_REGEX = re.compile(r"(?:(?:₹|rs\.?|inr)\s*([\d,]+(?:\.\d+)?)|([\d,]+(?:\.\d+)?)\s*(?:₹|rs\.?|inr|rupees))", re.IGNORECASE)
+CURRENCY_INR_REGEX = re.compile(
+    r"(?:(?:₹|rs\.?|inr)\s*([\d,]+(?:\.\d+)?)\s*(crore|lakh|thousand)?|"
+    r"([\d,]+(?:\.\d+)?)\s*(crore|lakh|thousand)?\s*(?:₹|rs\.?|inr|rupees))",
+    re.IGNORECASE,
+)
 
 
 # Number to spoken words map for Indian currency and numbers
@@ -43,25 +46,39 @@ def _number_to_words(n: int) -> str:
     return str(n)
 
 
-def normalize_indian_english_text(text: str) -> str:
-    """Normalize currency, numbers, and common abbreviations for natural Indian speech prosody."""
-    if not text:
-        return ""
+from .normalizer import normalize_for_tts, strip_markdown_and_emojis, normalize_currency_inr
 
-    normalized = text
+
+def normalize_indian_english_text(text: str) -> str:
+    """Normalize currency, numbers, markdown, and common abbreviations for natural Indian speech prosody."""
+    return normalize_for_tts(text)
 
     # Currency normalization: ₹5000 / 5000 INR -> five thousand rupees
     def _inr_sub(match):
-        amount = match.group(1) or match.group(2)
+        amount = match.group(1) or match.group(3)
+        scale = (match.group(2) or match.group(4) or "").lower()
         amount_clean = amount.replace(",", "")
         try:
-            num = float(amount_clean) if "." in amount_clean else int(amount_clean)
+            num = float(amount_clean)
+            if scale == "crore":
+                num *= 10000000
+            elif scale == "lakh":
+                num *= 100000
+            elif scale == "thousand":
+                num *= 1000
+
+            num = int(round(num))
             if num >= 10000000:
                 crores = int(num / 10000000)
                 return f"{_number_to_words(crores)} crore rupees"
             elif num >= 100000:
                 lakhs = int(num / 100000)
-                return f"{_number_to_words(lakhs)} lakh rupees"
+                rem = num % 100000
+                if rem == 0:
+                    return f"{_number_to_words(lakhs)} lakh rupees"
+                if rem == 50000:
+                    return f"{_number_to_words(lakhs)} point five lakh rupees"
+                return f"{_number_to_words(lakhs)} lakh {rem} rupees"
             elif num >= 1000:
                 thousands = int(num / 1000)
                 rem = num % 1000
@@ -69,13 +86,16 @@ def normalize_indian_english_text(text: str) -> str:
                     return f"{_number_to_words(thousands)} thousand rupees"
                 return f"{_number_to_words(thousands)} thousand {rem} rupees"
             else:
-                return f"{_number_to_words(int(num))} rupees"
+                return f"{_number_to_words(num)} rupees"
         except ValueError:
             return f"{amount_clean} rupees"
 
     normalized = CURRENCY_INR_REGEX.sub(_inr_sub, normalized)
 
-    # Standard speech cleanups
+    # Standard speech cleanups & broken transliteration smoothing
+    normalized = re.sub(r"\bha\s*an\s*ji\b", "yes", normalized, flags=re.IGNORECASE)
+    normalized = re.sub(r"\bha\s*an\b", "yes", normalized, flags=re.IGNORECASE)
+    normalized = re.sub(r"\bhaanji\b", "yes", normalized, flags=re.IGNORECASE)
     normalized = re.sub(r"\bAI\b", "A.I.", normalized)
     normalized = re.sub(r"\bML\b", "M.L.", normalized)
     normalized = re.sub(r"\bTTS\b", "T.T.S.", normalized)

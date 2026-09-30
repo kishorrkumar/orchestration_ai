@@ -1,0 +1,56 @@
+{
+  "llm": [
+    {
+      "model": "qwen2.5:1.5b",
+      "avg_ttft_ms": 1628.0,
+      "avg_tps": 132615.3,
+      "vram_mb": 1653.1,
+      "sample_reply": "Sure! Artificial Intelligence, often abbreviated as AI, refers to the simulation of human intelligence in machines that are programmed to learn and perform tasks without explicit instructions. These machines can adapt and change in response to new information, learning from their experiences. The field of AI encompasses a wide range of applications, from chatbots and virtual assistants to complex decision-making systems used in various industries.",
+      "joke_reply": "Sure! Why did the cat break up with the dog? Because the cat was a match for no one!"
+    },
+    {
+      "model": "llama3.2:1b",
+      "error": ""
+    },
+    {
+      "model": "qwen2.5:3b",
+      "avg_ttft_ms": 2478.3,
+      "avg_tps": 160210.7,
+      "vram_mb": 2603.1,
+      "sample_reply": "Sure, AI is like a super-smart computer program that can learn and think like a human, making it capable of understanding and responding to human commands or queries.",
+      "joke_reply": "Why did the cat cross the road? To eat the mouse that was playing hide and seek behind the curtains."
+    }
+  ],
+  "asr": [
+    {
+      "model_size": "base",
+      "device": "cuda",
+      "error": "Library cublas64_12.dll is not found or cannot be loaded"
+    },
+    {
+      "model_size": "base",
+      "device": "cpu",
+      "compute_type": "int8",
+      "latency_ms": 470.2,
+      "rtf": 0.157,
+      "vram_mb": 0.0
+    },
+    {
+      "model_size": "small",
+      "device": "cpu",
+      "compute_type": "int8",
+      "latency_ms": 1344.3,
+      "rtf": 0.448,
+      "vram_mb": 0.0
+    }
+  ],
+  "tts": {
+    "engine": "Kokoro-82M",
+    "avg_ttfa_ms": 1019.4,
+    "voices": [
+      "aarav_colloquial (Male)",
+      "priya_colloquial (Female)"
+    ],
+    "sample_rate": 24000
+  }
+}

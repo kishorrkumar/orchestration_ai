@@ -107,6 +107,8 @@ class PersonaPlexWorkerClient:
             query_params["character"] = persona.character
         if getattr(persona, "neural_voice", None):
             query_params["neural_voice"] = persona.neural_voice
+        if getattr(persona, "call_flow", None):
+            query_params["call_flow"] = persona.call_flow
         if persona.seed is not None:
             query_params["seed"] = str(persona.seed)
 

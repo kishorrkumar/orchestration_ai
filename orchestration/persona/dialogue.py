@@ -49,8 +49,12 @@ class StrictVoiceDialogueEngine:
         self.recent_replies: List[str] = []
 
     def get_greeting(self) -> str:
-        """Initial natural greeting (1 sentence, max 1 question)."""
-        return "Namaste! I'm Aarav, your AI voice assistant. How are you doing today, and how can I help you?"
+        """Initial natural greeting — concise, one sentence, one question (Principle 4)."""
+        if "priya" in self.character or "female" in self.character or "ananya" in self.character or "warm" in self.character:
+            return "Namaste! I'm Priya. How can I help you today?"
+        if "kabir" in self.character or "funny" in self.character:
+            return "Namaste! Kabir here. What's on your mind today?"
+        return "Namaste, this is Aarav. How can I help you today?"
 
     def reply(self, user_text: str) -> str:
         """
@@ -139,7 +143,9 @@ class StrictVoiceDialogueEngine:
             return "I run strictly on electricity and code, so no biryani for me! Did you have a good meal today?"
 
         if any(w in u_clean for w in ["who are you", "what are you", "what is your name", "who made you"]):
-            return "I'm Aarav, your real-time Indian English voice assistant. What can I help you accomplish today?"
+            is_fem = "priya" in self.character or "female" in self.character or "ananya" in self.character or "warm" in self.character
+            name = "Priya" if is_fem else "Aarav"
+            return f"I'm {name}, your real-time Indian English voice assistant. What can I help you accomplish today?"
 
         if any(w in u_clean for w in ["how are you", "how are you doing", "hows it going", "how are u"]):
             return "I'm doing great, feeling energized and ready to assist! How is your day going so far?"
@@ -158,28 +164,32 @@ class StrictVoiceDialogueEngine:
         if any(w in u_clean for w in ["narrative", "story", "tale", "tell me a story"]):
             return "Here's a quick story: An engineer in Bengaluru built a voice AI, and on its first trial call, it unexpectedly solved a major logistics problem and made the client laugh! What kind of stories do you enjoy hearing most?"
 
-        # 8. Follow-up / Clarification on why agent said or did something
+        # 8. Prompts, Roles & Instructions (Directly addresses 'Can you talk a prompt?')
+        if any(w in u_clean for w in ["prompt", "system prompt", "talk a prompt", "say a prompt", "read prompt", "instructions"]):
+            return "Yes, absolutely! I am operating under my system prompt to assist you clearly and professionally in natural Indian English. What scenario would you like to run?"
+
+        # 9. Follow-up / Clarification on why agent said or did something
         if any(w in u_clean for w in ["why didnt you", "why did you", "why did you say", "repeat", "second and again"]):
             return "I wanted to keep our dialogue fresh and moving forward naturally rather than looping on the same words! What topic would you like to explore next?"
 
-        # 9. Context: Caller introduced both name and goal
+        # 10. Context: Caller introduced both name and goal
         if "caller_name" in self.known_facts and self.caller_goals and self.turn_count <= 2:
             return f"Great to meet you, {self.caller_name}. Helping you with {self.caller_goals[-1]} sounds great—where should we start?"
 
-        # 10. Context: Caller introduced their name
+        # 11. Context: Caller introduced their name
         if "caller_name" in self.known_facts and self.turn_count <= 2:
             return f"Great to meet you, {self.caller_name}. What is the main thing you'd like to work on today?"
 
-        # 11. Context: Caller introduced a new goal
+        # 12. Context: Caller introduced a new goal
         if self.caller_goals and self.turn_count <= 3:
             goal = self.caller_goals[-1]
             return f"Helping you with {goal} sounds like a solid plan. Where would you like to start?"
 
-        # 12. Direct Questions (Answering directly and humanly)
-        if u.endswith("?") or any(u_clean.startswith(w) for w in ["what", "how", "why", "when", "where", "can you", "could you", "is it", "are you", "tell me", "explain"]):
+        # 13. Direct Questions & Requests (Answering directly, contextually and humanly)
+        if u.endswith("?") or any(u_clean.startswith(w) for w in ["what", "how", "why", "when", "where", "can you", "could you", "is it", "are you", "tell me", "explain", "help me", "do you", "will you"]):
             return self._answer_direct_question(raw, u_clean)
 
-        # 13. Affirmations & Short responses
+        # 14. Affirmations & Short responses
         if u_clean in ["yes", "yeah", "yep", "sure", "ok", "okay", "sounds good", "absolutely", "definitely"]:
             if self.caller_goals:
                 return f"Let's proceed with {self.caller_goals[-1]}. What is the first step you'd like to take?"
@@ -188,21 +198,44 @@ class StrictVoiceDialogueEngine:
         if u_clean in ["no", "nope", "not really", "never mind", "cancel"]:
             return "Understood. We can change direction—what would you prefer to focus on instead?"
 
-        # 14. Intent & Friendly conversation
-        if any(w in u_clean for w in ["looking for", "want to talk", "interested in", "someone who"]):
-            return "I am right here and happy to chat with you! What kind of topics do you enjoy talking about?"
+        # 15. Task & Action Intents (booking, scheduling, calculating, transferring)
+        if any(w in u_clean for w in ["book", "reserve", "ticket", "flight", "hotel", "seat"]):
+            return "I can certainly help you book that. Could you share the date and destination details?"
 
-        # 15. Short input fallback - Positive human acknowledgment
+        if any(w in u_clean for w in ["transfer", "payment", "rupees", "send money", "pay"]):
+            amount_match = re.search(r"(\d+[\d,]*|\b(?:thousand|lakh|hundred)\b)", u_clean)
+            amt = amount_match.group(0) if amount_match else "the payment"
+            return f"Understood. For security, please confirm the recipient details for {amt}."
+
+        if any(w in u_clean for w in ["schedule", "meeting", "calendar", "appointment"]):
+            return "I can help organize your schedule. What date and time works best for you?"
+
+        # 16. Intent & Friendly conversation
+        if any(w in u_clean for w in ["looking for", "want to talk", "interested in", "someone who"]):
+            return "I am right here and ready to chat with you! What would you like to focus on?"
+
+        # 17. Short input fallback - Positive human acknowledgment
         if len(words) <= 2:
             topic = raw.rstrip(".?!,")
-            return f"Understood, {topic}! Where would you like to take our conversation from here?"
+            return f"Got it, {topic}. How can I best help you with that right now?"
 
-        # 16. General natural human response
-        return "That makes good sense to me. What outcome or next step are you hoping for?"
+        # 18. Dynamic conversational response based on caller's actual words (No canned phrases!)
+        clean_stmt = raw.rstrip(".?!")
+        return f"Understood regarding '{clean_stmt}'. How would you like us to proceed on this?"
 
     def _answer_direct_question(self, raw: str, u_clean: str) -> str:
         """Answers caller questions directly, factually, and conversationally like a knowledgeable human."""
         words = u_clean.split()
+
+        # Questions about capabilities or prompt
+        if any(w in u_clean for w in ["talk a prompt", "talk prompt", "speak prompt", "give a prompt", "say prompt"]):
+            return "Certainly! Here is an example prompt: 'Act as a professional customer support lead resolving a high-priority account request.' Would you like to practice that?"
+
+        if any(w in u_clean for w in ["can you talk", "can you speak", "can you voice"]):
+            return "Yes, I am speaking with you in real time right now! What topic would you like to discuss?"
+
+        if any(w in u_clean for w in ["can you hear", "can u hear", "hear me"]):
+            return "Yes, I can hear you loud and clear! What's on your mind?"
 
         # Specific topic answers
         if "weather" in u_clean:
@@ -226,13 +259,21 @@ class StrictVoiceDialogueEngine:
         if any(w in u_clean for w in ["movie", "cinema", "music", "song"]):
             return "Music and movies are fantastic ways to connect and unwind! Do you have a favorite genre or artist you enjoy?"
 
-        # Direct, articulate conversational question reply (No evasive canned response!)
-        clean_topic = re.sub(r"^(what is|what are|how do|how does|why is|why are|tell me about|explain)\s+", "", u_clean, flags=re.IGNORECASE)
-        clean_topic = clean_topic.strip()
-        if clean_topic and len(clean_topic.split()) <= 4:
-            return f"Regarding {clean_topic}, it plays an important role in how things work and connect together. What specific part would you like to explore deeper?"
+        # Direct semantic question answering extracting topic
+        clean_topic = re.sub(
+            r"^(can you|could you|what is|what are|how do|how does|why is|why are|tell me about|explain|help me with|do you know)\s+",
+            "",
+            u_clean,
+            flags=re.IGNORECASE,
+        ).strip()
 
-        return "That is a great question. In most cases, it comes down to having clear goals and the right tools. What specific aspect should we explore next?"
+        if clean_topic:
+            # Filter out punctuation
+            topic_disp = re.sub(r"^(talk|say|explain|tell me)\s+", "", clean_topic).strip()
+            if topic_disp:
+                return f"Regarding {topic_disp}, I can certainly help you explore that. What specific outcome are you looking for?"
+
+        return "I understand your question. What specific detail or next step should we focus on?"
 
     def _get_selective_acknowledgement(self) -> str:
         """Natural Acknowledgement (Principle 6) - only when appropriate, never robotic."""

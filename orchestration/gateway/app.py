@@ -17,10 +17,13 @@ import logging
 import time
 from typing import Optional
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Query, HTTPException, status, UploadFile, File
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Query, HTTPException, status, UploadFile, File, Form
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
+
+from ..tts.voice_clone import default_voice_cloner
+from ..tts.base import KokoroTTSBackend
 
 from ..persona.registry import (
     PersonaConfig,
@@ -41,7 +44,7 @@ from ..protocol.messages import (
 )
 from ..rag.engine import default_rag_engine
 from .studio_ui import STUDIO_HTML
-
+logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
 logger = logging.getLogger("orchestration.gateway")
 
 VOICE_METADATA = [
@@ -84,16 +87,50 @@ def create_app(
     pool: Optional[WorkerPool] = None,
     registry: Optional[PersonaRegistry] = None,
     session_manager: Optional[SessionManager] = None,
+    worker_type: str = "auto",
+    active_server = None,
 ) -> FastAPI:
+    import os
+    from fastapi import Response
     worker_pool = pool or WorkerPool()
     persona_registry = registry or default_registry
     mgr = session_manager or SessionManager(pool=worker_pool)
 
+    # Resolve active server / worker type
+    resolved_server = active_server
+
     @asynccontextmanager
     async def lifespan(app: FastAPI):
+        nonlocal resolved_server
         logger.info("PersonaPlex Orchestration Gateway starting up")
+        server_to_stop = None
+
+        # Only auto-spawn a local worker if pool has no workers registered
+        if len(worker_pool._workers) == 0:
+            target_type = os.environ.get("PERSONAPLEX_WORKER_TYPE", worker_type if worker_type != "auto" else "mock").lower()
+            if target_type == "cascaded":
+                from ..worker.cascaded_worker import CascadedLocalWorkerServer
+                server = CascadedLocalWorkerServer(host="127.0.0.1", port=8998)
+                await server.start()
+                server_to_stop = server
+                resolved_server = server
+                mock_cfg = WorkerNodeConfig(id="cascaded-worker-1", host="127.0.0.1", port=8998)
+                worker_pool.register_worker(mock_cfg)
+                logger.info("Cascaded local worker auto-started and registered on ws://127.0.0.1:8998")
+            else:
+                from ..worker.mock_worker import PersonaPlexMockServer
+                server = PersonaPlexMockServer(host="127.0.0.1", port=8998)
+                await server.start()
+                server_to_stop = server
+                resolved_server = server
+                mock_cfg = WorkerNodeConfig(id="mock-worker-1", host="127.0.0.1", port=8998)
+                worker_pool.register_worker(mock_cfg)
+                logger.info("Mock worker auto-started and registered on ws://127.0.0.1:8998")
+
         yield
         logger.info("PersonaPlex Orchestration Gateway shutting down")
+        if server_to_stop:
+            await server_to_stop.stop()
 
     app = FastAPI(
         title="PersonaPlex Realtime Voice Orchestration Gateway",
@@ -132,13 +169,24 @@ def create_app(
 
     @app.get("/metrics", tags=["System"])
     async def get_metrics():
+        from ..telemetry.gpu import get_live_gpu_telemetry
+        gpu = get_live_gpu_telemetry()
         active = mgr.list_active_sessions()
         pool_stats = worker_pool.get_stats()
         total_user_frames = sum(s.get("user_frames_in", 0) for s in active)
         total_agent_frames = sum(s.get("agent_frames_out", 0) for s in active)
         total_barge_ins = sum(s.get("barge_in_events", 0) for s in active)
+
+        stt_ms = getattr(resolved_server, "last_stt_ms", 0.0) if resolved_server else 0.0
+        llm_ttft_ms = getattr(resolved_server, "last_llm_ttft_ms", 0.0) if resolved_server else 0.0
+        tts_ttfa_ms = getattr(resolved_server, "last_tts_ttfa_ms", 0.0) if resolved_server else 0.0
+        total_ttfa_ms = getattr(resolved_server, "last_total_ttfa_ms", 0.0) if resolved_server else 0.0
+        worker_underruns = getattr(resolved_server, "total_underruns", 0) if resolved_server else 0
+        wtype = getattr(resolved_server, "__class__", type).__name__ if resolved_server else "Mock"
+
         return {
             "timestamp": time.time(),
+            "worker_type": wtype,
             "workers_total": pool_stats["total_workers"],
             "workers_idle": pool_stats["idle_workers"],
             "workers_busy": pool_stats["busy_workers"],
@@ -146,7 +194,45 @@ def create_app(
             "total_user_frames_in": total_user_frames,
             "total_agent_frames_out": total_agent_frames,
             "total_barge_in_events": total_barge_ins,
+            "stt_ms": round(stt_ms, 1),
+            "llm_ttft_ms": round(llm_ttft_ms, 1),
+            "tts_ttfa_ms": round(tts_ttfa_ms, 1),
+            "total_ttfa_ms": round(total_ttfa_ms, 1),
+            "worker_underruns": worker_underruns,
+            "gpu": gpu,
         }
+
+    # ==========================================================
+    # Audio Cleaner & A/B Recording Endpoints
+    # ==========================================================
+
+    @app.get("/v1/audio/raw/{session_id}", tags=["Audio"])
+    async def get_raw_audio(session_id: str):
+        session = mgr.get_session(session_id)
+        if not session or not hasattr(session, "cleaner"):
+            raise HTTPException(status_code=404, detail="Session or audio not found")
+        data = session.cleaner.get_raw_wav_bytes()
+        if not data:
+            raise HTTPException(status_code=404, detail="No audio recorded yet")
+        return Response(content=data, media_type="audio/wav", headers={"Content-Disposition": f"attachment; filename=raw_{session_id}.wav"})
+
+    @app.get("/v1/audio/clean/{session_id}", tags=["Audio"])
+    async def get_clean_audio(session_id: str):
+        session = mgr.get_session(session_id)
+        if not session or not hasattr(session, "cleaner"):
+            raise HTTPException(status_code=404, detail="Session or audio not found")
+        data = session.cleaner.get_clean_wav_bytes()
+        if not data:
+            raise HTTPException(status_code=404, detail="No audio recorded yet")
+        return Response(content=data, media_type="audio/wav", headers={"Content-Disposition": f"attachment; filename=clean_{session_id}.wav"})
+
+    @app.post("/v1/audio/toggle-bypass/{session_id}", tags=["Audio"])
+    async def toggle_bypass(session_id: str):
+        session = mgr.get_session(session_id)
+        if not session or not hasattr(session, "cleaner"):
+            raise HTTPException(status_code=404, detail="Session not found")
+        session.cleaner.bypass = not session.cleaner.bypass
+        return {"session_id": session_id, "bypass": session.cleaner.bypass}
 
     # ==========================================================
     # Persona & Agent Catalog
@@ -240,6 +326,42 @@ def create_app(
             "total": len(VOICE_METADATA),
             "categories": ["All", "Female", "Male", "Natural", "Variety"],
         }
+
+    @app.get("/v1/voices/cloned", tags=["Voices"])
+    async def list_cloned_voices():
+        return {
+            "cloned_voices": default_voice_cloner.list_cloned_voices(),
+        }
+
+    @app.post("/v1/voices/clone", tags=["Voices"])
+    async def clone_voice_endpoint(
+        audio: UploadFile = File(...),
+        voice_name: str = Form(default="My Cloned Voice"),
+        gender: Optional[str] = Form(default=None),
+    ):
+        content = await audio.read()
+        if not content:
+            raise HTTPException(status_code=400, detail="Uploaded audio file is empty.")
+
+        try:
+            tts_backend = KokoroTTSBackend()
+            meta = default_voice_cloner.clone_voice(
+                audio_bytes=content,
+                voice_name=voice_name,
+                kokoro_backend=tts_backend,
+                preferred_gender=gender,
+            )
+            return {"status": "cloned", "voice": meta}
+        except Exception as e:
+            logger.exception(f"Voice cloning error: {e}")
+            raise HTTPException(status_code=500, detail=f"Failed to clone voice: {e}")
+
+    @app.delete("/v1/voices/cloned/{voice_id}", tags=["Voices"])
+    async def delete_cloned_voice_endpoint(voice_id: str):
+        success = default_voice_cloner.delete_voice(voice_id)
+        if not success:
+            raise HTTPException(status_code=404, detail=f"Voice '{voice_id}' not found.")
+        return {"status": "deleted", "voice_id": voice_id}
 
     @app.get("/v1/system-prompt", tags=["Persona"])
     async def get_system_prompt(
@@ -339,6 +461,7 @@ def create_app(
         session_id: Optional[str] = Query(default=None, description="Optional custom session ID"),
         accent: Optional[str] = Query(default=None, description="Optional accent override (Indian English)"),
         character: Optional[str] = Query(default=None, description="Optional character override (Professional, Friendly & Funny)"),
+        call_flow: Optional[str] = Query(default=None, description="Optional call flow role"),
     ):
         await websocket.accept()
 
@@ -360,10 +483,12 @@ def create_app(
             active_persona.accent = accent
         if character:
             active_persona.character = character
+        if call_flow:
+            active_persona.call_flow = call_flow
 
         # 2. Acquire Worker and Create Session
         try:
-            session = await mgr.create_session(persona=active_persona, session_id=session_id, timeout=3.0)
+            session = await mgr.create_session(persona=active_persona, session_id=session_id, timeout=6.0)
         except PoolCapacityExceededError as e:
             logger.warning(f"Capacity exceeded for session request: {e}")
             err = encode_message(ErrorMessage(error=f"503 Service Unavailable: All workers busy. {str(e)}"))

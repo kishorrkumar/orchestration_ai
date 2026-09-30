@@ -106,7 +106,7 @@ class WorkerPool:
             if worker:
                 await worker.close()
                 logger.info(f"Released worker {worker_id} back to IDLE pool")
-                self._condition.notify()
+                self._condition.notify_all()
 
     def get_worker(self, worker_id: str) -> Optional[PersonaPlexWorkerClient]:
         return self._workers.get(worker_id)

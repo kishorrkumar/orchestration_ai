@@ -710,6 +710,149 @@ STUDIO_HTML = r"""<!DOCTYPE html>
     ::-webkit-scrollbar { width: 4px; height: 4px; }
     ::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.15); border-radius: 4px; }
     ::-webkit-scrollbar-thumb:hover { background: rgba(255, 255, 255, 0.25); }
+
+    /* Voice Clone Modal & Dialog Styles */
+    .modal-backdrop {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100vw;
+      height: 100vh;
+      background: rgba(0, 0, 0, 0.78);
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
+      z-index: 9999;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.25s ease-out;
+    }
+    .modal-backdrop.active {
+      opacity: 1;
+      pointer-events: auto;
+    }
+    .modal-card {
+      width: 92%;
+      max-width: 520px;
+      max-height: 88vh;
+      background: #1c1c1e;
+      border: 0.5px solid rgba(255, 255, 255, 0.16);
+      border-radius: 18px;
+      padding: 22px;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+      box-shadow: 0 24px 70px rgba(0, 0, 0, 0.9), 0 0 1px 1px rgba(255, 255, 255, 0.1);
+      transform: scale(0.96);
+      transition: transform 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+      overflow-y: auto;
+    }
+    .modal-backdrop.active .modal-card {
+      transform: scale(1);
+    }
+    .modal-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      border-bottom: 0.5px solid rgba(255, 255, 255, 0.1);
+      padding-bottom: 12px;
+    }
+    .modal-title {
+      font-size: 16px;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      color: #fff;
+    }
+    .btn-modal-close {
+      background: rgba(255, 255, 255, 0.1);
+      border: none;
+      color: var(--text-secondary);
+      width: 28px;
+      height: 28px;
+      border-radius: 50%;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: all 0.2s;
+    }
+    .btn-modal-close:hover {
+      background: rgba(255, 255, 255, 0.2);
+      color: #fff;
+    }
+    .clone-tabs {
+      display: flex;
+      background: rgba(0, 0, 0, 0.4);
+      padding: 3px;
+      border-radius: 10px;
+      border: 0.5px solid var(--border-subtle);
+      gap: 4px;
+    }
+    .clone-tab-btn {
+      flex: 1;
+      padding: 7px 12px;
+      border: none;
+      background: transparent;
+      color: var(--text-secondary);
+      font-size: 12px;
+      font-weight: 600;
+      border-radius: 7px;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    .clone-tab-btn.active {
+      background: rgba(255, 255, 255, 0.15);
+      color: #fff;
+    }
+    .rec-box {
+      border: 1px dashed rgba(255, 255, 255, 0.22);
+      border-radius: 12px;
+      padding: 18px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 12px;
+      background: rgba(0, 0, 0, 0.25);
+      text-align: center;
+    }
+    .btn-record-circle {
+      width: 58px;
+      height: 58px;
+      border-radius: 50%;
+      background: linear-gradient(135deg, var(--apple-red), #e0245e);
+      border: none;
+      color: #fff;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      transition: all 0.2s ease;
+      box-shadow: 0 4px 16px rgba(255, 59, 48, 0.4);
+    }
+    .btn-record-circle.recording {
+      animation: pulseRecord 1.2s infinite;
+      background: #ff3b30;
+    }
+    @keyframes pulseRecord {
+      0% { box-shadow: 0 0 0 0 rgba(255, 59, 48, 0.7); }
+      70% { box-shadow: 0 0 0 14px rgba(255, 59, 48, 0); }
+      100% { box-shadow: 0 0 0 0 rgba(255, 59, 48, 0); }
+    }
+    .cloned-voice-item {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      background: rgba(255, 255, 255, 0.04);
+      border: 0.5px solid var(--border-subtle);
+      border-radius: 8px;
+      padding: 8px 12px;
+      margin-bottom: 6px;
+    }
   </style>
 </head>
 <body>
@@ -745,16 +888,23 @@ STUDIO_HTML = r"""<!DOCTYPE html>
         <span id="active-agent-badge" class="doc-badge" style="color: var(--apple-cyan);">Aarav</span>
       </div>
 
-      <!-- Locked Single Voice & Tone Profile (Aarav • Indian English) -->
+      <!-- Colloquial Indian English Voice Selector & Voice Cloner -->
+      <div class="segmented-control" style="margin-bottom: 4px;">
+        <button id="btn-agent-aarav" class="segmented-btn active" onclick="window.studioApp.selectAgentPreset('indian_pro')">Aarav (Male)</button>
+        <button id="btn-agent-priya" class="segmented-btn" onclick="window.studioApp.selectAgentPreset('indian_priya')">Priya (Female)</button>
+        <button id="btn-agent-clone" class="segmented-btn" style="color: var(--apple-purple); font-weight: 600;" onclick="window.studioApp.openCloneModal()">🧬 Clone Voice</button>
+      </div>
+
+      <!-- Colloquial Voice Profile Card -->
       <div class="single-agent-profile">
         <div class="profile-top">
-          <span class="profile-name">Aarav</span>
-          <span class="profile-badge">Locked Voice &amp; Tone</span>
+          <span class="profile-name" id="profile-agent-name">Aarav</span>
+          <span class="profile-badge" id="profile-agent-badge">Colloquial Kokoro Neural (Male)</span>
         </div>
-        <div class="profile-desc">Natural, articulate, and crystal-clear Indian English conversational voice agent.</div>
+        <div class="profile-desc" id="profile-agent-desc">Natural, articulate, and colloquial Indian English conversational voice agent.</div>
         <div class="profile-meta-row">
           <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3z"/><path d="M17 11c0 2.76-2.24 5-5 5s-5-2.24-5-5H5c0 3.53 2.61 6.43 6 6.92V21h2v-3.08c3.39-.49 6-3.39 6-6.92h-2z"/></svg>
-          <span>en-IN-PrabhatNeural (24 kHz PCM)</span>
+          <span id="profile-agent-meta">aarav_colloquial (Kokoro 24 kHz)</span>
         </div>
       </div>
 
@@ -767,17 +917,53 @@ STUDIO_HTML = r"""<!DOCTYPE html>
       <div class="customizer-form">
         <div class="form-group">
           <label class="form-label" for="cfg-agent-name">Agent Display Name</label>
-          <input type="text" id="cfg-agent-name" class="form-input" value="Aarav (Indian English • Articulate &amp; Natural)" placeholder="Agent Name">
+          <input type="text" id="cfg-agent-name" class="form-input" value="Aarav (Colloquial Indian English • Male)" placeholder="Agent Name">
+        </div>
+
+        <div class="form-group">
+          <label class="form-label" for="cfg-call-flow">Call Flow &amp; Role</label>
+          <select id="cfg-call-flow" class="form-select" onchange="window.studioApp.onCallFlowChange()">
+            <option value="conversational_companion">Conversational Companion (Warm &amp; Witty)</option>
+            <option value="customer_support">Customer Support &amp; Resolution</option>
+            <option value="tech_specialist">Tech &amp; AI Specialist</option>
+            <option value="inbound_concierge">Inbound Concierge &amp; Booking</option>
+          </select>
         </div>
 
         <div class="form-row">
           <div class="form-group flex-1">
-            <label class="form-label">Voice Tone</label>
-            <input type="text" class="form-input" value="Natural &amp; Articulate" readonly style="opacity: 0.85; cursor: default;">
+            <label class="form-label" for="cfg-voice-tone">Voice Tone</label>
+            <select id="cfg-voice-tone" class="form-select" onchange="window.studioApp.onVoiceToneChange()">
+              <option value="Natural &amp; Articulate">Natural &amp; Articulate</option>
+              <option value="Warm &amp; Empathetic">Warm &amp; Empathetic</option>
+              <option value="Energetic &amp; Witty">Energetic &amp; Witty</option>
+              <option value="Professional &amp; Calm">Professional &amp; Calm</option>
+              <option value="Casual &amp; Direct">Casual &amp; Direct</option>
+            </select>
           </div>
           <div class="form-group flex-1">
-            <label class="form-label">Neural Voice</label>
-            <input type="text" id="cfg-neural-voice" class="form-input" value="en-IN-PrabhatNeural" readonly style="opacity: 0.85; cursor: default; font-family: var(--font-mono); font-size: 11px;">
+            <div style="display:flex; justify-content:space-between; align-items:center;">
+              <label class="form-label" for="cfg-neural-voice">Neural Voice</label>
+              <a href="javascript:void(0)" onclick="window.studioApp.openCloneModal()" style="font-size:10px; color:var(--apple-purple); text-decoration:none; font-weight:600;">+ Clone</a>
+            </div>
+            <select id="cfg-neural-voice" class="form-select" onchange="window.studioApp.onNeuralVoiceChange()" style="font-family: var(--font-mono); font-size: 11px;">
+              <optgroup label="🇮🇳 Indian English (Colloquial)">
+                <option value="aarav_colloquial">aarav_colloquial (Male)</option>
+                <option value="priya_colloquial">priya_colloquial (Female)</option>
+                <option value="kabir">kabir (Deep Male)</option>
+                <option value="ananya">ananya (Expressive Female)</option>
+              </optgroup>
+              <optgroup label="🌍 Global English">
+                <option value="am_adam">am_adam (Dynamic Male)</option>
+                <option value="af_bella">af_bella (Warm Female)</option>
+                <option value="af_sarah">af_sarah (Professional Female)</option>
+                <option value="am_michael">am_michael (Deep Baritone)</option>
+                <option value="af_nova">af_nova (Bright &amp; Lively)</option>
+              </optgroup>
+              <optgroup id="optgroup-cloned-voices" label="🧬 Cloned Voices">
+                <!-- Populated dynamically via /v1/voices/cloned -->
+              </optgroup>
+            </select>
           </div>
         </div>
 
@@ -825,13 +1011,10 @@ STUDIO_HTML = r"""<!DOCTYPE html>
         </div>
       </div>
 
-      <!-- Transcript Container -->
+      <!-- Transcript Container — starts empty; agent greeting appears when call begins -->
       <div class="chat-transcript" id="chat-transcript">
-        <div class="message-row agent">
-          <span class="message-author" id="initial-agent-author">Aarav</span>
-          <div class="bubble">Namaste! I'm Aarav, your Indian English AI voice assistant. I am ready to converse naturally and clearly with you. Click &quot;Start Call&quot; or type below to begin.</div>
-        </div>
       </div>
+
 
       <!-- Bottom Call Controls -->
       <div class="call-controls">
@@ -840,6 +1023,8 @@ STUDIO_HTML = r"""<!DOCTYPE html>
             <path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3z"/><path d="M17 11c0 2.76-2.24 5-5 5s-5-2.24-5-5H5c0 3.53 2.61 6.43 6 6.92V21h2v-3.08c3.39-.49 6-3.39 6-6.92h-2z"/>
           </svg>
         </button>
+
+        <button id="btn-ptt-toggle" class="btn-circle" title="Toggle Push-to-Talk (Hold Space)" onclick="window.studioApp.togglePttMode()" style="font-size: 11px; font-weight: 700;">PTT</button>
 
         <input type="text" id="user-text-input" class="chat-input" placeholder="Speak into mic or type a prompt..." onkeydown="if(event.key==='Enter') window.studioApp.sendTextMessage()">
 
@@ -864,7 +1049,7 @@ STUDIO_HTML = r"""<!DOCTYPE html>
       <div class="telemetry-group" style="padding: 10px; font-size: 11.5px;">
         <div class="telemetry-row">
           <span class="telemetry-label">Active Neural Voice</span>
-          <span class="telemetry-val" id="active-neural-voice-badge">en-IN-PrabhatNeural</span>
+          <span class="telemetry-val" id="active-neural-voice-badge">aarav_colloquial</span>
         </div>
         <div class="telemetry-row">
           <span class="telemetry-label">Accent / Dialect</span>
@@ -910,28 +1095,153 @@ STUDIO_HTML = r"""<!DOCTYPE html>
           <span class="telemetry-val" id="telemetry-worker">worker-1</span>
         </div>
         <div class="telemetry-row">
-          <span class="telemetry-label">Mic Inbound Frames</span>
-          <span class="telemetry-val" id="telemetry-frames-in">0</span>
+          <span class="telemetry-label">Frames In / Out</span>
+          <span class="telemetry-val"><span id="telemetry-frames-in">0</span> / <span id="telemetry-frames-out">0</span></span>
         </div>
         <div class="telemetry-row">
-          <span class="telemetry-label">Agent Outbound Frames</span>
-          <span class="telemetry-val" id="telemetry-frames-out">0</span>
+          <span class="telemetry-label">STT Latency</span>
+          <span class="telemetry-val" id="telemetry-stt-ms">--</span>
         </div>
         <div class="telemetry-row">
-          <span class="telemetry-label">Barge-in Interruptions</span>
+          <span class="telemetry-label">LLM TTFT</span>
+          <span class="telemetry-val" id="telemetry-llm-ttft">--</span>
+        </div>
+        <div class="telemetry-row">
+          <span class="telemetry-label">TTS TTFA</span>
+          <span class="telemetry-val" id="telemetry-tts-ttfa">--</span>
+        </div>
+        <div class="telemetry-row">
+          <span class="telemetry-label">Total TTFA</span>
+          <span class="telemetry-val" id="telemetry-total-ttfa" style="color: var(--apple-green);">--</span>
+        </div>
+        <div class="telemetry-row">
+          <span class="telemetry-label">Barge-in Events</span>
           <span class="telemetry-val" id="telemetry-barge-in">0</span>
         </div>
         <div class="telemetry-row">
-          <span class="telemetry-label">Noise Canceller</span>
-          <span class="telemetry-val" style="color: var(--apple-green);">Active (80Hz + Sub)</span>
+          <span class="telemetry-label">Audio Cleaner</span>
+          <button id="btn-toggle-bypass" onclick="window.studioApp.toggleAudioBypass()" class="segmented-btn active" style="font-size: 10px; padding: 2px 6px;">Clean: ON</button>
+        </div>
+        <div class="telemetry-row" style="margin-top: 4px; gap: 4px;">
+          <button onclick="window.studioApp.downloadRawWav()" class="segmented-btn" style="font-size: 10px; flex: 1;">Raw WAV</button>
+          <button onclick="window.studioApp.downloadCleanWav()" class="segmented-btn" style="font-size: 10px; flex: 1;">Clean WAV</button>
+        </div>
+      </div>
+
+      <!-- Live Pipeline Stages & GPU Status Panel -->
+      <div class="panel-header" style="margin-top: 8px;">
+        <span class="panel-title">Pipeline Stage Status &amp; GPU</span>
+        <span class="doc-badge" id="gpu-device-badge" style="color: var(--apple-cyan);">CUDA</span>
+      </div>
+      <div class="telemetry-group" style="padding: 10px; font-size: 11px;">
+        <div class="telemetry-row">
+          <span class="telemetry-label">🎤 Heard Speech</span>
+          <span class="telemetry-val" id="stage-heard-speech">Idle</span>
         </div>
         <div class="telemetry-row">
-          <span class="telemetry-label">Turn-taking Hangtime</span>
-          <span class="telemetry-val">600 ms</span>
+          <span class="telemetry-label">📝 STT Transcript</span>
+          <span class="telemetry-val" id="stage-transcript">--</span>
+        </div>
+        <div class="telemetry-row">
+          <span class="telemetry-label">🧠 LLM Thinking</span>
+          <span class="telemetry-val" id="stage-llm-thinking">Idle</span>
+        </div>
+        <div class="telemetry-row">
+          <span class="telemetry-label">🔊 TTS Speaking</span>
+          <span class="telemetry-val" id="stage-tts-speaking">Idle</span>
+        </div>
+        <div class="telemetry-row" style="border-top: 1px solid rgba(255,255,255,0.06); padding-top: 4px; margin-top: 4px;">
+          <span class="telemetry-label">⚡ GPU VRAM</span>
+          <span class="telemetry-val" id="gpu-vram-text">-- / 4096 MB</span>
+        </div>
+        <div class="telemetry-row">
+          <span class="telemetry-label">🔥 GPU Temp / Util</span>
+          <span class="telemetry-val" id="gpu-temp-util">--°C / --%</span>
         </div>
       </div>
     </div>
 
+  </div>
+
+  <!-- Apple Intelligence Inspired Voice Cloning Modal -->
+  <div id="voice-clone-modal" class="modal-backdrop">
+    <div class="modal-card">
+      <div class="modal-header">
+        <div class="modal-title">
+          <svg width="20" height="20" fill="var(--apple-purple)" viewBox="0 0 24 24"><path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z"/></svg>
+          Voice Cloning Studio
+        </div>
+        <button class="btn-modal-close" onclick="window.studioApp.closeCloneModal()">✕</button>
+      </div>
+
+      <div class="clone-tabs">
+        <button id="btn-tab-record" class="clone-tab-btn active" onclick="window.studioApp.switchCloneTab('record')">🎙️ Record Microphone (8s)</button>
+        <button id="btn-tab-upload" class="clone-tab-btn" onclick="window.studioApp.switchCloneTab('upload')">📁 Upload Audio File</button>
+      </div>
+
+      <!-- Tab 1: Record Directly from Microphone -->
+      <div id="clone-tab-record">
+        <div class="rec-box">
+          <div style="font-size: 13px; font-weight: 600; color: #fff;">Acoustic Voice Calibration</div>
+          <div style="font-size: 11.5px; color: var(--text-secondary); max-width: 380px; line-height: 1.4;">
+            Read this sentence aloud in your natural speaking voice:
+            <div style="margin-top: 6px; padding: 8px 10px; background: rgba(255,255,255,0.06); border-radius: 8px; color: var(--apple-cyan); font-style: italic;">
+              "Hi, I am recording my voice sample for this real-time conversational AI. Notice my tone, rhythm, and natural accent."
+            </div>
+          </div>
+
+          <div style="display: flex; flex-direction: column; align-items: center; gap: 8px; margin-top: 4px;">
+            <button id="btn-start-record" class="btn-record-circle" onclick="window.studioApp.toggleCloneRecord()">
+              <svg width="24" height="24" fill="currentColor" viewBox="0 0 24 24"><path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3z"/><path d="M17 11c0 2.76-2.24 5-5 5s-5-2.24-5-5H5c0 3.53 2.61 6.43 6 6.92V21h2v-3.08c3.39-.49 6-3.39 6-6.92h-2z"/></svg>
+            </button>
+            <span id="clone-timer-text" style="font-family: var(--font-mono); font-size: 13px; font-weight: 700; color: var(--apple-red);">00:08</span>
+            <span id="rec-prompt-status" style="font-size: 11px; color: var(--text-secondary);">Click red button to start 8-second recording</span>
+          </div>
+
+          <audio id="clone-audio-preview" controls style="display:none; width: 100%; height: 32px; margin-top: 6px;"></audio>
+        </div>
+      </div>
+
+      <!-- Tab 2: Upload Audio File -->
+      <div id="clone-tab-upload" style="display: none;">
+        <div class="rec-box" onclick="document.getElementById('clone-file-input').click()" style="cursor: pointer;">
+          <input type="file" id="clone-file-input" accept="audio/*,.wav,.mp3,.m4a,.ogg" style="display: none;" onchange="window.studioApp.onCloneFileUpload(event)">
+          <svg width="32" height="32" fill="var(--text-secondary)" viewBox="0 0 24 24"><path d="M9 16h6v-6h4l-7-7-7 7h4zm-4 2h14v2H5z"/></svg>
+          <div style="font-size: 12.5px; font-weight: 600; color: #fff;">Click or Drag &amp; Drop Audio File</div>
+          <div style="font-size: 11px; color: var(--text-secondary);">Supports WAV, MP3, M4A, OGG (3–30 seconds recommended)</div>
+          <div id="upload-file-name" style="font-family: var(--font-mono); font-size: 11.5px; color: var(--apple-cyan); margin-top: 4px;"></div>
+          <audio id="upload-audio-preview" controls style="display:none; width: 100%; height: 32px; margin-top: 6px;"></audio>
+        </div>
+      </div>
+
+      <!-- Metadata Fields -->
+      <div style="display: flex; gap: 8px;">
+        <div class="form-group flex-1">
+          <label class="form-label" for="clone-voice-name">Voice Profile Name</label>
+          <input type="text" id="clone-voice-name" class="form-input" placeholder="e.g. My Voice, Rohan, Sneha" value="My Voice">
+        </div>
+        <div class="form-group flex-1">
+          <label class="form-label" for="clone-voice-gender">Gender Tone Bias</label>
+          <select id="clone-voice-gender" class="form-select">
+            <option value="auto">Auto-detect from acoustics</option>
+            <option value="male">Male (Full / Baritone)</option>
+            <option value="female">Female (Warm / Bright)</option>
+          </select>
+        </div>
+      </div>
+
+      <button id="btn-submit-clone" class="btn-save-agent" style="background: linear-gradient(135deg, var(--apple-purple), #9d4edd); width: 100%; padding: 10px; font-size: 13px;" onclick="window.studioApp.submitVoiceClone()">
+        🧬 Create &amp; Activate Cloned Voice
+      </button>
+
+      <!-- Manage Existing Clones -->
+      <div style="border-top: 0.5px solid rgba(255, 255, 255, 0.1); padding-top: 10px;">
+        <div style="font-size: 11px; font-weight: 600; color: var(--text-secondary); text-transform: uppercase; margin-bottom: 6px;">Saved Cloned Voices</div>
+        <div id="cloned-voices-list" style="max-height: 120px; overflow-y: auto;">
+          <!-- Populated dynamically -->
+        </div>
+      </div>
+    </div>
   </div>
 
   <!-- SOLID Modular Architecture JavaScript -->
@@ -951,21 +1261,30 @@ STUDIO_HTML = r"""<!DOCTYPE html>
         this.nextPlayTime = 0;
         this.micBuffer = [];
         this.isMuted = false;
+        this.activeSources = [];
         this.onFrameCallback = null;
         this.onEnergyCallback = null;
       }
 
       async initialize() {
         const AudioContextClass = window.AudioContext || window.webkitAudioContext;
-        try {
-          this.audioCtx = new AudioContextClass({ sampleRate: this.sampleRate });
-          if (this.audioCtx.state === 'suspended') {
-            await this.audioCtx.resume();
+        if (!this.audioCtx) {
+          try {
+            this.audioCtx = new AudioContextClass();
+          } catch (e) {
+            console.error('AudioContext creation error:', e);
           }
-        } catch (e) {
-          this.audioCtx = new AudioContextClass();
         }
-        this.nextPlayTime = this.audioCtx.currentTime;
+        if (this.audioCtx && this.audioCtx.state === 'suspended') {
+          try {
+            await this.audioCtx.resume();
+          } catch (e) {
+            console.warn('AudioContext resume error:', e);
+          }
+        }
+        if (this.audioCtx) {
+          this.nextPlayTime = this.audioCtx.currentTime;
+        }
       }
 
       async startMicrophone(onFrame, onEnergy) {
@@ -974,7 +1293,7 @@ STUDIO_HTML = r"""<!DOCTYPE html>
         await this.initialize();
 
         if (this.audioCtx && this.audioCtx.state === 'suspended') {
-          await this.audioCtx.resume();
+          try { await this.audioCtx.resume(); } catch (e) {}
         }
 
         this.micStream = await navigator.mediaDevices.getUserMedia({
@@ -1039,7 +1358,13 @@ STUDIO_HTML = r"""<!DOCTYPE html>
         this.silentGain.connect(this.audioCtx.destination);
       }
 
-      playChunk(floatSamples) {
+      async playChunk(floatSamples) {
+        if (!this.audioCtx) {
+          try { await this.initialize(); } catch (e) {}
+        }
+        if (this.audioCtx && this.audioCtx.state === 'suspended') {
+          try { await this.audioCtx.resume(); } catch (e) {}
+        }
         if (!this.audioCtx) return;
 
         // Skip pure silence frames so nextPlayTime doesn't wander into future
@@ -1048,7 +1373,7 @@ STUDIO_HTML = r"""<!DOCTYPE html>
           sumSq += floatSamples[i] * floatSamples[i];
         }
         const rms = Math.sqrt(sumSq / floatSamples.length);
-        if (rms < 0.0008) return;
+        if (rms < 0.0004) return;
 
         const now = this.audioCtx.currentTime;
         if (this.nextPlayTime < now || this.nextPlayTime > now + 0.35) {
@@ -1061,15 +1386,32 @@ STUDIO_HTML = r"""<!DOCTYPE html>
 
         const source = this.audioCtx.createBufferSource();
         source.buffer = buffer;
-        source.connect(this.audioCtx.destination);
+
+        // Dedicated gain node for boosted, clear agent voice output
+        const gainNode = this.audioCtx.createGain();
+        gainNode.gain.value = 1.35;
+        source.connect(gainNode);
+        gainNode.connect(this.audioCtx.destination);
 
         source.start(this.nextPlayTime);
         this.nextPlayTime += buffer.duration;
+
+        this.activeSources.push(source);
+        source.onended = () => {
+          const idx = this.activeSources.indexOf(source);
+          if (idx >= 0) this.activeSources.splice(idx, 1);
+        };
       }
 
       stopPlayback() {
+        if (this.activeSources && this.activeSources.length > 0) {
+          for (const s of this.activeSources) {
+            try { s.stop(); s.disconnect(); } catch (e) {}
+          }
+          this.activeSources = [];
+        }
         if (this.audioCtx) {
-          this.nextPlayTime = 0;
+          this.nextPlayTime = this.audioCtx.currentTime;
         }
       }
 
@@ -1079,6 +1421,7 @@ STUDIO_HTML = r"""<!DOCTYPE html>
       }
 
       stop() {
+        this.stopPlayback();
         if (this.micStream) {
           this.micStream.getTracks().forEach(t => t.stop());
           this.micStream = null;
@@ -1206,7 +1549,7 @@ STUDIO_HTML = r"""<!DOCTYPE html>
           const payload = data.slice(1);
 
           if (kind === 0x01 && this.onAudio) {
-            const floatSamples = new Float32Array(payload.buffer, payload.byteOffset, payload.byteLength / 4);
+            const floatSamples = new Float32Array(event.data.slice(1));
             this.onAudio(floatSamples);
           } else if (kind === 0x02 && this.onText) {
             const text = new TextDecoder().decode(payload);
@@ -1379,6 +1722,7 @@ STUDIO_HTML = r"""<!DOCTYPE html>
         this.activePersona = 'indian_pro';
         this.activeAgentName = 'Aarav';
         this.activeVoice = 'NATM0.pt';
+        this.activeCallFlow = 'conversational_companion';
         this.isConnected = false;
         this.agentSpeaking = false;
         this.currentVoiceFilter = 'All';
@@ -1387,6 +1731,7 @@ STUDIO_HTML = r"""<!DOCTYPE html>
         this.framesIn = 0;
         this.framesOut = 0;
         this.bargeIns = 0;
+        this.isPttMode = false;
 
         this.personas = [];
         this.voices = [];
@@ -1399,6 +1744,7 @@ STUDIO_HTML = r"""<!DOCTYPE html>
 
         this.initElements();
         this.initSocketEvents();
+        this.setupPttListeners();
       }
 
       initElements() {
@@ -1422,10 +1768,29 @@ STUDIO_HTML = r"""<!DOCTYPE html>
 
         this.socket.onAudio = (floatSamples) => {
           this.framesOut++;
-          document.getElementById('telemetry-frames-out').innerText = this.framesOut;
-          this.agentSpeaking = true;
-          this.orb.setAgentSpeaking(true);
-          document.getElementById('speaker-status').innerText = `${this.activeAgentName} Speaking`;
+          const elOut = document.getElementById('telemetry-frames-out');
+          if (elOut) elOut.innerText = this.framesOut;
+
+          let sumSq = 0;
+          for (let i = 0; i < floatSamples.length; i++) {
+            sumSq += floatSamples[i] * floatSamples[i];
+          }
+          const rms = Math.sqrt(sumSq / floatSamples.length);
+          if (rms > 0.005) {
+            this.agentSpeaking = true;
+            this.orb.setAgentSpeaking(true);
+            const spk = document.getElementById('speaker-status');
+            if (spk) spk.innerText = `${this.activeAgentName} Speaking`;
+            const stTTS = document.getElementById('stage-tts-speaking');
+            if (stTTS) stTTS.innerText = 'Speaking (24kHz)';
+          } else if (this.agentSpeaking && (!this.audio.activeSources || this.audio.activeSources.length === 0)) {
+            this.agentSpeaking = false;
+            this.orb.setAgentSpeaking(false);
+            const spk = document.getElementById('speaker-status');
+            if (spk) spk.innerText = `Listening (${this.activeAgentName} ready)`;
+            const stTTS = document.getElementById('stage-tts-speaking');
+            if (stTTS) stTTS.innerText = 'Idle';
+          }
           this.audio.playChunk(floatSamples);
         };
 
@@ -1434,6 +1799,14 @@ STUDIO_HTML = r"""<!DOCTYPE html>
         };
 
         this.socket.onMetadata = (meta) => {
+          if (meta.event === 'session_started') {
+            this.activeSessionId = meta.session_id;
+          }
+          if (meta.event === 'user_transcript' && meta.text) {
+            this.updateUserLiveBubble(meta.text, true);
+            const stageTr = document.getElementById('stage-transcript');
+            if (stageTr) stageTr.innerText = meta.text.slice(0, 32);
+          }
           if (meta.event === 'barge_in') {
             this.bargeIns++;
             this.currentAgentBubble = null;
@@ -1458,10 +1831,13 @@ STUDIO_HTML = r"""<!DOCTYPE html>
       async boot() {
         this.activePersona = 'indian_pro';
         this.activeAgentName = 'Aarav';
-        this.activeNeuralVoice = 'en-IN-PrabhatNeural';
+        this.activeNeuralVoice = 'aarav_colloquial';
         this.activeVoice = 'NATM0.pt';
         this.activeCharacter = 'Professional';
+        this.clonedVoices = [];
+        this.startMetricsPolling();
         await this.loadPersonas();
+        await this.loadClonedVoices();
       }
 
       async loadPersonas() {
@@ -1475,37 +1851,422 @@ STUDIO_HTML = r"""<!DOCTYPE html>
         }
       }
 
+      async loadClonedVoices() {
+        try {
+          const res = await fetch('/v1/voices/cloned');
+          const data = await res.json();
+          this.clonedVoices = data.cloned_voices || [];
+          this.populateClonedVoiceOptions();
+        } catch (e) {
+          console.warn('Failed loading cloned voices:', e);
+        }
+      }
+
+      populateClonedVoiceOptions() {
+        const optgroup = document.getElementById('optgroup-cloned-voices');
+        if (!optgroup) return;
+        optgroup.innerHTML = '';
+        if (!this.clonedVoices || this.clonedVoices.length === 0) {
+          const opt = document.createElement('option');
+          opt.value = '';
+          opt.disabled = true;
+          opt.innerText = 'No cloned voices yet (Click + Clone)';
+          optgroup.appendChild(opt);
+          return;
+        }
+        for (const cv of this.clonedVoices) {
+          const opt = document.createElement('option');
+          opt.value = cv.id;
+          opt.innerText = `🧬 ${cv.name} (${cv.gender || 'Custom'})`;
+          optgroup.appendChild(opt);
+        }
+      }
+
       selectAgentPreset(presetId) {
-        this.activePersona = 'indian_pro';
+        this.activePersona = presetId || 'indian_pro';
+        const btnAarav = document.getElementById('btn-agent-aarav');
+        const btnPriya = document.getElementById('btn-agent-priya');
+        if (btnAarav) btnAarav.classList.toggle('active', this.activePersona === 'indian_pro');
+        if (btnPriya) btnPriya.classList.toggle('active', this.activePersona === 'indian_priya');
         this.populateCustomizer();
       }
 
       populateCustomizer() {
-        const p = this.personas.find(item => item.id === 'indian_pro') || this.personas[0];
-        if (!p) return;
+        const isPriya = this.activePersona === 'indian_priya';
+        let p = this.personas.find(item => item.id === this.activePersona);
+        if (!p) {
+          if (isPriya) {
+            p = {
+              id: 'indian_priya',
+              name: 'Priya (Colloquial Indian English • Female)',
+              character: 'Warm',
+              neural_voice: 'priya_colloquial',
+              voice_prompt: 'NATF0.pt',
+              description: 'Warm, bright, empathetic, and colloquial Indian English speaker.',
+              text_prompt: "You are Priya, a warm, articulate Indian English voice assistant.\nAlways speak with a natural, colloquial Indian English cadence.\nUse short, conversational 1-2 sentence replies with natural idioms like 'Haanji', 'Sure thing', 'Tell me'.",
+            };
+          } else {
+            p = {
+              id: 'indian_pro',
+              name: 'Aarav (Colloquial Indian English • Male)',
+              character: 'Professional',
+              neural_voice: 'aarav_colloquial',
+              voice_prompt: 'NATM0.pt',
+              description: 'Articulate, natural, conversational Indian English speaker with relaxed cadence.',
+              text_prompt: "You are Aarav, an articulate Indian English voice assistant.\nAlways speak with a natural, colloquial Indian English cadence.\nUse short, conversational 1-2 sentence replies with natural idioms like 'Haanji', 'Got it', 'Tell me'.",
+            };
+          }
+        }
 
-        this.activeAgentName = 'Aarav';
-        this.activeCharacter = 'Professional';
-        this.activeNeuralVoice = 'en-IN-PrabhatNeural';
-        this.activeVoice = 'NATM0.pt';
+        this.activeAgentName = isPriya ? 'Priya' : 'Aarav';
+        this.activeCharacter = p.character || (isPriya ? 'Warm' : 'Professional');
+        this.activeNeuralVoice = isPriya ? 'priya_colloquial' : (p.neural_voice || 'aarav_colloquial');
+        this.activeVoice = isPriya ? 'NATF0.pt' : (p.voice_prompt || 'NATM0.pt');
 
         const badge = document.getElementById('active-agent-badge');
-        if (badge) badge.innerText = 'Aarav';
+        if (badge) badge.innerText = this.activeAgentName;
+
+        const profileName = document.getElementById('profile-agent-name');
+        if (profileName) profileName.innerText = this.activeAgentName;
+
+        const profileDesc = document.getElementById('profile-agent-desc');
+        if (profileDesc) profileDesc.innerText = p.description || `${this.activeAgentName} • Colloquial Indian English Voice.`;
+
+        const profileMeta = document.getElementById('profile-agent-meta');
+        if (profileMeta) profileMeta.innerText = `${this.activeNeuralVoice} (Kokoro 24 kHz)`;
 
         const neuralBadge = document.getElementById('active-neural-voice-badge');
-        if (neuralBadge) neuralBadge.innerText = 'en-IN-PrabhatNeural';
+        if (neuralBadge) neuralBadge.innerText = this.activeNeuralVoice;
+
+        const profileBadge = document.getElementById('profile-agent-badge');
+        if (profileBadge) profileBadge.innerText = isPriya ? 'Colloquial Kokoro Neural (Female)' : 'Colloquial Kokoro Neural (Male)';
+
+        const toneSelect = document.getElementById('cfg-voice-tone');
+        if (toneSelect) toneSelect.value = isPriya ? 'Warm & Empathetic' : 'Natural & Articulate';
 
         const nameInput = document.getElementById('cfg-agent-name');
-        if (nameInput) nameInput.value = p.name || 'Aarav (Indian English • Articulate & Natural)';
+        if (nameInput) nameInput.value = p.name || `${this.activeAgentName} (Colloquial Indian English)`;
 
-        const voiceInput = document.getElementById('cfg-neural-voice');
-        if (voiceInput) voiceInput.value = 'en-IN-PrabhatNeural';
+        const voiceSelect = document.getElementById('cfg-neural-voice');
+        if (voiceSelect) voiceSelect.value = this.activeNeuralVoice;
+
+        const callFlowSelect = document.getElementById('cfg-call-flow');
+        if (callFlowSelect) callFlowSelect.value = this.activeCallFlow;
 
         const promptArea = document.getElementById('cfg-system-prompt');
-        if (promptArea && p.text_prompt) promptArea.value = p.text_prompt;
+        if (promptArea) {
+          promptArea.value = this.getCallFlowPrompt(this.activeAgentName, this.activeCallFlow);
+        }
 
         const initialAuthor = document.getElementById('initial-agent-author');
-        if (initialAuthor && !this.isConnected) initialAuthor.innerText = 'Aarav';
+        if (initialAuthor && !this.isConnected) initialAuthor.innerText = this.activeAgentName;
+
+        const speakerStatus = document.getElementById('speaker-status');
+        if (speakerStatus && !this.isConnected) {
+          speakerStatus.innerText = `Ready to Speak (${this.activeAgentName})`;
+        }
+
+        const callBtnText = document.getElementById('call-btn-text');
+        if (callBtnText && !this.isConnected) {
+          callBtnText.innerText = `Start Call with ${this.activeAgentName}`;
+        }
+      }
+
+      onNeuralVoiceChange() {
+        const select = document.getElementById('cfg-neural-voice');
+        if (!select) return;
+        const val = select.value;
+        if (!val) return;
+        this.activeNeuralVoice = val;
+
+        // Check if cloned voice
+        const cloned = (this.clonedVoices || []).find(v => v.id === val);
+        if (cloned) {
+          this.activeAgentName = cloned.name;
+          this.activeCharacter = cloned.gender === 'Female' ? 'Warm & Empathetic' : 'Natural & Articulate';
+          const nameInput = document.getElementById('cfg-agent-name');
+          if (nameInput) nameInput.value = `${cloned.name} (Cloned Voice)`;
+          const toneSelect = document.getElementById('cfg-voice-tone');
+          if (toneSelect) toneSelect.value = this.activeCharacter;
+          const badge = document.getElementById('active-agent-badge');
+          if (badge) badge.innerText = cloned.name;
+          const profileName = document.getElementById('profile-agent-name');
+          if (profileName) profileName.innerText = cloned.name;
+          const profileBadge = document.getElementById('profile-agent-badge');
+          if (profileBadge) profileBadge.innerText = `Cloned Neural Voice (${cloned.gender || 'Custom'})`;
+          const profileDesc = document.getElementById('profile-agent-desc');
+          if (profileDesc) profileDesc.innerText = `Custom zero-shot neural clone (${cloned.f0_pitch ? Math.round(cloned.f0_pitch) + 'Hz' : 'Acoustic Latent'}).`;
+          const profileMeta = document.getElementById('profile-agent-meta');
+          if (profileMeta) profileMeta.innerText = `${val} (Kokoro 24 kHz)`;
+          const speakerStatus = document.getElementById('speaker-status');
+          if (speakerStatus && !this.isConnected) speakerStatus.innerText = `Ready to Speak (${cloned.name})`;
+          const callBtnText = document.getElementById('call-btn-text');
+          if (callBtnText && !this.isConnected) callBtnText.innerText = `Start Call with ${cloned.name}`;
+          const promptArea = document.getElementById('cfg-system-prompt');
+          if (promptArea) promptArea.value = this.getCallFlowPrompt(cloned.name, this.activeCallFlow);
+          return;
+        }
+
+        const isPriya = val.includes('priya') || val.includes('ananya') || val.startsWith('af_') || val.startsWith('hf_');
+        this.activeAgentName = isPriya ? 'Priya' : 'Aarav';
+        this.activeCharacter = isPriya ? 'Warm & Empathetic' : 'Natural & Articulate';
+        
+        const toneSelect = document.getElementById('cfg-voice-tone');
+        if (toneSelect) toneSelect.value = this.activeCharacter;
+        const nameInput = document.getElementById('cfg-agent-name');
+        if (nameInput) nameInput.value = `${this.activeAgentName} (Colloquial Indian English)`;
+
+        const badge = document.getElementById('active-agent-badge');
+        if (badge) badge.innerText = this.activeAgentName;
+        const profileName = document.getElementById('profile-agent-name');
+        if (profileName) profileName.innerText = this.activeAgentName;
+        const profileBadge = document.getElementById('profile-agent-badge');
+        if (profileBadge) profileBadge.innerText = isPriya ? 'Neural Voice (Female)' : 'Neural Voice (Male)';
+        const profileMeta = document.getElementById('profile-agent-meta');
+        if (profileMeta) profileMeta.innerText = `${val} (Kokoro 24 kHz)`;
+
+        const btnAarav = document.getElementById('btn-agent-aarav');
+        const btnPriya = document.getElementById('btn-agent-priya');
+        if (btnAarav) btnAarav.classList.toggle('active', !isPriya);
+        if (btnPriya) btnPriya.classList.toggle('active', isPriya);
+
+        const speakerStatus = document.getElementById('speaker-status');
+        if (speakerStatus && !this.isConnected) speakerStatus.innerText = `Ready to Speak (${this.activeAgentName})`;
+        const callBtnText = document.getElementById('call-btn-text');
+        if (callBtnText && !this.isConnected) callBtnText.innerText = `Start Call with ${this.activeAgentName}`;
+        const promptArea = document.getElementById('cfg-system-prompt');
+        if (promptArea) promptArea.value = this.getCallFlowPrompt(this.activeAgentName, this.activeCallFlow);
+      }
+
+      onVoiceToneChange() {
+        const select = document.getElementById('cfg-voice-tone');
+        if (!select) return;
+        this.activeCharacter = select.value;
+      }
+
+      // Voice Cloning Modal Controllers
+      openCloneModal() {
+        const modal = document.getElementById('voice-clone-modal');
+        if (modal) modal.classList.add('active');
+        this.renderClonedVoicesManager();
+      }
+
+      closeCloneModal() {
+        const modal = document.getElementById('voice-clone-modal');
+        if (modal) modal.classList.remove('active');
+        this.stopCloneRecord(true);
+      }
+
+      switchCloneTab(tab) {
+        document.getElementById('clone-tab-record').style.display = tab === 'record' ? 'block' : 'none';
+        document.getElementById('clone-tab-upload').style.display = tab === 'upload' ? 'block' : 'none';
+        document.getElementById('btn-tab-record').classList.toggle('active', tab === 'record');
+        document.getElementById('btn-tab-upload').classList.toggle('active', tab === 'upload');
+      }
+
+      async toggleCloneRecord() {
+        const btn = document.getElementById('btn-start-record');
+        if (btn.classList.contains('recording')) {
+          this.stopCloneRecord();
+        } else {
+          await this.startCloneRecord();
+        }
+      }
+
+      async startCloneRecord() {
+        try {
+          const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+          this.cloneMediaRecorder = new MediaRecorder(stream);
+          this.cloneAudioChunks = [];
+          this.cloneMediaRecorder.ondataavailable = (e) => {
+            if (e.data.size > 0) this.cloneAudioChunks.push(e.data);
+          };
+
+          this.cloneMediaRecorder.onstop = () => {
+            const mime = (this.cloneMediaRecorder && this.cloneMediaRecorder.mimeType) || 'audio/webm';
+            const blob = new Blob(this.cloneAudioChunks, { type: mime });
+            this.recordedCloneBlob = blob;
+            const audioUrl = URL.createObjectURL(blob);
+            const preview = document.getElementById('clone-audio-preview');
+            preview.src = audioUrl;
+            preview.style.display = 'block';
+            document.getElementById('btn-submit-clone').disabled = false;
+            document.getElementById('rec-prompt-status').innerText = 'Audio recorded! Click button below to create clone.';
+            stream.getTracks().forEach(t => t.stop());
+          };
+
+          this.cloneMediaRecorder.start();
+          document.getElementById('btn-start-record').classList.add('recording');
+          document.getElementById('rec-prompt-status').innerText = 'Recording... Speak clearly into microphone.';
+
+          let timeLeft = 8;
+          const timerEl = document.getElementById('clone-timer-text');
+          timerEl.innerText = `00:0${timeLeft}`;
+          clearInterval(this.cloneTimerInterval);
+          this.cloneTimerInterval = setInterval(() => {
+            timeLeft--;
+            timerEl.innerText = `00:0${timeLeft}`;
+            if (timeLeft <= 0) {
+              clearInterval(this.cloneTimerInterval);
+              this.stopCloneRecord();
+            }
+          }, 1000);
+        } catch (e) {
+          alert('Microphone access required for voice cloning: ' + e.message);
+        }
+      }
+
+      stopCloneRecord(cancel = false) {
+        clearInterval(this.cloneTimerInterval);
+        const btn = document.getElementById('btn-start-record');
+        if (btn) btn.classList.remove('recording');
+        if (this.cloneMediaRecorder && this.cloneMediaRecorder.state === 'recording') {
+          this.cloneMediaRecorder.stop();
+        }
+        if (cancel) {
+          this.recordedCloneBlob = null;
+        }
+      }
+
+      onCloneFileUpload(event) {
+        const file = event.target.files[0];
+        if (!file) return;
+        this.uploadedCloneFile = file;
+        const audioUrl = URL.createObjectURL(file);
+        const preview = document.getElementById('upload-audio-preview');
+        preview.src = audioUrl;
+        preview.style.display = 'block';
+        document.getElementById('btn-submit-clone').disabled = false;
+        document.getElementById('upload-file-name').innerText = `${file.name} (${Math.round(file.size / 1024)} KB)`;
+      }
+
+      async submitVoiceClone() {
+        const nameInput = document.getElementById('clone-voice-name');
+        const voiceName = (nameInput ? nameInput.value.trim() : '') || 'My Voice';
+        const genderSelect = document.getElementById('clone-voice-gender');
+        const gender = genderSelect ? genderSelect.value : 'auto';
+
+        let audioFile = this.recordedCloneBlob || this.uploadedCloneFile;
+        if (!audioFile) {
+          alert('Please record microphone audio or select an audio file first.');
+          return;
+        }
+
+        const submitBtn = document.getElementById('btn-submit-clone');
+        submitBtn.disabled = true;
+        submitBtn.innerText = 'Extracting Acoustic Vectors...';
+
+        const fileName = audioFile.name || (audioFile.type && audioFile.type.includes('webm') ? 'recorded_sample.webm' : 'recorded_sample.wav');
+        const formData = new FormData();
+        formData.append('audio', audioFile, fileName);
+        formData.append('voice_name', voiceName);
+        if (gender !== 'auto') formData.append('gender', gender);
+
+        try {
+          const res = await fetch('/v1/voices/clone', {
+            method: 'POST',
+            body: formData,
+          });
+          const data = await res.json();
+          if (data.status === 'cloned') {
+            await this.loadClonedVoices();
+            // Automatically select the new cloned voice!
+            const select = document.getElementById('cfg-neural-voice');
+            if (select) {
+              select.value = data.voice.id;
+              this.onNeuralVoiceChange();
+            }
+            this.closeCloneModal();
+            const feedback = document.getElementById('agent-save-feedback');
+            if (feedback) {
+              feedback.innerText = `Voice Cloned: ${voiceName}!`;
+              feedback.classList.add('show');
+              setTimeout(() => feedback.classList.remove('show'), 3500);
+            }
+          } else {
+            alert('Voice cloning failed: ' + (data.detail || JSON.stringify(data)));
+          }
+        } catch (e) {
+          alert('Error during voice cloning: ' + e.message);
+        } finally {
+          submitBtn.disabled = false;
+          submitBtn.innerText = '🧬 Create & Activate Cloned Voice';
+        }
+      }
+
+      renderClonedVoicesManager() {
+        const list = document.getElementById('cloned-voices-list');
+        if (!list) return;
+        list.innerHTML = '';
+        if (!this.clonedVoices || this.clonedVoices.length === 0) {
+          list.innerHTML = '<div style="font-size:12px; color:var(--text-secondary); text-align:center; padding:12px;">No custom cloned voices created yet.</div>';
+          return;
+        }
+        for (const cv of this.clonedVoices) {
+          const item = document.createElement('div');
+          item.className = 'cloned-voice-item';
+          item.innerHTML = `
+            <div>
+              <div style="font-weight:600; font-size:12.5px; color:#fff;">🧬 ${cv.name}</div>
+              <div style="font-size:10.5px; color:var(--text-secondary); font-family:var(--font-mono);">${cv.gender} • Pitch: ${cv.f0_pitch ? Math.round(cv.f0_pitch) + ' Hz' : 'Auto'}</div>
+            </div>
+            <div style="display:flex; gap:6px;">
+              <button class="segmented-btn" style="padding:4px 8px; font-size:11px;" onclick="window.studioApp.activateClonedVoice('${cv.id}')">Select</button>
+              <button class="segmented-btn" style="padding:4px 8px; font-size:11px; color:var(--apple-red);" onclick="window.studioApp.deleteClonedVoice('${cv.id}')">✕</button>
+            </div>
+          `;
+          list.appendChild(item);
+        }
+      }
+
+      activateClonedVoice(voiceId) {
+        const select = document.getElementById('cfg-neural-voice');
+        if (select) {
+          select.value = voiceId;
+          this.onNeuralVoiceChange();
+        }
+        this.closeCloneModal();
+      }
+
+      async deleteClonedVoice(voiceId) {
+        if (!confirm('Are you sure you want to delete this cloned voice?')) return;
+        try {
+          await fetch(`/v1/voices/cloned/${encodeURIComponent(voiceId)}`, { method: 'DELETE' });
+          await this.loadClonedVoices();
+          this.renderClonedVoicesManager();
+        } catch (e) {
+          alert('Failed to delete voice: ' + e.message);
+        }
+      }
+
+      getCallFlowPrompt(agentName, role) {
+        const prompts = {
+          conversational_companion: `AGENT IDENTITY:\nYou are ${agentName}, a friendly, bright, and witty conversational partner from India chatting on a real-time voice call. You speak with natural warmth, relatable humor, and an authentic colloquial Indian English rhythm.\n\nCORE VOICE CONVERSATION RULES:\n1. Colloquial Indian English: Speak naturally with short sentences (10 to 18 words), natural contractions, and subtle discourse markers ('actually', 'na', 'simple, na?').\n2. Plain spoken text ONLY: NO markdown, NO asterisks, NO bullets, NO emojis.\n3. Zero robotic phrases: Never say 'How can I assist you today'.\n\nCALL FLOW STAGES:\n1. GREETING & PRESENCE: Acknowledge caller warmly.\n2. INTENT DISCOVERY: Listen to what caller brings up.\n3. CONCISE RESPONSE: 1 to 2 spoken sentences (under 30 words).\n4. CHECK-IN: Casual check ('Makes sense, na?').\n5. WARM WRAP-UP: End on a friendly note.`,
+          customer_support: `AGENT IDENTITY:\nYou are ${agentName}, a helpful and empathetic customer resolution specialist from India. You speak polite, clear, colloquial Indian English. You remain calm, patient, and completely solution-oriented.\n\nCORE VOICE CONVERSATION RULES:\n1. Concise Spoken Delivery: 1 to 2 short sentences per turn.\n2. Ban robotic jargon: Address customer issues directly with natural human warmth.\n3. Plain spoken words only.\n\nCALL FLOW STAGES:\n1. GREETING: Warmly welcome caller and ask what issue they need help with.\n2. ISSUE CLARIFICATION: Acknowledge their situation with genuine care.\n3. DIRECT SOLUTION: Provide the fix or next step in 1–2 sentences.\n4. VERIFICATION: 'Does that solve it for you, or should we check anything else?'\n5. POLITE CLOSING: Wish them a wonderful day.`,
+          tech_specialist: `AGENT IDENTITY:\nYou are ${agentName}, an articulate technology and AI engineer from India. You explain complex machine learning, software, and UPI/fintech concepts in simple, relatable conversational terms.\n\nCORE VOICE CONVERSATION RULES:\n1. Spoken intuition first: Explain core concept using a real-world analogy in 2 sentences.\n2. Plain spoken text only: NO markdown or bullet lists.\n3. Natural Indian English rhythm.\n\nCALL FLOW STAGES:\n1. GREETING: Connect with technical enthusiasm.\n2. CONCEPT INTUITION: 2-sentence relatable analogy.\n3. PRACTICAL APPLICATION: Practical example (UPI, Bangalore tech startups).\n4. DEPTH CHECK: Ask if they want technical depth or high-level.\n5. CONCLUDING INSIGHT: Clean summary.`,
+          inbound_concierge: `AGENT IDENTITY:\nYou are ${agentName}, a gracious and organized front-desk concierge from India. You handle appointment scheduling, service inquiries, and reservations with prompt, friendly efficiency.\n\nCORE VOICE CONVERSATION RULES:\n1. Clear, organized spoken delivery.\n2. Plain spoken text only.\n3. One question at a time.\n\nCALL FLOW STAGES:\n1. WELCOME: Welcome caller cheerfully and offer assistance.\n2. NEED ASSESSMENT: Capture date, time, and service requirement step by step.\n3. CONFIRMATION: Read back key details crisply.\n4. NEXT STEP: 'I will send a confirmation SMS to your number, okay?'\n5. GRACEFUL SIGN-OFF: Thank them warmly.`
+        };
+        return prompts[role] || prompts.conversational_companion;
+      }
+
+      onCallFlowChange() {
+        const select = document.getElementById('cfg-call-flow');
+        if (!select) return;
+        this.activeCallFlow = select.value;
+        const promptArea = document.getElementById('cfg-system-prompt');
+        if (promptArea) {
+          promptArea.value = this.getCallFlowPrompt(this.activeAgentName, this.activeCallFlow);
+        }
+        const goalEl = document.getElementById('ctx-caller-goal');
+        if (goalEl) {
+          const titles = {
+            conversational_companion: 'Conversational',
+            customer_support: 'Support & Resolution',
+            tech_specialist: 'Tech & AI Specialist',
+            inbound_concierge: 'Booking & Concierge'
+          };
+          goalEl.innerText = titles[this.activeCallFlow] || 'Conversational';
+        }
       }
 
       async saveActiveAgent() {
@@ -1515,30 +2276,27 @@ STUDIO_HTML = r"""<!DOCTYPE html>
         const headerSaveText = document.getElementById('btn-header-save-text');
 
         const updatedPersona = {
-          id: 'indian_pro',
-          name: (nameInput ? nameInput.value.trim() : '') || 'Aarav (Indian English • Articulate & Natural)',
-          description: 'Natural, articulate, and crystal-clear Indian English conversational AI voice agent.',
+          id: this.activePersona,
+          name: (nameInput ? nameInput.value.trim() : '') || `${this.activeAgentName} (Colloquial Indian English)`,
+          description: `Natural, articulate, and colloquial Indian English conversational voice agent (${this.activeAgentName}).`,
           accent: 'Indian English',
-          character: 'Professional',
-          voice_prompt: 'NATM0.pt',
-          neural_voice: 'en-IN-PrabhatNeural',
+          character: this.activeCharacter,
+          voice_prompt: this.activeVoice,
+          neural_voice: this.activeNeuralVoice,
           text_prompt: promptArea ? promptArea.value.trim() : '',
         };
 
         try {
-          const res = await fetch('/v1/agents/indian_pro', {
+          const res = await fetch(`/v1/agents/${encodeURIComponent(this.activePersona)}`, {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(updatedPersona)
           });
           const result = await res.json();
           if (result.agent) {
-            const idx = this.personas.findIndex(p => p.id === 'indian_pro');
+            const idx = this.personas.findIndex(p => p.id === this.activePersona);
             if (idx >= 0) this.personas[idx] = result.agent;
             else this.personas.push(result.agent);
-
-            this.activeAgentName = 'Aarav';
-            this.activeNeuralVoice = 'en-IN-PrabhatNeural';
 
             // Visual feedback on Top-Right Header Save Button with color change
             if (headerSaveBtn) {
@@ -1568,6 +2326,45 @@ STUDIO_HTML = r"""<!DOCTYPE html>
         document.getElementById('status-text').innerText = text;
       }
 
+      togglePttMode() {
+        this.isPttMode = !this.isPttMode;
+        const btn = document.getElementById('btn-ptt-toggle');
+        if (btn) {
+          btn.style.background = this.isPttMode ? 'var(--apple-blue)' : 'var(--bg-pill)';
+          btn.style.color = this.isPttMode ? '#fff' : 'var(--text-primary)';
+          btn.innerText = this.isPttMode ? 'PTT ON' : 'PTT';
+        }
+        if (this.audio) {
+          this.audio.isMuted = this.isPttMode;
+        }
+        const spk = document.getElementById('speaker-status');
+        if (spk) spk.innerText = this.isPttMode ? 'Push & Hold Space to Speak' : `Listening (${this.activeAgentName} ready)`;
+      }
+
+      setupPttListeners() {
+        let spacePressed = false;
+        window.addEventListener('keydown', (e) => {
+          if (!this.isPttMode || !this.isConnected) return;
+          if (e.code === 'Space' && document.activeElement.id !== 'user-text-input' && !spacePressed) {
+            spacePressed = true;
+            if (this.audio) this.audio.isMuted = false;
+            const spk = document.getElementById('speaker-status');
+            if (spk) spk.innerText = 'Listening (Space Held)...';
+            e.preventDefault();
+          }
+        });
+        window.addEventListener('keyup', (e) => {
+          if (!this.isPttMode || !this.isConnected) return;
+          if (e.code === 'Space' && document.activeElement.id !== 'user-text-input') {
+            spacePressed = false;
+            if (this.audio) this.audio.isMuted = true;
+            const spk = document.getElementById('speaker-status');
+            if (spk) spk.innerText = 'Push & Hold Space to Speak';
+            e.preventDefault();
+          }
+        });
+      }
+
       async toggleCall() {
         if (this.isConnected) {
           this.disconnect();
@@ -1578,6 +2375,8 @@ STUDIO_HTML = r"""<!DOCTYPE html>
 
       handleSpeechRecognized(text, isFinal) {
         if (!this.isConnected) return;
+        // Suppress laptop speaker acoustic echo loop while agent is speaking
+        if (this.agentSpeaking) return;
         this.updateUserLiveBubble(text, isFinal);
 
         // Live Context Tracking (Principles 5 & 11)
@@ -1593,17 +2392,11 @@ STUDIO_HTML = r"""<!DOCTYPE html>
           if (el) el.innerText = goalMatch[1].slice(0, 24);
         }
 
-        if (isFinal) {
-          // Immediate barge-in cutoff & start fresh turn
-          this.currentAgentBubble = null;
-          this.audio.stopPlayback();
-          this.agentSpeaking = false;
-          this.orb.setAgentSpeaking(false);
-          document.getElementById('speaker-status').innerText = 'Processing speech...';
+        const stageTr = document.getElementById('stage-transcript');
+        if (stageTr) stageTr.innerText = text.slice(0, 32);
 
-          // Send recognized utterance as 0x02 text packet over WebSocket
-          this.socket.sendTextMessage(text);
-        }
+        // Raw audio frames are streamed live to the backend GPU Faster-Whisper.
+        // We do not send duplicate text messages here to prevent race conditions or echo cancellation issues.
       }
 
       updateUserLiveBubble(text, isFinal) {
@@ -1635,7 +2428,8 @@ STUDIO_HTML = r"""<!DOCTYPE html>
           await this.audio.startMicrophone(
             (frame) => {
               this.framesIn++;
-              document.getElementById('telemetry-frames-in').innerText = this.framesIn;
+              const elIn = document.getElementById('telemetry-frames-in');
+              if (elIn) elIn.innerText = this.framesIn;
               this.socket.sendAudioFrame(frame);
             },
             (energy) => {
@@ -1658,7 +2452,12 @@ STUDIO_HTML = r"""<!DOCTYPE html>
         this.recognizer.start();
 
         const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-        const url = `${proto}//${window.location.host}/v1/realtime?persona_id=${encodeURIComponent(this.activePersona)}&neural_voice=${encodeURIComponent(this.activeNeuralVoice || 'en-IN-PrabhatNeural')}&voice_prompt=${encodeURIComponent(this.activeVoice || 'NATM0.pt')}&accent=Indian%20English&character=${encodeURIComponent(this.activeCharacter || 'Professional')}`;
+        const fallbackVoice = this.activePersona === 'indian_priya' ? 'priya_colloquial' : 'aarav_colloquial';
+        const fallbackPrompt = this.activePersona === 'indian_priya' ? 'NATF0.pt' : 'NATM0.pt';
+        const fallbackChar = this.activePersona === 'indian_priya' ? 'Warm' : 'Professional';
+        const promptArea = document.getElementById('cfg-system-prompt');
+        const customPrompt = promptArea ? promptArea.value.trim() : '';
+        const url = `${proto}//${window.location.host}/v1/realtime?persona_id=${encodeURIComponent(this.activePersona)}&neural_voice=${encodeURIComponent(this.activeNeuralVoice || fallbackVoice)}&voice_prompt=${encodeURIComponent(this.activeVoice || fallbackPrompt)}&accent=Indian%20English&character=${encodeURIComponent(this.activeCharacter || fallbackChar)}&call_flow=${encodeURIComponent(this.activeCallFlow || 'conversational_companion')}&text_prompt=${encodeURIComponent(customPrompt)}`;
         this.socket.connect(url);
       }
 
@@ -1668,11 +2467,22 @@ STUDIO_HTML = r"""<!DOCTYPE html>
         btn.classList.toggle('active', isMuted);
       }
 
-      sendTextMessage() {
+      async sendTextMessage() {
         const input = document.getElementById('user-text-input');
         const text = input.value.trim();
         if (!text) return;
         input.value = '';
+
+        // Resume or initialize audio context on user gesture
+        if (!this.audio.audioCtx) {
+          try { await this.audio.initialize(); } catch (e) {}
+        } else if (this.audio.audioCtx.state === 'suspended') {
+          try { await this.audio.audioCtx.resume(); } catch (e) {}
+        }
+
+        if (!this.isConnected) {
+          await this.startCall();
+        }
 
         this.currentAgentBubble = null;
         this.appendMessage('user', text);
@@ -1711,8 +2521,93 @@ STUDIO_HTML = r"""<!DOCTYPE html>
             transcript.appendChild(row);
             this.currentAgentBubble = row.querySelector('.bubble');
           }
-          this.currentAgentBubble.innerText += token;
+          const currentText = this.currentAgentBubble.innerText;
+          if (currentText && !currentText.endsWith(' ') && !token.startsWith(' ') && !/^[.,!?;:'")\]]/.test(token)) {
+            this.currentAgentBubble.innerText += ' ' + token;
+          } else {
+            this.currentAgentBubble.innerText += token;
+          }
           transcript.scrollTop = transcript.scrollHeight;
+        }
+      }
+
+      startMetricsPolling() {
+        setInterval(async () => {
+          try {
+            const res = await fetch('/metrics');
+            if (res.ok) {
+              const data = await res.json();
+              const elStt = document.getElementById('telemetry-stt-ms');
+              const elLlm = document.getElementById('telemetry-llm-ttft');
+              const elTts = document.getElementById('telemetry-tts-ttfa');
+              const elTotal = document.getElementById('telemetry-total-ttfa');
+              const elBarge = document.getElementById('telemetry-barge-in');
+              const elWorker = document.getElementById('telemetry-worker');
+
+              if (elStt && data.stt_ms !== undefined) elStt.innerText = `${data.stt_ms} ms`;
+              if (elLlm && data.llm_ttft_ms !== undefined) elLlm.innerText = `${data.llm_ttft_ms} ms`;
+              if (elTts && data.tts_ttfa_ms !== undefined) elTts.innerText = `${data.tts_ttfa_ms} ms`;
+              if (elTotal && data.total_ttfa_ms !== undefined) elTotal.innerText = `${data.total_ttfa_ms} ms`;
+              if (elBarge && data.total_barge_in_events !== undefined) elBarge.innerText = data.total_barge_in_events;
+              if (elWorker && data.worker_type) elWorker.innerText = data.worker_type;
+
+              if (data.gpu) {
+                const g = data.gpu;
+                const devBadge = document.getElementById('gpu-device-badge');
+                if (devBadge && g.device_name) devBadge.innerText = g.device_name.replace('NVIDIA GeForce ', '');
+                const vramEl = document.getElementById('gpu-vram-text');
+                if (vramEl && g.vram_used_mb !== undefined) {
+                  vramEl.innerText = `${Math.round(g.vram_used_mb)} / ${Math.round(g.vram_total_mb)} MB`;
+                }
+                const tuEl = document.getElementById('gpu-temp-util');
+                if (tuEl && g.temperature_c !== undefined) {
+                  tuEl.innerText = `${g.temperature_c || '--'}°C / ${g.gpu_util_pct || 0}%`;
+                }
+              }
+
+              // Update live stage indicators
+              const stHeard = document.getElementById('stage-heard-speech');
+              if (stHeard) stHeard.innerText = this.audio && !this.audio.isMuted ? (this.framesIn > 0 ? 'Active Stream' : 'Listening') : 'Muted';
+              const stLLM = document.getElementById('stage-llm-thinking');
+              if (stLLM) stLLM.innerText = data.llm_ttft_ms ? `${data.llm_ttft_ms} ms TTFT` : 'Idle';
+              const stTTS = document.getElementById('stage-tts-speaking');
+              if (stTTS) stTTS.innerText = this.agentSpeaking ? 'Speaking (24kHz)' : 'Idle';
+            }
+          } catch (e) {}
+        }, 1500);
+      }
+
+      async toggleAudioBypass() {
+        const btn = document.getElementById('btn-toggle-bypass');
+        if (!this.activeSessionId) {
+          this.audioBypass = !this.audioBypass;
+          btn.innerText = this.audioBypass ? 'Clean: OFF' : 'Clean: ON';
+          btn.classList.toggle('active', !this.audioBypass);
+          return;
+        }
+        try {
+          const res = await fetch(`/v1/audio/toggle-bypass/${this.activeSessionId}`, { method: 'POST' });
+          if (res.ok) {
+            const data = await res.json();
+            btn.innerText = data.bypass ? 'Clean: OFF' : 'Clean: ON';
+            btn.classList.toggle('active', !data.bypass);
+          }
+        } catch (e) {}
+      }
+
+      downloadRawWav() {
+        if (this.activeSessionId) {
+          window.open(`/v1/audio/raw/${this.activeSessionId}`, '_blank');
+        } else {
+          alert('Start an active call first to capture audio.');
+        }
+      }
+
+      downloadCleanWav() {
+        if (this.activeSessionId) {
+          window.open(`/v1/audio/clean/${this.activeSessionId}`, '_blank');
+        } else {
+          alert('Start an active call first to capture audio.');
         }
       }
 

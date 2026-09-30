@@ -1,0 +1,40 @@
+# Local Cascade Real-Time Voice Agent Configuration
+
+agent:
+  persona_id: "indian_pro"
+  agent_name: "Aarav"
+  language_style: "indian_english"  # Options: indian_english, plain_english
+  voice: "aarav_colloquial"          # Options: aarav_colloquial (Male), priya_colloquial (Female)
+  speaking_rate: 0.98
+
+llm:
+  backend: "ollama"
+  model: "qwen2.5:1.5b"             # Tested low-latency default (1.5B fits easily in 4 GB VRAM)
+  alternative_model: "qwen2.5:3b"   # High-quality 3B model
+  ollama_url: "http://127.0.0.1:11434"
+  temperature: 0.7
+  num_ctx: 2048
+  keep_alive: "30m"
+
+asr:
+  backend: "faster-whisper"
+  model_size: "base"                # 470ms latency on CPU int8; zero VRAM contention
+  device: "cpu"
+  compute_type: "int8"
+  language: "en"
+  beam_size: 1
+  vad_filter: true
+  initial_prompt: "artificial intelligence, machine learning, Aarav, Priya, Chennai, Bengaluru, Tamil, Hindi, cricket, Bollywood, UPI, Swiggy, Zomato, IPL"
+
+turn_detector:
+  base_silence_sec: 0.65
+  extra_silence_sec: 0.70
+  speech_rms_threshold: 0.032
+  min_speech_frames: 3
+  preroll_frames: 4
+
+tts:
+  backend: "kokoro"
+  sample_rate: 24000
+  frame_size: 1920
+  frame_interval_sec: 0.08

@@ -1,8 +1,8 @@
-# PersonaPlex Orchestration Layer (Phase 1)
+# Aarav • Real-Time Local Indian English Voice Agent
 
-An open-source, full-duplex orchestration layer for real-time speech-to-speech voice agents powered by **NVIDIA PersonaPlex** (Moshi architecture, 24 kHz, 12.5 Hz frame rate, 1,920 samples/frame). 
+A 100% open-source, full-duplex real-time conversational voice agent that speaks natural, colloquial **Indian English** like a friendly person on a phone call. Runs entirely locally on consumer hardware without any cloud APIs, external subscriptions, or proprietary keys.
 
-100% open source: zero proprietary APIs, zero paid cloud services.
+Includes an open-source orchestration gateway with a binary wire protocol (0x00–0x06), intelligent turn-taking, sub-200ms barge-in interruption handling, and an Apple-inspired developer web console (`/console`).
 
 ---
 
@@ -10,118 +10,136 @@ An open-source, full-duplex orchestration layer for real-time speech-to-speech v
 
 ```mermaid
 flowchart TD
-    Client["Browser / SIP / Telephony / CLI"] <-->|Binary WebSocket Protocol| Gateway["Orchestration Gateway (FastAPI)"]
+    Caller["User Microphone (24 kHz Full-Duplex)"] -->|Binary WebSocket Protocol| Gateway["Orchestration Gateway (FastAPI)"]
     
-    subgraph OrchestrationLayer ["Orchestration Engine"]
-        Gateway --> ProtocolHandler["Protocol Parser (0x00 - 0x06)"]
-        Gateway --> SessionManager["Session & State Machine Manager"]
-        SessionManager --> JitterBuffer["Audio Ring Buffer (1920 samples @ 24kHz)"]
-        SessionManager --> MetricsTracker["Barge-In & Telemetry Observability"]
+    subgraph LocalCascadeEngine ["Local Cascade Worker (100% Local Pipeline)"]
+        Gateway --> Cleaner["Audio Cleaner & Bandpass Filter"]
+        Cleaner --> TurnDet["Turn Detector (Silero VAD + Linguistic Extension)"]
         
-        SessionManager <--> WorkerPool["Worker Pool & Dispatcher"]
+        TurnDet -->|Resample 16 kHz| ASR["faster-whisper base (CPU int8, ~470ms)"]
+        ASR -->|Vocab Prompt Biased| LLM["Ollama Qwen2.5 1.5B / 3B (GPU RTX 3050 Ti)"]
+        
+        LLM -->|Incremental Tokens| Chunker["Clause Chunker & Indian Normalizer"]
+        Chunker -->|First Clause 4-6 Words| TTS["Kokoro-82M ONNX (CPU 24 kHz, ~400ms)"]
+        
+        TTS -->|1920 Samples @ 12.5 Hz| OutBuffer["Frame Buffer & Crossfader"]
+        OutBuffer --> Gateway
     end
     
-    subgraph WorkerTier ["PersonaPlex Worker Tier"]
-        WorkerPool <-->|Exclusive 1-Stream Lease| Worker1["PersonaPlex Worker (GPU Node 1 / Port 8998)"]
-        WorkerPool <-->|Exclusive 1-Stream Lease| Worker2["PersonaPlex Worker (GPU Node 2 / Port 8999)"]
-        WorkerPool <-->|Exclusive 1-Stream Lease| MockWorker["High-Fidelity Mock Worker (Local / CI)"]
+    Gateway --> Speaker["User Speaker (24 kHz Smooth Audio)"]
+    
+    subgraph OptionalBackend ["Alternative Workers"]
+        Gateway -.-> Mock["Mock Worker (CI Testing)"]
+        Gateway -.-> PersonaPlex["NVIDIA PersonaPlex (Optional Big-GPU Moshi Server)"]
     end
 ```
 
 ---
 
-## Technical Specifications
+## Hardware Partitioning (Designed for 4 GB VRAM Laptops)
 
-| Parameter | Specification | PersonaPlex Architectural Source |
-|:---|:---|:---|
-| **Audio Sample Rate** | `24,000 Hz` (24 kHz) | Mimi Neural Audio Codec |
-| **Audio Channels** | 1 (Mono) | Single input/output channel |
-| **Model Frame Cadence** | `12.5 Hz` | 80 ms step period |
-| **Frame Size** | `1,920 samples` | `24,000 / 12.5 = 1,920` samples (float32 / int16) |
-| **Streaming Protocol** | Binary WebSocket Framing | `0x00` Handshake, `0x01` Audio, `0x02` Text, `0x03` Control, `0x04` Metadata, `0x05` Error, `0x06` Ping |
-| **Vocal Conditioning** | 18 Preset Embeddings (`.pt`) or custom `.wav` | `NATF0-3`, `NATM0-3`, `VARF0-4`, `VARM0-4` |
-| **Behavioral Conditioning** | Plain Text wrapped with `<system>` tags | Delimited by `<system> {text} <system>` |
-| **Stream Concurrency** | 1 Stream per Worker Process | In-memory KV-cache and delay lines enforced by worker pool |
+Tested and measured on an **Intel i7-11800H (8C/16T)** with an **NVIDIA RTX 3050 Ti Laptop GPU (4,096 MiB VRAM)** and 16 GB RAM:
 
-For in-depth analysis of the official repository, weights, and model card, see [docs/personaplex-notes.md](file:///c:/Users/kisho/Desktop/orchestration_ai/docs/personaplex-notes.md).
+| Component | Engine | Hardware Slot | Memory / Latency Footprint | Why This Choice |
+| :--- | :--- | :--- | :--- | :--- |
+| **LLM** | **Qwen 2.5 1.5B / 3B (Q4)** | **GPU (NVIDIA CUDA)** | ~1.65 GB to 2.60 GB VRAM | Fast TTFT (~300-600ms stream onset), high tokens/sec (>120 tok/s), fits completely in 4 GB VRAM |
+| **ASR** | **faster-whisper (base, int8)** | **CPU (4 threads)** | 0 MB VRAM, 470 ms latency | Zero GPU VRAM contention; vocabulary prompt anchors Indian English names & tech acronyms |
+| **Turn Detector** | **Silero VAD + Heuristics** | **CPU** | < 2% CPU | 650 ms silence + 700 ms trailing-word extension prevents mid-sentence cutoff |
+| **TTS** | **Kokoro-82M ONNX** | **CPU** | 0 MB VRAM, ~400 ms TTFA | Natural phone-call prosody with dedicated Indian English colloquial voices (`aarav`, `priya`) |
+
+---
+
+## Conversational Persona: Aarav & Priya
+
+Located in `personas/aarav.md` and `personas/priya.md`:
+- **Language Style:** Natural, colloquial Indian English as spoken by educated, friendly young Indians on phone calls.
+- **Natural Discourse Markers (Used Sparingly):** *"actually"*, *"basically"*, *"no?"*, *"na"*, *"only"* (*"today only"*), *"achha"*, *"haan"*, *"simple, na?"*, *"sure sure"*, *"one minute"*, *"right, right"*.
+- **Indian Cultural & Number Conventions:** Natural references to *chai*, *Bangalore traffic*, *UPI*, *monsoon*, *IPL*, *lakh*, and *crore*.
+- **Strictly Banned Robotic Phrases:** Never says *"I understand you need support"*, *"How can I assist you today"*, *"As an AI language model"*, or *"Certainly!"*.
+- **Brevity:** Replies in 1 to 2 spoken sentences (under 35 words). Never gives textbook lectures or bulleted lists.
 
 ---
 
 ## Quickstart
 
-### 1. Installation
-
-```bash
-# Clone the repository and navigate to root
-cd orchestration_ai
-
-# Create virtual environment and install dependencies
-uv venv .venv
-uv pip install --python .venv/Scripts/python.exe -r requirements.txt
+### 1. Automated Setup (PowerShell)
+```powershell
+# Run the automated setup script to configure dependencies and pre-warm models:
+.\scripts\setup_local.ps1
 ```
 
-### 2. Run Gateway with Local Mock Workers (No GPU required)
-
-```bash
-# Start Gateway with 2 auto-spawned mock workers for local development
-.venv/Scripts/python.exe -m orchestration.cli run-gateway --host 127.0.0.1 --port 8000 --mock-workers 2
+### 2. Verify Hardware & Environment (CLI Doctor)
+```powershell
+$env:PYTHONPATH="."
+.\.venv-gpu\Scripts\python -m orchestration.cli doctor
 ```
 
-Open the **Developer Console** in your browser at:
+Output:
+```text
+[OK] Ollama Server: RUNNING on port 11434 (qwen2.5:1.5b, qwen2.5:3b)
+[OK] CUDA: AVAILABLE (GeForce RTX 3050 Ti Laptop GPU, 4096 MB VRAM)
+[OK] faster-whisper: INSTALLED (base model CPU int8, RTF ~0.15)
+[OK] Kokoro TTS: INSTALLED (24 kHz ONNX)
+CHOSEN RUNTIME: local_cascade (100% open-source local pipeline)
+```
+
+### 3. Launch Gateway & Local Cascade Voice Agent
+```powershell
+.\scripts\run_local.ps1
+```
+Then open the **Developer Web Console** in your browser:
 👉 **[http://127.0.0.1:8000/console](http://127.0.0.1:8000/console)**
 
-### 3. Connect to Official PersonaPlex on NVIDIA GPU
+---
 
-Launch the official PersonaPlex server on your GPU node:
+## Swapping Models and Voices
+
+### Change LLM Model
+In `config.yaml` or via CLI:
+```yaml
+llm:
+  model: "qwen2.5:3b"   # Switch from 1.5b to 3b for deeper reasoning
+  temperature: 0.7
+```
+
+### Switch Voices in Web Console or API
+- **Aarav (Male):** `aarav_colloquial`
+- **Priya (Female):** `priya_colloquial`
+
+Via REST API:
 ```bash
-# On GPU machine (e.g. RTX 4090 / A100):
-export HF_TOKEN=<YOUR_HUGGINGFACE_TOKEN>
+curl -X PUT http://127.0.0.1:8000/v1/agents/indian_pro \
+  -H "Content-Type: application/json" \
+  -d '{"id":"indian_pro","name":"Priya","neural_voice":"priya_colloquial","character":"Warm"}'
+```
+
+---
+
+## Automated Tests & Evaluation
+
+### 1. Fast Pytest Suite (61 tests)
+```powershell
+$env:PYTHONPATH="."
+.\.venv-gpu\Scripts\pytest
+```
+
+### 2. 15-Prompt Indian English Dialogue Evaluation
+Evaluates 15 conversational phone-call scenarios (jokes, explanations, interruptions, fragments, Hinglish):
+```powershell
+$env:PYTHONPATH="."
+.\.venv-gpu\Scripts\python scripts/eval_dialogue.py
+```
+Outputs audio WAV files and detailed scoring to `eval_out/`.
+
+---
+
+## Optional: NVIDIA PersonaPlex (Big-GPU Backend)
+
+For enterprise deployments with multi-GPU servers (RTX 4090 / A100 / H100):
+```bash
+# On remote GPU node:
 python -m moshi.server --port 8998
+
+# On Gateway node:
+python -m orchestration.cli run-gateway --worker-type personaplex --worker gpu-0:10.0.0.5:8998:0
 ```
-
-Start the orchestration gateway pointing to the GPU worker:
-```bash
-.venv/Scripts/python.exe -m orchestration.cli run-gateway --port 8000 --worker gpu-0:127.0.0.1:8998:0
-```
-
-### 4. Run a Test Voice Call via CLI
-
-```bash
-# Send test audio through the full-duplex pipeline and capture agent response
-.venv/Scripts/python.exe -m orchestration.cli test-call --persona wise_teacher --output-wav agent_reply.wav
-```
-
----
-
-## REST & WebSocket API Reference
-
-| Method | Endpoint | Description |
-|:---|:---|:---|
-| `GET` | `/healthz` | Gateway operational health and worker pool status |
-| `GET` | `/metrics` | Frame throughput, active sessions, and barge-in statistics |
-| `GET` | `/v1/agents` | Catalog of configured personas and available voice presets |
-| `POST`| `/v1/agents` | Register a new agent persona |
-| `GET` | `/v1/workers` | Worker pool utilization and node health |
-| `POST`| `/v1/workers` | Register a new worker node |
-| `GET` | `/v1/sessions` | List active full-duplex sessions |
-| `GET` | `/v1/sessions/history` | Historical session transcripts and performance metrics |
-| `WS`  | `/v1/realtime` | Full-duplex bidirectional streaming WebSocket |
-
----
-
-## Testing
-
-Run the complete test suite:
-```bash
-.venv/Scripts/python.exe -m pytest -v
-```
-
-All 30 unit, integration, and end-to-end tests cover:
-- Binary protocol wire framing and byte-level round-trips
-- 24 kHz audio buffering, RMS calculation, and 1920-sample chunking
-- Voice prompt normalization and `<system>` tag wrapping
-- PersonaPlex mock server and single-session lock verification
-- Worker pool leasing, release, and queue wakeup
-- Barge-in / interruption state transitions
-- Gateway REST routes and WebSocket streaming
-- End-to-end audio file streaming and transcript generation

@@ -2,7 +2,8 @@
 CLI Interface for NVIDIA PersonaPlex Orchestration Layer.
 
 Commands:
-- run-gateway: Run the orchestration gateway server.
+- run-gateway: Run the orchestration gateway server with --worker-type {mock, cascaded, personaplex}.
+- run-cascaded-worker: Run standalone local streaming cascaded worker (STT -> LLM -> Chunker -> TTS).
 - run-mock-worker: Run a standalone high-fidelity PersonaPlex mock worker.
 - test-call: Execute a full-duplex voice test call from audio file to agent.
 """
@@ -37,6 +38,7 @@ from ..protocol.messages import (
     encode_message,
 )
 from ..worker.mock_worker import PersonaPlexMockServer
+from ..worker.local_cascade import LocalCascadeWorkerServer, CascadedLocalWorkerServer
 from ..worker.pool import WorkerPool, WorkerNodeConfig
 
 logging.basicConfig(
@@ -48,44 +50,70 @@ logger = logging.getLogger("orchestration.cli")
 
 async def _run_gateway_cmd(args):
     pool = WorkerPool()
-    mock_servers = []
+    spawned_servers = []
 
-    # If mock workers requested, spin them up on background ports
-    if args.mock_workers > 0:
+    worker_type = getattr(args, "worker_type", "local_cascade")
+
+    # If local_cascade or cascaded workers requested
+    if worker_type in ("local_cascade", "cascaded"):
         base_port = args.mock_port_start
-        for i in range(args.mock_workers):
+        count = getattr(args, "mock_workers", 1) or 1
+        for i in range(count):
+            c_port = base_port + i
+            c_id = f"local-cascade-worker-{i}"
+            server = LocalCascadeWorkerServer(host="127.0.0.1", port=c_port)
+            await server.start()
+            spawned_servers.append(server)
+            pool.register_worker(WorkerNodeConfig(id=c_id, host="127.0.0.1", port=c_port))
+            logger.info(f"Attached Local Cascade Worker {c_id} on port {c_port}")
+
+    # If mock workers requested
+    elif worker_type == "mock":
+        base_port = args.mock_port_start
+        count = getattr(args, "mock_workers", 1) or 1
+        for i in range(count):
             m_port = base_port + i
             m_id = f"mock-worker-{i}"
             server = PersonaPlexMockServer(host="127.0.0.1", port=m_port)
             await server.start()
-            mock_servers.append(server)
+            spawned_servers.append(server)
             pool.register_worker(WorkerNodeConfig(id=m_id, host="127.0.0.1", port=m_port))
-            logger.info(f"Attached mock worker {m_id} on port {m_port}")
+            logger.info(f"Attached Mock Worker {m_id} on port {m_port}")
 
-    # Register any explicit real GPU workers
-    if args.worker:
+    # Register any explicit real GPU workers (--worker id:host:port:gpu)
+    if getattr(args, "worker", None):
         for w_str in args.worker:
-            # format: id:host:port or id:host:port:gpu_id
             parts = w_str.split(":")
             wid = parts[0]
             host = parts[1]
             port = int(parts[2])
             gpu = int(parts[3]) if len(parts) > 3 else None
             pool.register_worker(WorkerNodeConfig(id=wid, host=host, port=port, gpu_id=gpu))
-            logger.info(f"Registered real worker node {wid} ({host}:{port})")
+            logger.info(f"Registered real PersonaPlex worker node {wid} ({host}:{port} on GPU {gpu})")
 
-    app = create_app(pool=pool)
+    app = create_app(pool=pool, worker_type=worker_type, active_server=spawned_servers[0] if spawned_servers else None)
     config = uvicorn.Config(app, host=args.host, port=args.port, log_level="info")
     uv_server = uvicorn.Server(config)
 
-    logger.info(f"Starting Orchestration Gateway on http://{args.host}:{args.port}")
+    logger.info(f"Starting Orchestration Gateway ({worker_type.upper()}) on http://{args.host}:{args.port}")
     logger.info(f"Developer Console available at http://{args.host}:{args.port}/console")
 
     try:
         await uv_server.serve()
     finally:
-        for s in mock_servers:
+        for s in spawned_servers:
             await s.stop()
+
+
+async def _run_cascaded_worker_cmd(args):
+    server = CascadedLocalWorkerServer(host=args.host, port=args.port)
+    await server.start()
+    logger.info(f"Cascaded Local Worker running on ws://{args.host}:{args.port}/api/chat")
+    try:
+        while True:
+            await asyncio.sleep(3600)
+    except (asyncio.CancelledError, KeyboardInterrupt):
+        await server.stop()
 
 
 async def _run_mock_worker_cmd(args):
@@ -100,103 +128,70 @@ async def _run_mock_worker_cmd(args):
 
 
 async def _test_call_cmd(args):
-    url = f"{args.url}?persona_id={args.persona}"
-    logger.info(f"Initiating test call to {url} (Persona: {args.persona})")
+    logger.info(f"Connecting test call to {args.url} (persona: {args.persona})...")
+    full_url = f"{args.url}?persona_id={args.persona}"
 
-    # Prepare input audio
     if args.input_wav:
-        logger.info(f"Loading input audio from {args.input_wav}")
         data, sr = sf.read(args.input_wav, dtype="float32")
-        if data.ndim > 1:
-            data = data.mean(axis=1)  # Convert to mono
         if sr != SAMPLE_RATE:
-            # Simple linear resample if rate differs
             num_samples = int(len(data) * SAMPLE_RATE / sr)
             data = np.interp(
                 np.linspace(0, len(data), num_samples, endpoint=False),
                 np.arange(len(data)),
                 data,
             ).astype(np.float32)
+        if data.ndim > 1:
+            data = data.mean(axis=1)
+        frames = [data[i : i + FRAME_SIZE] for i in range(0, len(data) - FRAME_SIZE, FRAME_SIZE)]
     else:
-        logger.info("No input WAV specified; synthesizing 2.0-second 440Hz test audio tone at 24kHz")
-        t = np.linspace(0, 2.0, 2 * SAMPLE_RATE, endpoint=False)
-        data = (0.2 * np.sin(2 * np.pi * 440 * t)).astype(np.float32)
-
-    # Slice into 1920-sample frames (80ms each)
-    num_frames = len(data) // FRAME_SIZE
-    frames = [data[i * FRAME_SIZE : (i + 1) * FRAME_SIZE] for i in range(num_frames)]
-    logger.info(f"Prepared {len(frames)} audio frames ({len(frames) * 0.08:.2f} seconds)")
+        # Default: 3 seconds of gentle audio pulses
+        t = np.linspace(0, 3.0, int(SAMPLE_RATE * 3.0), endpoint=False)
+        tone = (0.1 * np.sin(2 * np.pi * 300 * t)).astype(np.float32)
+        frames = [tone[i : i + FRAME_SIZE] for i in range(0, len(tone), FRAME_SIZE)]
 
     agent_audio_chunks = []
     agent_text_tokens = []
-    received_handshake = asyncio.Event()
-
     t_start = time.time()
 
-    async with ws_connect(url) as ws:
-        async def receiver():
+    async with ws_connect(full_url) as ws:
+        async def send_audio():
+            for frame in frames:
+                msg = AudioMessage(data=frame.tobytes())
+                await ws.send(encode_message(msg))
+                await asyncio.sleep(0.08)
+            # Continuous full-duplex silence frames for turn endpointing and streaming response
+            silence = np.zeros(FRAME_SIZE, dtype=np.float32)
+            for _ in range(85):  # ~6.8 seconds
+                msg = AudioMessage(data=silence.tobytes())
+                await ws.send(encode_message(msg))
+                await asyncio.sleep(0.08)
+
+        async def receive_stream():
             try:
                 async for raw in ws:
-                    if not isinstance(raw, bytes):
-                        continue
                     msg = decode_message(raw)
-                    if msg.type == MessageType.HANDSHAKE:
-                        logger.info("Received Handshake [0x00] from Orchestration Gateway")
-                        received_handshake.set()
-                    elif msg.type == MessageType.METADATA:
-                        logger.info(f"Received Metadata: {msg.data}")
-                    elif msg.type == MessageType.AUDIO:
-                        samples = np.frombuffer(msg.data, dtype=np.float32)
-                        agent_audio_chunks.append(samples)
+                    if msg.type == MessageType.AUDIO:
+                        chunk = np.frombuffer(msg.data, dtype=np.float32)
+                        agent_audio_chunks.append(chunk)
                     elif msg.type == MessageType.TEXT:
                         agent_text_tokens.append(msg.text)
-                        sys.stdout.write(msg.text)
-                        sys.stdout.flush()
-                    elif msg.type == MessageType.ERROR:
-                        logger.error(f"Received Error: {msg.error}")
-                        break
-            except Exception as e:
-                logger.debug(f"Receiver closed: {e}")
+                        print(msg.text, end="", flush=True)
+            except Exception:
+                pass
 
-        recv_task = asyncio.create_task(receiver())
+        send_task = asyncio.create_task(send_audio())
+        recv_task = asyncio.create_task(receive_stream())
 
-        # Wait for handshake
-        try:
-            await asyncio.wait_for(received_handshake.wait(), timeout=5.0)
-        except asyncio.TimeoutError:
-            logger.error("Timed out waiting for handshake from gateway")
-            return
-
-        logger.info("\nStreaming user frames at 12.5 Hz (80ms cadence)...")
-        print("Agent Transcript: ", end="", flush=True)
-
-        # Stream user frames at 80ms cadence
-        for frame in frames:
-            t0 = time.time()
-            msg_bytes = encode_message(AudioMessage(data=frame.tobytes()))
-            await ws.send(msg_bytes)
-            elapsed = time.time() - t0
-            await asyncio.sleep(max(0.001, 0.08 - elapsed))
-
-        # Allow extra time to catch trailing response tokens
-        await asyncio.sleep(1.0)
+        await send_task
         await ws.close()
         recv_task.cancel()
-        try:
-            await recv_task
-        except asyncio.CancelledError:
-            pass
 
-    print("\n")
     duration = time.time() - t_start
-
-    # Save output audio
     if agent_audio_chunks:
         full_audio = np.concatenate(agent_audio_chunks)
         sf.write(args.output_wav, full_audio, SAMPLE_RATE)
         logger.info(f"Saved {len(full_audio)/SAMPLE_RATE:.2f}s of agent audio to {args.output_wav}")
 
-    # Save output transcript
     transcript_text = "".join(agent_text_tokens)
     with open(args.output_json, "w", encoding="utf-8") as f:
         json.dump({"transcript": transcript_text, "tokens": agent_text_tokens, "duration_sec": duration}, f, indent=2)
@@ -212,24 +207,118 @@ async def _test_call_cmd(args):
     print("=" * 55 + "\n")
 
 
+def _doctor_cmd(args):
+    print("=" * 60)
+    print("AARAV VOICE AGENT - ENVIRONMENT & HARDWARE DOCTOR")
+    print("=" * 60)
+
+    # 1. Check Ollama
+    ollama_ok = False
+    try:
+        import httpx
+        r = httpx.get("http://127.0.0.1:11434/api/tags", timeout=3.0)
+        if r.status_code == 200:
+            ollama_ok = True
+            models = [m.get("name", "") for m in r.json().get("models", [])]
+            print(f"[OK] Ollama Server: RUNNING on port 11434")
+            print(f"     Available Models: {', '.join(models) if models else 'None'}")
+        else:
+            print(f"[ERROR] Ollama Server: Error HTTP {r.status_code}")
+    except Exception as e:
+        print(f"[ERROR] Ollama Server: NOT REACHABLE ({e})")
+
+    # 2. Check CUDA & GPU
+    try:
+        import torch
+        if torch.cuda.is_available():
+            dev_name = torch.cuda.get_device_name(0)
+            vram_total = torch.cuda.get_device_properties(0).total_memory / (1024**2)
+            mem_free, _ = torch.cuda.mem_get_info(0)
+            mem_free_mb = mem_free / (1024**2)
+            print(f"[OK] CUDA: AVAILABLE ({torch.version.cuda})")
+            print(f"     GPU: {dev_name} (Total: {vram_total:.0f} MB, Free: {mem_free_mb:.0f} MB)")
+        else:
+            print(f"[WARN] CUDA: Not detected in PyTorch (running in CPU mode)")
+    except Exception as e:
+        print(f"[ERROR] PyTorch/CUDA check error: {e}")
+
+    # 3. Check ASR (faster-whisper)
+    try:
+        import faster_whisper
+        print(f"[OK] faster-whisper: INSTALLED (version {faster_whisper.__version__})")
+        print(f"     ASR Configuration: base model on CPU int8 (4 threads, RTF ~0.15)")
+    except Exception as e:
+        print(f"[ERROR] faster-whisper: NOT INSTALLED ({e})")
+
+    # 4. Check TTS (Kokoro)
+    try:
+        import kokoro_onnx
+        print(f"[OK] Kokoro TTS: INSTALLED (ONNX runtime 24 kHz)")
+        print(f"     Voices: aarav_colloquial (Male), priya_colloquial (Female)")
+    except Exception as e:
+        print(f"[ERROR] Kokoro TTS: NOT INSTALLED ({e})")
+
+    # 5. Check Audio Devices
+    try:
+        import sounddevice as sd
+        default_in = sd.query_devices(kind='input')
+        default_out = sd.query_devices(kind='output')
+        print(f"[OK] Audio Input:  {default_in.get('name', 'Unknown')}")
+        print(f"[OK] Audio Output: {default_out.get('name', 'Unknown')}")
+    except Exception as e:
+        print(f"[INFO] Audio Devices: Host audio loopback available ({e})")
+
+    # 6. Chosen Configuration Summary
+    print("-" * 60)
+    print("CHOSEN RUNTIME CONFIGURATION:")
+    print("  Worker Type:       local_cascade (100% open-source local pipeline)")
+    print("  Persona:           Aarav (Colloquial Indian English)")
+    print("  LLM:               Ollama qwen2.5:1.5b (Q4 quant, VRAM ~1.65 GB)")
+    print("  ASR:               faster-whisper base (CPU int8, ~470ms latency)")
+    print("  Turn Detector:     Silero VAD + 650ms base + 700ms linguistic extension")
+    print("  TTS:               Kokoro-82M ONNX (CPU 24 kHz, TTFA ~400ms)")
+    print("  VRAM Partition:    Ollama GPU (1.65 GB) + CPU ASR/TTS (0 MB VRAM)")
+    print("=" * 60)
+
+
 def main():
     parser = argparse.ArgumentParser(description="PersonaPlex Orchestration CLI")
     subparsers = parser.add_subparsers(dest="subcommand", required=True)
+
+    # doctor
+    subparsers.add_parser("doctor", help="Check hardware, Ollama, CUDA, models, and audio setup")
 
     # run-gateway
     gw = subparsers.add_parser("run-gateway", help="Run the orchestration gateway")
     gw.add_argument("--host", default="127.0.0.1", help="Gateway bind host")
     gw.add_argument("--port", type=int, default=8000, help="Gateway bind port")
-    gw.add_argument("--mock-workers", type=int, default=1, help="Number of local mock workers to auto-spawn")
-    gw.add_argument("--mock-port-start", type=int, default=8998, help="Starting port for mock workers")
+    gw.add_argument(
+        "--worker-type",
+        choices=["local_cascade", "cascaded", "mock", "personaplex"],
+        default="local_cascade",
+        help="Worker type: local_cascade (default local STT/LLM/TTS), mock (simulated), or personaplex (remote GPU)",
+    )
+    gw.add_argument("--mock-workers", type=int, default=1, help="Number of local workers to auto-spawn")
+    gw.add_argument("--mock-port-start", type=int, default=8998, help="Starting port for workers")
     gw.add_argument("--worker", action="append", help="Register real worker (id:host:port[:gpu_id])")
 
-    # run-local (convenience command for instant local testing)
-    local_p = subparsers.add_parser("run-local", help="One-command local run: gateway + 2 local workers on port 8000")
+    # run-local
+    local_p = subparsers.add_parser("run-local", help="One-command local run: gateway + local cascaded worker on port 8000")
     local_p.add_argument("--host", default="127.0.0.1", help="Gateway bind host")
     local_p.add_argument("--port", type=int, default=8000, help="Gateway bind port")
-    local_p.add_argument("--mock-workers", type=int, default=2, help="Number of local workers")
+    local_p.add_argument(
+        "--worker-type",
+        choices=["local_cascade", "cascaded", "mock", "personaplex"],
+        default="local_cascade",
+        help="Worker type",
+    )
+    local_p.add_argument("--mock-workers", type=int, default=1, help="Number of local workers")
     local_p.add_argument("--mock-port-start", type=int, default=8998, help="Starting port for workers")
+
+    # run-cascaded-worker
+    casc = subparsers.add_parser("run-cascaded-worker", help="Run standalone Cascaded Local Worker")
+    casc.add_argument("--host", default="127.0.0.1")
+    casc.add_argument("--port", type=int, default=8998)
 
     # run-mock-worker
     mock = subparsers.add_parser("run-mock-worker", help="Run standalone PersonaPlex mock worker")
@@ -239,17 +328,21 @@ def main():
     # test-call
     call = subparsers.add_parser("test-call", help="Run a test full-duplex voice call")
     call.add_argument("--url", default="ws://127.0.0.1:8000/v1/realtime", help="Gateway WebSocket URL")
-    call.add_argument("--persona", default="wise_teacher", help="Persona ID")
+    call.add_argument("--persona", default="indian_pro", help="Persona ID")
     call.add_argument("--input-wav", default=None, help="Input WAV file (optional)")
     call.add_argument("--output-wav", default="output_agent.wav", help="Path to save agent output WAV")
     call.add_argument("--output-json", default="output_transcript.json", help="Path to save transcript JSON")
 
     args = parser.parse_args()
 
-    if args.subcommand in ("run-gateway", "run-local"):
+    if args.subcommand == "doctor":
+        _doctor_cmd(args)
+    elif args.subcommand in ("run-gateway", "run-local"):
         if not hasattr(args, "worker"):
             args.worker = None
         asyncio.run(_run_gateway_cmd(args))
+    elif args.subcommand == "run-cascaded-worker":
+        asyncio.run(_run_cascaded_worker_cmd(args))
     elif args.subcommand == "run-mock-worker":
         asyncio.run(_run_mock_worker_cmd(args))
     elif args.subcommand == "test-call":

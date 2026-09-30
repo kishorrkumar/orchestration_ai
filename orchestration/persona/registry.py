@@ -57,7 +57,12 @@ class PersonaConfig(BaseModel):
     neural_voice: str = Field(default="en-IN-PrabhatNeural", description="Open-source neural TTS voice model (e.g. en-IN-PrabhatNeural, en-IN-NeerjaExpressiveNeural)")
     text_prompt: str = Field(..., description="Behavioral instructions and persona facts")
     audio_temperature: float = Field(default=0.8, ge=0.0, le=2.0)
-    text_temperature: float = Field(default=0.8, ge=0.0, le=2.0)
+    text_temperature: float = Field(default=0.7, ge=0.0, le=2.0)
+    language_style: str = Field(default="indian_english", description="Language style: indian_english or plain_english")
+    call_flow: str = Field(default="conversational_companion", description="Call flow role: conversational_companion, customer_support, tech_specialist, inbound_concierge")
+    speaking_rate: float = Field(default=0.98, ge=0.5, le=2.0, description="TTS speaking rate multiplier")
+    llm_model: str = Field(default="qwen2.5:1.5b", description="LLM model identifier in Ollama")
+    llm_temperature: float = Field(default=0.7, ge=0.0, le=2.0, description="Sampling temperature for LLM")
     top_k_audio: int = Field(default=250, ge=1)
     top_k_text: int = Field(default=25, ge=1)
     seed: Optional[int] = Field(default=None, description="Optional seed for deterministic generation")
@@ -79,12 +84,12 @@ class PersonaRegistry:
         self._register_default_personas()
 
     def _register_default_personas(self) -> None:
-        # Option 1: Indian English • Professional (Aarav)
+        # Option 1: Indian English • Colloquial & Articulate Male (Aarav)
         self.register(
             PersonaConfig(
                 id="indian_pro",
-                name="Aarav (Indian English • Professional)",
-                description="Articulate, polite, structured, business-oriented Indian English speaker.",
+                name="Aarav (Colloquial Indian English • Male)",
+                description="Articulate, natural, conversational Indian English speaker with relaxed cadence.",
                 accent="Indian English",
                 character="Professional",
                 voice_prompt="NATM0.pt",
@@ -92,11 +97,11 @@ class PersonaRegistry:
                 text_prompt=build_system_prompt("indian", "professional"),
             )
         )
-        # Option 2: Indian English • Friendly & Funny (Rohan)
+        # Option 2: Indian English • Friendly & Funny (Kabir / Priya)
         self.register(
             PersonaConfig(
                 id="indian_funny",
-                name="Rohan (Indian English • Friendly & Funny)",
+                name="Kabir (Colloquial Indian English • Friendly & Funny)",
                 description="Witty, warm, charismatic, cheerful Indian English conversational companion.",
                 accent="Indian English",
                 character="Friendly & Funny",
@@ -128,3 +133,15 @@ class PersonaRegistry:
 
 # Global singleton registry
 default_registry = PersonaRegistry()
+default_registry.register(
+    PersonaConfig(
+        id="indian_priya",
+        name="Priya (Colloquial Indian English • Female)",
+        description="Warm, bright, empathetic, and colloquial Indian English speaker.",
+        accent="Indian English",
+        character="Warm",
+        voice_prompt="NATF0.pt",
+        neural_voice="priya_colloquial",
+        text_prompt=build_system_prompt("indian", "warm"),
+    )
+)

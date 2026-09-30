@@ -124,6 +124,8 @@ class VoiceSession:
         self.metrics = SessionMetrics(session_id, persona.id, worker.worker_id)
         self.inbound_buffer = AudioFrameBuffer(dtype=np.float32)
         self.noise_canceller = AdaptiveNoiseCanceller()
+        from ..audio.cleaner import CallerAudioCleaner
+        self.cleaner = CallerAudioCleaner(sample_rate=SAMPLE_RATE, frame_size=FRAME_SIZE)
 
         self._state = SessionState.INITIALIZING
         self._stop_event = asyncio.Event()
@@ -171,11 +173,9 @@ class VoiceSession:
             frames = self.inbound_buffer.pop_all_available_frames()
             for raw_frame in frames:
                 self.metrics.user_frames_in += 1
-                # 1. Noise Cancellation Layer
-                frame = self.noise_canceller.clean_frame(raw_frame)
-                rms = compute_rms(frame)
+                rms = compute_rms(raw_frame)
 
-                # 2. Voice Activity & Barge-in detection
+                # Voice Activity & Barge-in tracking
                 if rms > self.barge_in_rms_threshold:
                     if not self._user_speaking:
                         self._user_speaking = True
@@ -187,7 +187,7 @@ class VoiceSession:
                     self._user_speaking = False
                     self.set_state(SessionState.ACTIVE)
 
-                await self.worker.send_audio(frame)
+                await self.worker.send_audio(raw_frame)
 
         elif msg.type == MessageType.TEXT:
             await self.worker.send_text(msg.text)

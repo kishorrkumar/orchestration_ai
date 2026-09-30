@@ -1,5 +1,6 @@
 # Virtual environment
 .venv/
+.venv-gpu/
 env/
 venv/
 
@@ -16,6 +17,18 @@ htmlcov/
 
 # Logs and outputs
 *.log
+*.wav
+*.mp3
+*.aac
+*.flac
+*.npy
 output*.wav
 output*.json
 *.tmp
+
+# Large Model weights and cache
+models/
+
+# Local data and eval artifacts
+data/
+eval_out/
