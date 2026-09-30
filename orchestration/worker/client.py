@@ -140,6 +140,7 @@ class PersonaPlexWorkerClient:
             )
 
             # Wait for handshake (0x00) which signals that system prompts have finished loading
+            assert self._ws is not None
             first_msg = await asyncio.wait_for(self._ws.recv(), timeout=self.handshake_timeout)
             if not isinstance(first_msg, bytes):
                 raise WorkerConnectionError(f"Expected binary handshake, received {type(first_msg)}")

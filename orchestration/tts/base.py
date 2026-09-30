@@ -21,7 +21,7 @@ import logging
 import os
 import pathlib
 import time
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 import soundfile as sf
@@ -128,9 +128,9 @@ class KokoroTTSBackend(BaseTTSBackend):
     def __init__(self, sample_rate: int = 24000, speaking_rate: float = 1.0, default_voice: str = "aarav_colloquial") -> None:
         super().__init__("kokoro", sample_rate=sample_rate, speaking_rate=speaking_rate)
         self.default_voice = default_voice
-        self._kokoro = None
+        self._kokoro: Any = None
         self._available = False
-        self._voice_styles: Dict[str, np.ndarray] = {}
+        self._voice_styles: Dict[str, Any] = {}
         self._init_runtime()
 
     def _init_runtime(self) -> None:
@@ -163,15 +163,16 @@ class KokoroTTSBackend(BaseTTSBackend):
 
             # Pre-compute blended colloquial Indian English voice styles
             try:
-                omega = self._kokoro.get_voice_style("hm_omega")
-                psi = self._kokoro.get_voice_style("hm_psi")
-                # 65% hm_omega + 35% hm_psi gives a relaxed, colloquial Indian English male timbre
-                self._voice_styles["aarav_colloquial"] = 0.65 * omega + 0.35 * psi
+                if self._kokoro is not None:
+                    omega = self._kokoro.get_voice_style("hm_omega")
+                    psi = self._kokoro.get_voice_style("hm_psi")
+                    # 65% hm_omega + 35% hm_psi gives a relaxed, colloquial Indian English male timbre
+                    self._voice_styles["aarav_colloquial"] = 0.65 * omega + 0.35 * psi
 
-                alpha = self._kokoro.get_voice_style("hf_alpha")
-                beta = self._kokoro.get_voice_style("hf_beta")
-                # 60% hf_alpha + 40% hf_beta gives a warm, bright colloquial Indian English female timbre
-                self._voice_styles["priya_colloquial"] = 0.60 * alpha + 0.40 * beta
+                    alpha = self._kokoro.get_voice_style("hf_alpha")
+                    beta = self._kokoro.get_voice_style("hf_beta")
+                    # 60% hf_alpha + 40% hf_beta gives a warm, bright colloquial Indian English female timbre
+                    self._voice_styles["priya_colloquial"] = 0.60 * alpha + 0.40 * beta
             except Exception as e:
                 logger.warning(f"Kokoro voice style blending note: {e}")
 
@@ -195,7 +196,10 @@ class KokoroTTSBackend(BaseTTSBackend):
             logger.warning(f"Kokoro warm-up failed: {e}")
 
     def _synthesize_sync(self, text: str, voice: str) -> np.ndarray:
+        if not self._kokoro:
+            return np.zeros(0, dtype=np.float32)
         v_key = voice.lower() if voice else self.default_voice
+        voice_target: Any
         if v_key in self._voice_styles:
             voice_target = self._voice_styles[v_key]
         else:
@@ -483,6 +487,7 @@ class StreamingCompositeTTS:
         self.fallback = FallbackTTSBackend(sample_rate=sample_rate, speaking_rate=speaking_rate)
 
         self.preferred_backend = preferred_backend
+        self.active_backend: BaseTTSBackend = self.fallback
         self._select_active_backend()
 
     def _select_active_backend(self) -> None:

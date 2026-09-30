@@ -89,6 +89,20 @@ class VoiceCloner:
             return wav_file
         return None
 
+    def get_cloned_style(self, voice_id: str) -> Optional[Any]:
+        """Return cached neural style tensor or conditioning data for cloned voice."""
+        artifact_path = self.get_voice_path(voice_id)
+        if not artifact_path or not artifact_path.exists():
+            return None
+        if artifact_path.suffix == ".pt":
+            try:
+                import torch
+                return torch.load(artifact_path, map_location="cpu", weights_only=True)
+            except Exception as e:
+                logger.warning(f"Error loading cloned voice style {artifact_path}: {e}")
+                return None
+        return None
+
     def delete_voice(self, voice_id: str) -> bool:
         """Delete a cloned voice profile and remove disk artifacts."""
         clean = voice_id.strip()

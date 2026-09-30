@@ -122,3 +122,20 @@ def test_speaker_similarity_metric():
 
     sim_diff = compute_speaker_similarity(sample_a, sample_b)
     assert sim_diff < sim_close, "Different speakers must have lower similarity than same speaker"
+
+
+def test_get_cloned_style(tmp_path):
+    """AUDIT-012: VoiceCloner must implement get_cloned_style for TTS backend compatibility."""
+    cloner = VoiceCloner(data_dir=tmp_path)
+    # Non-existent voice
+    assert cloner.get_cloned_style("nonexistent") is None
+
+    sample_wav = _generate_synthetic_speech_sample(5.0)
+    meta = cloner.clone_voice(
+        audio_bytes=sample_wav,
+        voice_name="Style Test Voice",
+        consent=True,
+    )
+    # Voice exists with only WAV artifact
+    assert cloner.get_cloned_style(meta["id"]) is None
+

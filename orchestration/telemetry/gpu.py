@@ -69,9 +69,11 @@ def get_live_gpu_telemetry() -> Dict[str, Any]:
             info["cuda_available"] = True
             info["device_name"] = torch.cuda.get_device_name(0)
             total = torch.cuda.get_device_properties(0).total_memory
-            info["vram_total_mb"] = round(total / (1024 * 1024), 1)
-            info["vram_used_mb"] = round(torch.cuda.memory_allocated(0) / (1024 * 1024), 1)
-            info["vram_free_mb"] = round(info["vram_total_mb"] - info["vram_used_mb"], 1)
+            total_mb = round(total / (1024 * 1024), 1)
+            used_mb = round(torch.cuda.memory_allocated(0) / (1024 * 1024), 1)
+            info["vram_total_mb"] = total_mb
+            info["vram_used_mb"] = used_mb
+            info["vram_free_mb"] = round(total_mb - used_mb, 1)
             return info
     except Exception:
         pass

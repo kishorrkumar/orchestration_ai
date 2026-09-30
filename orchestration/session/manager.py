@@ -256,13 +256,13 @@ class VoiceSession:
             return ErrorMessage(error=f"Malformed frame: {str(e)}")
 
         if self._state not in (SessionState.ACTIVE, SessionState.INTERRUPTED):
-            if msg.type == MessageType.AUDIO:
+            if isinstance(msg, AudioMessage):
                 return ErrorMessage(error="Handshake not completed. Audio not accepted before session is active.")
-            elif msg.type == MessageType.HANDSHAKE:
+            elif isinstance(msg, HandshakeMessage):
                 return None
             return None
 
-        if msg.type == MessageType.AUDIO:
+        if isinstance(msg, AudioMessage):
             audio_data = msg.data
             self.inbound_buffer.push_pcm_bytes(audio_data, is_int16=False)
 
@@ -290,9 +290,9 @@ class VoiceSession:
 
                 await self.worker.send_audio(raw_frame)
 
-        elif msg.type == MessageType.TEXT:
+        elif isinstance(msg, TextMessage):
             await self.worker.send_text(msg.text)
-        elif msg.type == MessageType.CONTROL:
+        elif isinstance(msg, ControlMessage):
             await self.worker.send_control(msg.action)
 
         return msg
@@ -306,7 +306,7 @@ class VoiceSession:
                 if self._stop_event.is_set():
                     break
 
-                if worker_msg.type == MessageType.AUDIO:
+                if isinstance(worker_msg, AudioMessage):
                     self.metrics.agent_frames_out += 1
                     # Barge-in: immediately suppress forwarding agent audio while user is interrupting
                     if self._state == SessionState.INTERRUPTED:
@@ -314,16 +314,16 @@ class VoiceSession:
                     # Forward agent audio 0x01 to client
                     await send_to_client_fn(encode_message(worker_msg))
 
-                elif worker_msg.type == MessageType.TEXT:
+                elif isinstance(worker_msg, TextMessage):
                     self.metrics.text_tokens_out += 1
                     self.metrics.transcript_tokens.append(worker_msg.text)
                     # Forward text token 0x02 to client
                     await send_to_client_fn(encode_message(worker_msg))
 
-                elif worker_msg.type == MessageType.METADATA:
+                elif isinstance(worker_msg, MetadataMessage):
                     await send_to_client_fn(encode_message(worker_msg))
 
-                elif worker_msg.type == MessageType.ERROR:
+                elif isinstance(worker_msg, ErrorMessage):
                     await send_to_client_fn(encode_message(worker_msg))
                     break
 

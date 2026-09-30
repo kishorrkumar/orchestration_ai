@@ -14,7 +14,7 @@ from __future__ import annotations
 import collections
 import re
 import time
-from typing import List, Optional, Tuple
+from typing import Any, List, Optional, Tuple
 import numpy as np
 
 # Connectives, prepositions, conjunctions, and articles that signal an incomplete thought

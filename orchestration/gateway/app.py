@@ -16,7 +16,7 @@ from contextlib import asynccontextmanager
 import io
 import logging
 import time
-from typing import Optional
+from typing import Any, Optional
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Query, HTTPException, status, UploadFile, File, Form
 from fastapi.responses import HTMLResponse, JSONResponse
@@ -106,26 +106,26 @@ def create_app(
     async def lifespan(app: FastAPI):
         nonlocal resolved_server
         logger.info("PersonaPlex Orchestration Gateway starting up")
-        server_to_stop = None
+        server_to_stop: Any = None
 
         # Only auto-spawn a local worker if pool has no workers registered
         if len(worker_pool._workers) == 0:
             target_type = os.environ.get("PERSONAPLEX_WORKER_TYPE", worker_type if worker_type != "auto" else "mock").lower()
             if target_type == "cascaded":
                 from ..worker.cascaded_worker import CascadedLocalWorkerServer
-                server = CascadedLocalWorkerServer(host="127.0.0.1", port=8998)
-                await server.start()
-                server_to_stop = server
-                resolved_server = server
+                cascaded_server = CascadedLocalWorkerServer(host="127.0.0.1", port=8998)
+                await cascaded_server.start()
+                server_to_stop = cascaded_server
+                resolved_server = cascaded_server
                 mock_cfg = WorkerNodeConfig(id="cascaded-worker-1", host="127.0.0.1", port=8998)
                 worker_pool.register_worker(mock_cfg)
                 logger.info("Cascaded local worker auto-started and registered on ws://127.0.0.1:8998")
             else:
                 from ..worker.mock_worker import PersonaPlexMockServer
-                server = PersonaPlexMockServer(host="127.0.0.1", port=8998)
-                await server.start()
-                server_to_stop = server
-                resolved_server = server
+                mock_server = PersonaPlexMockServer(host="127.0.0.1", port=8998)
+                await mock_server.start()
+                server_to_stop = mock_server
+                resolved_server = mock_server
                 mock_cfg = WorkerNodeConfig(id="mock-worker-1", host="127.0.0.1", port=8998)
                 worker_pool.register_worker(mock_cfg)
                 logger.info("Mock worker auto-started and registered on ws://127.0.0.1:8998")
@@ -269,6 +269,8 @@ def create_app(
     @app.get("/v1/agents/{agent_id}", tags=["Agents"])
     async def get_agent(persona_id: Optional[str] = None, agent_id: Optional[str] = None):
         target_id = persona_id or agent_id
+        if not target_id:
+            raise HTTPException(status_code=400, detail="Missing persona_id or agent_id")
         agent = persona_registry.get(target_id)
         if not agent:
             raise HTTPException(status_code=404, detail=f"Persona '{target_id}' not found")
@@ -285,6 +287,8 @@ def create_app(
     @app.put("/v1/agents/{agent_id}", tags=["Agents"])
     async def update_agent(persona: PersonaConfig, persona_id: Optional[str] = None, agent_id: Optional[str] = None):
         target_id = persona_id or agent_id
+        if not target_id:
+            raise HTTPException(status_code=400, detail="Missing persona_id or agent_id")
         persona.id = target_id
         _validate_persona(persona)
         persona_registry.register(persona)
@@ -294,6 +298,8 @@ def create_app(
     @app.delete("/v1/agents/{agent_id}", tags=["Agents"])
     async def delete_agent(persona_id: Optional[str] = None, agent_id: Optional[str] = None):
         target_id = persona_id or agent_id
+        if not target_id:
+            raise HTTPException(status_code=400, detail="Missing persona_id or agent_id")
         deleted = persona_registry.delete(target_id)
         if not deleted:
             raise HTTPException(status_code=404, detail=f"Persona '{target_id}' not found")
@@ -390,7 +396,7 @@ def create_app(
         # 1. Check presets
         for vm in VOICE_METADATA:
             if vm["id"].lower() == voice_id.lower() or vm["name"].lower() == voice_id.lower():
-                entry = dict(vm)
+                entry: dict[str, Any] = dict(vm)
                 entry["preview_url"] = f"/v1/voices/{vm['id']}/preview"
                 entry["is_cloned"] = False
                 return entry
