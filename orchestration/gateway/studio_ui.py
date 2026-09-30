@@ -888,11 +888,14 @@ STUDIO_HTML = r"""<!DOCTYPE html>
         <span id="active-agent-badge" class="doc-badge" style="color: var(--apple-cyan);">Aarav</span>
       </div>
 
-      <!-- Colloquial Indian English Voice Selector & Voice Cloner -->
-      <div class="segmented-control" style="margin-bottom: 4px;">
-        <button id="btn-agent-aarav" class="segmented-btn active" onclick="window.studioApp.selectAgentPreset('indian_pro')">Aarav (Male)</button>
-        <button id="btn-agent-priya" class="segmented-btn" onclick="window.studioApp.selectAgentPreset('indian_priya')">Priya (Female)</button>
-        <button id="btn-agent-clone" class="segmented-btn" style="color: var(--apple-purple); font-weight: 600;" onclick="window.studioApp.openCloneModal()">🧬 Clone Voice</button>
+      <!-- Persona Selector (4 Core PersonaPlex Personas + Indian English) -->
+      <div class="segmented-control" style="margin-bottom: 6px; flex-wrap: wrap;">
+        <button id="btn-agent-support" class="segmented-btn" onclick="window.studioApp.selectAgentPreset('support_agent')">Alex (Support)</button>
+        <button id="btn-agent-teacher" class="segmented-btn" onclick="window.studioApp.selectAgentPreset('wise_teacher')">Dr. Elena (Teacher)</button>
+        <button id="btn-agent-sales" class="segmented-btn" onclick="window.studioApp.selectAgentPreset('sales_caller')">Marcus (Sales)</button>
+        <button id="btn-agent-friend" class="segmented-btn" onclick="window.studioApp.selectAgentPreset('casual_friend')">Sam (Friend)</button>
+        <button id="btn-agent-aarav" class="segmented-btn active" onclick="window.studioApp.selectAgentPreset('indian_pro')">Aarav (IN)</button>
+        <button id="btn-agent-clone" class="segmented-btn" style="color: var(--apple-purple); font-weight: 600;" onclick="window.studioApp.openCloneModal()">🧬 Clone</button>
       </div>
 
       <!-- Colloquial Voice Profile Card -->
@@ -947,18 +950,37 @@ STUDIO_HTML = r"""<!DOCTYPE html>
               <a href="javascript:void(0)" onclick="window.studioApp.openCloneModal()" style="font-size:10px; color:var(--apple-purple); text-decoration:none; font-weight:600;">+ Clone</a>
             </div>
             <select id="cfg-neural-voice" class="form-select" onchange="window.studioApp.onNeuralVoiceChange()" style="font-family: var(--font-mono); font-size: 11px;">
-              <optgroup label="🇮🇳 Indian English (Colloquial)">
-                <option value="aarav_colloquial">aarav_colloquial (Male)</option>
+              <optgroup label="🌿 PersonaPlex Natural Female">
+                <option value="NATF0.pt">NATF0 • Warm &amp; Calm</option>
+                <option value="NATF1.pt">NATF1 • Crisp &amp; Professional</option>
+                <option value="NATF2.pt">NATF2 • Expressive Teacher</option>
+                <option value="NATF3.pt">NATF3 • Bright &amp; Articulate</option>
+              </optgroup>
+              <optgroup label="🎙️ PersonaPlex Natural Male">
+                <option value="NATM0.pt">NATM0 • Deep &amp; Authoritative</option>
+                <option value="NATM1.pt">NATM1 • Warm Consultative</option>
+                <option value="NATM2.pt">NATM2 • Technical &amp; Energetic</option>
+                <option value="NATM3.pt">NATM3 • Casual &amp; Direct</option>
+              </optgroup>
+              <optgroup label="✨ PersonaPlex Variety Female">
+                <option value="VARF0.pt">VARF0 • Dynamic Storyteller</option>
+                <option value="VARF1.pt">VARF1 • Upbeat Presenter</option>
+                <option value="VARF2.pt">VARF2 • Thoughtful Analyst</option>
+                <option value="VARF3.pt">VARF3 • Melodic &amp; Serene</option>
+                <option value="VARF4.pt">VARF4 • Vibrant Actor</option>
+              </optgroup>
+              <optgroup label="⚡ PersonaPlex Variety Male">
+                <option value="VARM0.pt">VARM0 • Radio Announcer</option>
+                <option value="VARM1.pt">VARM1 • Mars Astronaut</option>
+                <option value="VARM2.pt">VARM2 • Empathetic Listener</option>
+                <option value="VARM3.pt">VARM3 • Rapid Tech Host</option>
+                <option value="VARM4.pt">VARM4 • Smooth Baritone</option>
+              </optgroup>
+              <optgroup label="🇮🇳 Indian English (Cascaded Fallback)">
+                <option value="aarav_colloquial" selected>aarav_colloquial (Male)</option>
                 <option value="priya_colloquial">priya_colloquial (Female)</option>
                 <option value="kabir">kabir (Deep Male)</option>
                 <option value="ananya">ananya (Expressive Female)</option>
-              </optgroup>
-              <optgroup label="🌍 Global English">
-                <option value="am_adam">am_adam (Dynamic Male)</option>
-                <option value="af_bella">af_bella (Warm Female)</option>
-                <option value="af_sarah">af_sarah (Professional Female)</option>
-                <option value="am_michael">am_michael (Deep Baritone)</option>
-                <option value="af_nova">af_nova (Bright &amp; Lively)</option>
               </optgroup>
               <optgroup id="optgroup-cloned-voices" label="🧬 Cloned Voices">
                 <!-- Populated dynamically via /v1/voices/cloned -->
@@ -1228,6 +1250,14 @@ STUDIO_HTML = r"""<!DOCTYPE html>
             <option value="female">Female (Warm / Bright)</option>
           </select>
         </div>
+      </div>
+
+      <!-- Consent Gate -->
+      <div style="margin: 8px 0 12px; display: flex; align-items: flex-start; gap: 8px; background: rgba(175, 82, 222, 0.08); padding: 8px; border-radius: 8px; border: 0.5px solid rgba(175, 82, 222, 0.25);">
+        <input type="checkbox" id="clone-consent-check" style="margin-top: 2px; accent-color: var(--apple-purple); cursor: pointer;">
+        <label for="clone-consent-check" style="font-size: 11px; color: var(--text-secondary); line-height: 1.35; cursor: pointer;">
+          I confirm that I own or have explicit legal consent to record, clone, and synthesize this speaker's voice.
+        </label>
       </div>
 
       <button id="btn-submit-clone" class="btn-save-agent" style="background: linear-gradient(135deg, var(--apple-purple), #9d4edd); width: 100%; padding: 10px; font-size: 13px;" onclick="window.studioApp.submitVoiceClone()">
@@ -1883,45 +1913,78 @@ STUDIO_HTML = r"""<!DOCTYPE html>
       }
 
       selectAgentPreset(presetId) {
-        this.activePersona = presetId || 'indian_pro';
-        const btnAarav = document.getElementById('btn-agent-aarav');
-        const btnPriya = document.getElementById('btn-agent-priya');
-        if (btnAarav) btnAarav.classList.toggle('active', this.activePersona === 'indian_pro');
-        if (btnPriya) btnPriya.classList.toggle('active', this.activePersona === 'indian_priya');
+        this.activePersona = presetId || 'support_agent';
+        const buttons = {
+          'support_agent': document.getElementById('btn-agent-support'),
+          'wise_teacher': document.getElementById('btn-agent-teacher'),
+          'sales_caller': document.getElementById('btn-agent-sales'),
+          'casual_friend': document.getElementById('btn-agent-friend'),
+          'indian_pro': document.getElementById('btn-agent-aarav'),
+        };
+        for (const [id, btn] of Object.entries(buttons)) {
+          if (btn) btn.classList.toggle('active', this.activePersona === id);
+        }
         this.populateCustomizer();
       }
 
       populateCustomizer() {
-        const isPriya = this.activePersona === 'indian_priya';
-        let p = this.personas.find(item => item.id === this.activePersona);
+        let p = (this.personas || []).find(item => item.id === this.activePersona);
         if (!p) {
-          if (isPriya) {
-            p = {
-              id: 'indian_priya',
-              name: 'Priya (Colloquial Indian English • Female)',
-              character: 'Warm',
-              neural_voice: 'priya_colloquial',
-              voice_prompt: 'NATF0.pt',
-              description: 'Warm, bright, empathetic, and colloquial Indian English speaker.',
-              text_prompt: "You are Priya, a warm, articulate Indian English voice assistant.\nAlways speak with a natural, colloquial Indian English cadence.\nUse short, conversational 1-2 sentence replies with natural idioms like 'Haanji', 'Sure thing', 'Tell me'.",
-            };
-          } else {
-            p = {
+          const defaults = {
+            support_agent: {
+              id: 'support_agent',
+              name: 'Alex (Support Specialist)',
+              character: 'Helpful & Empathetic',
+              neural_voice: 'NATF1.pt',
+              voice_prompt: 'NATF1.pt',
+              description: 'Helpful, patient, and empathetic customer support specialist.',
+              system_prompt: 'You are Alex, a helpful and empathetic customer support agent. Keep replies short, conversational, and direct. Use natural contractions and occasional fillers.',
+            },
+            wise_teacher: {
+              id: 'wise_teacher',
+              name: 'Dr. Elena (Wise Teacher)',
+              character: 'Thoughtful & Instructive',
+              neural_voice: 'NATF2.pt',
+              voice_prompt: 'NATF2.pt',
+              description: 'Calm, patient mentor who uses clear analogies.',
+              system_prompt: 'You are Dr. Elena, a calm and wise mentor. Explain concepts conversationally using simple, vivid analogies. Ask questions to check understanding.',
+            },
+            sales_caller: {
+              id: 'sales_caller',
+              name: 'Marcus (Sales Specialist)',
+              character: 'Warm & Consultative',
+              neural_voice: 'NATM1.pt',
+              voice_prompt: 'NATM1.pt',
+              description: 'Upbeat consultative sales representative.',
+              system_prompt: 'You are Marcus, an upbeat, consultative sales specialist. Focus on asking qualification questions and matching solutions to customer needs.',
+            },
+            casual_friend: {
+              id: 'casual_friend',
+              name: 'Sam (Casual Friend)',
+              character: 'Relaxed & Direct',
+              neural_voice: 'NATM0.pt',
+              voice_prompt: 'NATM0.pt',
+              description: 'Casual, relaxed friend chatting over coffee.',
+              system_prompt: 'You are Sam, a relaxed, friendly conversation partner. Chat naturally like two close friends grabbing coffee. Use casual phrases and reactions.',
+            },
+            indian_pro: {
               id: 'indian_pro',
-              name: 'Aarav (Colloquial Indian English • Male)',
+              name: 'Aarav (Colloquial Indian English)',
               character: 'Professional',
               neural_voice: 'aarav_colloquial',
               voice_prompt: 'NATM0.pt',
-              description: 'Articulate, natural, conversational Indian English speaker with relaxed cadence.',
-              text_prompt: "You are Aarav, an articulate Indian English voice assistant.\nAlways speak with a natural, colloquial Indian English cadence.\nUse short, conversational 1-2 sentence replies with natural idioms like 'Haanji', 'Got it', 'Tell me'.",
-            };
-          }
+              description: 'Articulate, conversational Indian English speaker with relaxed cadence.',
+              system_prompt: "You are Aarav, an articulate Indian English voice assistant.\nAlways speak with a natural, colloquial Indian English cadence.\nUse short, conversational 1-2 sentence replies with natural idioms like 'Haanji', 'Got it', 'Tell me'.",
+            }
+          };
+          p = defaults[this.activePersona] || defaults.support_agent;
         }
 
-        this.activeAgentName = isPriya ? 'Priya' : 'Aarav';
-        this.activeCharacter = p.character || (isPriya ? 'Warm' : 'Professional');
-        this.activeNeuralVoice = isPriya ? 'priya_colloquial' : (p.neural_voice || 'aarav_colloquial');
-        this.activeVoice = isPriya ? 'NATF0.pt' : (p.voice_prompt || 'NATM0.pt');
+        const rawName = p.name || 'Alex';
+        this.activeAgentName = rawName.split(' ')[0];
+        this.activeCharacter = p.character || p.speaking_style || 'Conversational';
+        this.activeNeuralVoice = p.neural_voice || p.voice_ref || 'NATF1.pt';
+        this.activeVoice = p.voice_prompt || p.voice_ref || this.activeNeuralVoice;
 
         const badge = document.getElementById('active-agent-badge');
         if (badge) badge.innerText = this.activeAgentName;
@@ -1930,36 +1993,31 @@ STUDIO_HTML = r"""<!DOCTYPE html>
         if (profileName) profileName.innerText = this.activeAgentName;
 
         const profileDesc = document.getElementById('profile-agent-desc');
-        if (profileDesc) profileDesc.innerText = p.description || `${this.activeAgentName} • Colloquial Indian English Voice.`;
+        if (profileDesc) profileDesc.innerText = p.description || `${this.activeAgentName} • PersonaPlex Voice Agent.`;
 
+        const isPreset = this.activeVoice.startsWith('NAT') || this.activeVoice.startsWith('VAR');
         const profileMeta = document.getElementById('profile-agent-meta');
-        if (profileMeta) profileMeta.innerText = `${this.activeNeuralVoice} (Kokoro 24 kHz)`;
+        if (profileMeta) profileMeta.innerText = isPreset ? `${this.activeVoice} (Mimi 24 kHz)` : `${this.activeNeuralVoice} (Kokoro 24 kHz)`;
 
         const neuralBadge = document.getElementById('active-neural-voice-badge');
-        if (neuralBadge) neuralBadge.innerText = this.activeNeuralVoice;
+        if (neuralBadge) neuralBadge.innerText = this.activeVoice;
 
         const profileBadge = document.getElementById('profile-agent-badge');
-        if (profileBadge) profileBadge.innerText = isPriya ? 'Colloquial Kokoro Neural (Female)' : 'Colloquial Kokoro Neural (Male)';
+        if (profileBadge) profileBadge.innerText = isPreset ? `PersonaPlex 24kHz (${p.gender || 'Preset'})` : `Neural Voice (${p.gender || 'Colloquial'})`;
 
         const toneSelect = document.getElementById('cfg-voice-tone');
-        if (toneSelect) toneSelect.value = isPriya ? 'Warm & Empathetic' : 'Natural & Articulate';
+        if (toneSelect) toneSelect.value = this.activeCharacter;
 
         const nameInput = document.getElementById('cfg-agent-name');
-        if (nameInput) nameInput.value = p.name || `${this.activeAgentName} (Colloquial Indian English)`;
+        if (nameInput) nameInput.value = p.name || this.activeAgentName;
 
         const voiceSelect = document.getElementById('cfg-neural-voice');
-        if (voiceSelect) voiceSelect.value = this.activeNeuralVoice;
-
-        const callFlowSelect = document.getElementById('cfg-call-flow');
-        if (callFlowSelect) callFlowSelect.value = this.activeCallFlow;
+        if (voiceSelect) voiceSelect.value = this.activeVoice;
 
         const promptArea = document.getElementById('cfg-system-prompt');
         if (promptArea) {
-          promptArea.value = this.getCallFlowPrompt(this.activeAgentName, this.activeCallFlow);
+          promptArea.value = p.system_prompt || p.text_prompt || this.getCallFlowPrompt(this.activeAgentName, this.activeCallFlow);
         }
-
-        const initialAuthor = document.getElementById('initial-agent-author');
-        if (initialAuthor && !this.isConnected) initialAuthor.innerText = this.activeAgentName;
 
         const speakerStatus = document.getElementById('speaker-status');
         if (speakerStatus && !this.isConnected) {
@@ -1978,6 +2036,7 @@ STUDIO_HTML = r"""<!DOCTYPE html>
         const val = select.value;
         if (!val) return;
         this.activeNeuralVoice = val;
+        this.activeVoice = val;
 
         // Check if cloned voice
         const cloned = (this.clonedVoices || []).find(v => v.id === val);
@@ -1986,56 +2045,67 @@ STUDIO_HTML = r"""<!DOCTYPE html>
           this.activeCharacter = cloned.gender === 'Female' ? 'Warm & Empathetic' : 'Natural & Articulate';
           const nameInput = document.getElementById('cfg-agent-name');
           if (nameInput) nameInput.value = `${cloned.name} (Cloned Voice)`;
-          const toneSelect = document.getElementById('cfg-voice-tone');
-          if (toneSelect) toneSelect.value = this.activeCharacter;
           const badge = document.getElementById('active-agent-badge');
           if (badge) badge.innerText = cloned.name;
           const profileName = document.getElementById('profile-agent-name');
           if (profileName) profileName.innerText = cloned.name;
           const profileBadge = document.getElementById('profile-agent-badge');
-          if (profileBadge) profileBadge.innerText = `Cloned Neural Voice (${cloned.gender || 'Custom'})`;
+          if (profileBadge) profileBadge.innerText = `Cloned Voice (${cloned.gender || 'Custom'})`;
           const profileDesc = document.getElementById('profile-agent-desc');
-          if (profileDesc) profileDesc.innerText = `Custom zero-shot neural clone (${cloned.f0_pitch ? Math.round(cloned.f0_pitch) + 'Hz' : 'Acoustic Latent'}).`;
+          if (profileDesc) profileDesc.innerText = `Zero-shot voice clone (${cloned.speaker_similarity ? 'Similarity ' + cloned.speaker_similarity.toFixed(2) : 'Acoustic artifact'}).`;
           const profileMeta = document.getElementById('profile-agent-meta');
-          if (profileMeta) profileMeta.innerText = `${val} (Kokoro 24 kHz)`;
-          const speakerStatus = document.getElementById('speaker-status');
-          if (speakerStatus && !this.isConnected) speakerStatus.innerText = `Ready to Speak (${cloned.name})`;
-          const callBtnText = document.getElementById('call-btn-text');
-          if (callBtnText && !this.isConnected) callBtnText.innerText = `Start Call with ${cloned.name}`;
-          const promptArea = document.getElementById('cfg-system-prompt');
-          if (promptArea) promptArea.value = this.getCallFlowPrompt(cloned.name, this.activeCallFlow);
+          if (profileMeta) profileMeta.innerText = `${val} (Mimi 24 kHz)`;
+          const neuralBadge = document.getElementById('active-neural-voice-badge');
+          if (neuralBadge) neuralBadge.innerText = val;
           return;
         }
 
-        const isPriya = val.includes('priya') || val.includes('ananya') || val.startsWith('af_') || val.startsWith('hf_');
-        this.activeAgentName = isPriya ? 'Priya' : 'Aarav';
-        this.activeCharacter = isPriya ? 'Warm & Empathetic' : 'Natural & Articulate';
-        
-        const toneSelect = document.getElementById('cfg-voice-tone');
-        if (toneSelect) toneSelect.value = this.activeCharacter;
-        const nameInput = document.getElementById('cfg-agent-name');
-        if (nameInput) nameInput.value = `${this.activeAgentName} (Colloquial Indian English)`;
+        const presetMeta = {
+          'NATF0.pt': { name: 'NATF0', gender: 'Female', desc: 'Natural Female • Warm & Calm' },
+          'NATF1.pt': { name: 'NATF1', gender: 'Female', desc: 'Natural Female • Crisp & Professional' },
+          'NATF2.pt': { name: 'NATF2', gender: 'Female', desc: 'Natural Female • Expressive Teacher' },
+          'NATF3.pt': { name: 'NATF3', gender: 'Female', desc: 'Natural Female • Bright & Articulate' },
+          'NATM0.pt': { name: 'NATM0', gender: 'Male', desc: 'Natural Male • Deep & Authoritative' },
+          'NATM1.pt': { name: 'NATM1', gender: 'Male', desc: 'Natural Male • Warm Consultative' },
+          'NATM2.pt': { name: 'NATM2', gender: 'Male', desc: 'Natural Male • Technical & Energetic' },
+          'NATM3.pt': { name: 'NATM3', gender: 'Male', desc: 'Natural Male • Casual & Direct' },
+          'VARF0.pt': { name: 'VARF0', gender: 'Female', desc: 'Variety Female • Dynamic Storyteller' },
+          'VARF1.pt': { name: 'VARF1', gender: 'Female', desc: 'Variety Female • Upbeat Presenter' },
+          'VARF2.pt': { name: 'VARF2', gender: 'Female', desc: 'Variety Female • Thoughtful Analyst' },
+          'VARF3.pt': { name: 'VARF3', gender: 'Female', desc: 'Variety Female • Melodic & Serene' },
+          'VARF4.pt': { name: 'VARF4', gender: 'Female', desc: 'Variety Female • Vibrant Actor' },
+          'VARM0.pt': { name: 'VARM0', gender: 'Male', desc: 'Variety Male • Radio Announcer' },
+          'VARM1.pt': { name: 'VARM1', gender: 'Male', desc: 'Variety Male • Mars Astronaut' },
+          'VARM2.pt': { name: 'VARM2', gender: 'Male', desc: 'Variety Male • Empathetic Listener' },
+          'VARM3.pt': { name: 'VARM3', gender: 'Male', desc: 'Variety Male • Rapid Tech Host' },
+          'VARM4.pt': { name: 'VARM4', gender: 'Male', desc: 'Variety Male • Smooth Baritone' },
+        };
 
+        if (presetMeta[val]) {
+          const pm = presetMeta[val];
+          const badge = document.getElementById('active-agent-badge');
+          if (badge) badge.innerText = pm.name;
+          const profileBadge = document.getElementById('profile-agent-badge');
+          if (profileBadge) profileBadge.innerText = `PersonaPlex Preset (${pm.gender})`;
+          const profileMeta = document.getElementById('profile-agent-meta');
+          if (profileMeta) profileMeta.innerText = `${val} (Mimi 24 kHz)`;
+          const profileDesc = document.getElementById('profile-agent-desc');
+          if (profileDesc) profileDesc.innerText = pm.desc;
+          const neuralBadge = document.getElementById('active-neural-voice-badge');
+          if (neuralBadge) neuralBadge.innerText = val;
+          return;
+        }
+
+        const isPriya = val.includes('priya') || val.includes('ananya');
+        this.activeAgentName = isPriya ? 'Priya' : 'Aarav';
         const badge = document.getElementById('active-agent-badge');
         if (badge) badge.innerText = this.activeAgentName;
-        const profileName = document.getElementById('profile-agent-name');
-        if (profileName) profileName.innerText = this.activeAgentName;
         const profileBadge = document.getElementById('profile-agent-badge');
         if (profileBadge) profileBadge.innerText = isPriya ? 'Neural Voice (Female)' : 'Neural Voice (Male)';
         const profileMeta = document.getElementById('profile-agent-meta');
         if (profileMeta) profileMeta.innerText = `${val} (Kokoro 24 kHz)`;
-
-        const btnAarav = document.getElementById('btn-agent-aarav');
-        const btnPriya = document.getElementById('btn-agent-priya');
-        if (btnAarav) btnAarav.classList.toggle('active', !isPriya);
-        if (btnPriya) btnPriya.classList.toggle('active', isPriya);
-
-        const speakerStatus = document.getElementById('speaker-status');
-        if (speakerStatus && !this.isConnected) speakerStatus.innerText = `Ready to Speak (${this.activeAgentName})`;
-        const callBtnText = document.getElementById('call-btn-text');
-        if (callBtnText && !this.isConnected) callBtnText.innerText = `Start Call with ${this.activeAgentName}`;
-        const promptArea = document.getElementById('cfg-system-prompt');
-        if (promptArea) promptArea.value = this.getCallFlowPrompt(this.activeAgentName, this.activeCallFlow);
+        const neuralBadge = document.getElementById('active-neural-voice-badge');
+        if (neuralBadge) neuralBadge.innerText = val;
       }
 
       onVoiceToneChange() {
@@ -2146,6 +2216,12 @@ STUDIO_HTML = r"""<!DOCTYPE html>
         const genderSelect = document.getElementById('clone-voice-gender');
         const gender = genderSelect ? genderSelect.value : 'auto';
 
+        const consentCheck = document.getElementById('clone-consent-check');
+        if (!consentCheck || !consentCheck.checked) {
+          alert('Voice cloning requires explicit legal consent. Please check the consent confirmation box.');
+          return;
+        }
+
         let audioFile = this.recordedCloneBlob || this.uploadedCloneFile;
         if (!audioFile) {
           alert('Please record microphone audio or select an audio file first.');
@@ -2160,6 +2236,7 @@ STUDIO_HTML = r"""<!DOCTYPE html>
         const formData = new FormData();
         formData.append('audio', audioFile, fileName);
         formData.append('voice_name', voiceName);
+        formData.append('consent', 'true');
         if (gender !== 'auto') formData.append('gender', gender);
 
         try {
