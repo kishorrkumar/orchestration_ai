@@ -58,6 +58,8 @@ class PersonaPlexWorkerClient:
         host: str = "localhost",
         port: int = 8998,
         use_ssl: bool = False,
+        use_opus: bool = False,
+        sample_rate: int = 24000,
         connect_timeout: float = 10.0,
         handshake_timeout: float = 15.0,
     ):
@@ -65,6 +67,8 @@ class PersonaPlexWorkerClient:
         self.host = host
         self.port = port
         self.use_ssl = use_ssl
+        self.use_opus = use_opus
+        self.sample_rate = sample_rate
         self.connect_timeout = connect_timeout
         self.handshake_timeout = handshake_timeout
 
@@ -72,6 +76,17 @@ class PersonaPlexWorkerClient:
         self._status: WorkerStatus = WorkerStatus.IDLE
         self._active_session_id: Optional[str] = None
         self._connected_at: Optional[float] = None
+
+        self._opus_reader = None
+        self._opus_writer = None
+        if self.use_opus:
+            try:
+                import sphn
+                self._opus_reader = sphn.OpusStreamReader(self.sample_rate)
+                self._opus_writer = sphn.OpusStreamWriter(self.sample_rate)
+            except Exception as e:
+                logger.warning(f"sphn library unavailable. Opus transcoding disabled: {e}")
+                self.use_opus = False
 
         # Telemetry
         self.frames_sent: int = 0
@@ -169,16 +184,25 @@ class PersonaPlexWorkerClient:
         if self._ws is None or self._status != WorkerStatus.BUSY:
             raise WorkerConnectionError(f"Worker {self.worker_id} is not connected")
 
-        if isinstance(audio_data, np.ndarray):
-            if audio_data.dtype == np.float32:
-                # Upstream server accepts Opus or raw PCM
-                payload = audio_data.tobytes()
-            elif audio_data.dtype == np.int16:
-                payload = audio_data.tobytes()
+        if self.use_opus and self._opus_writer is not None:
+            if isinstance(audio_data, bytes):
+                samples = np.frombuffer(audio_data, dtype=np.float32)
+            elif audio_data.dtype != np.float32:
+                samples = audio_data.astype(np.float32)
             else:
-                payload = audio_data.astype(np.float32).tobytes()
+                samples = audio_data
+            self._opus_writer.append_pcm(samples)
+            payload = self._opus_writer.read_bytes()
+            if not payload:
+                return
         else:
-            payload = audio_data
+            if isinstance(audio_data, np.ndarray):
+                if audio_data.dtype == np.float32 or audio_data.dtype == np.int16:
+                    payload = audio_data.tobytes()
+                else:
+                    payload = audio_data.astype(np.float32).tobytes()
+            else:
+                payload = audio_data
 
         msg_bytes = encode_message(AudioMessage(data=payload))
         await self._ws.send(msg_bytes)
@@ -207,11 +231,20 @@ class PersonaPlexWorkerClient:
                     continue
                 try:
                     msg = decode_message(raw)
-                    if msg.type == MessageType.AUDIO:
+                    if isinstance(msg, AudioMessage):
                         self.frames_received += 1
-                    elif msg.type == MessageType.TEXT:
+                        if self.use_opus and self._opus_reader is not None:
+                            self._opus_reader.append_bytes(msg.data)
+                            pcm = self._opus_reader.read_pcm()
+                            if len(pcm) > 0:
+                                yield AudioMessage(data=pcm.astype(np.float32).tobytes())
+                        else:
+                            yield msg
+                    elif isinstance(msg, TextMessage):
                         self.tokens_received += 1
-                    yield msg
+                        yield msg
+                    else:
+                        yield msg
                 except Exception as ex:
                     logger.warning(f"Error decoding worker message: {ex}")
         except websockets.ConnectionClosed:
@@ -229,3 +262,10 @@ class PersonaPlexWorkerClient:
             self._ws = None
         self._status = WorkerStatus.IDLE
         self._active_session_id = None
+        if self.use_opus:
+            try:
+                import sphn
+                self._opus_reader = sphn.OpusStreamReader(self.sample_rate)
+                self._opus_writer = sphn.OpusStreamWriter(self.sample_rate)
+            except Exception:
+                pass

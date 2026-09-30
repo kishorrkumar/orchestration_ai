@@ -117,3 +117,27 @@ def test_int16_to_float32_asymmetry_bounds():
     assert converted[0] == -1.0
     assert converted[1] <= 1.0
 
+
+def test_opus_codec_roundtrip():
+    """AUDIT-001: sphn OpusStreamWriter and OpusStreamReader roundtrip for upstream Moshi compatibility."""
+    import sphn
+    sr = 24000
+    writer = sphn.OpusStreamWriter(sr)
+    reader = sphn.OpusStreamReader(sr)
+
+    # 1920-sample audio frame (80ms at 24kHz)
+    t = np.linspace(0, 0.08, 1920, endpoint=False)
+    original_pcm = (0.5 * np.sin(2 * np.pi * 440.0 * t)).astype(np.float32)
+
+    total_decoded = 0
+    for _ in range(5):
+        writer.append_pcm(original_pcm)
+        opus_bytes = writer.read_bytes()
+        if opus_bytes:
+            reader.append_bytes(opus_bytes)
+        pcm = reader.read_pcm()
+        total_decoded += len(pcm)
+
+    assert total_decoded >= 1920, f"Expected decoded frames, got {total_decoded} samples"
+
+

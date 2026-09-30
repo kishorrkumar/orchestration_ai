@@ -27,6 +27,7 @@ class WorkerNodeConfig(BaseModel):
     host: str = Field(default="localhost", description="Worker host or IP")
     port: int = Field(default=8998, ge=1, le=65535, description="Worker port")
     use_ssl: bool = Field(default=False, description="Use WSS if True")
+    use_opus: bool = Field(default=False, description="Use Opus transcoding for upstream moshi server")
     gpu_id: Optional[int] = Field(default=None, description="GPU device index worker is pinned to")
 
 
@@ -60,6 +61,7 @@ class WorkerPool:
             host=config.host,
             port=config.port,
             use_ssl=config.use_ssl,
+            use_opus=config.use_opus,
         )
         self._workers[config.id] = client
         self._configs[config.id] = config
