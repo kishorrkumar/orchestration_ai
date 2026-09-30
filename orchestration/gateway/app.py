@@ -44,6 +44,8 @@ from ..protocol.messages import (
     decode_message,
 )
 from ..rag.engine import default_rag_engine
+from ..config import settings
+from .security import default_rate_limiter
 from .studio_ui import STUDIO_HTML
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
 logger = logging.getLogger("orchestration.gateway")
@@ -578,6 +580,25 @@ def create_app(
         character: Optional[str] = Query(default=None, description="Optional character override (Professional, Friendly & Funny)"),
         call_flow: Optional[str] = Query(default=None, description="Optional call flow role"),
     ):
+        # 0. Check Rate Limit
+        client_ip = websocket.client.host if websocket.client else "127.0.0.1"
+        if not default_rate_limiter.is_allowed(client_ip):
+            await websocket.close(code=status.WS_1008_POLICY_VIOLATION, reason="Rate limit exceeded")
+            return
+
+        # 0b. Check API Key Authentication if configured
+        if settings.gateway.api_key:
+            auth_header = websocket.headers.get("authorization", "")
+            bearer_token = auth_header[7:].strip() if auth_header.startswith("Bearer ") else None
+            api_key = (
+                websocket.headers.get("x-api-key")
+                or bearer_token
+                or websocket.query_params.get("api_key")
+            )
+            if not api_key or api_key != settings.gateway.api_key:
+                await websocket.close(code=status.WS_1008_POLICY_VIOLATION, reason="Unauthorized: invalid or missing API key")
+                return
+
         await websocket.accept()
 
         # 1. Resolve Persona

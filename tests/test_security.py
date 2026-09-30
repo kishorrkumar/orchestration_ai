@@ -1,3 +1,4 @@
+import asyncio
 import pytest
 from httpx import AsyncClient, ASGITransport
 from orchestration.gateway.app import create_app
@@ -59,3 +60,49 @@ async def test_api_key_authentication_enforcement():
 
     # Reset API key
     settings.gateway.api_key = None
+
+
+@pytest.mark.asyncio
+async def test_websocket_api_key_authentication_enforcement():
+    """AUDIT-005: /v1/realtime WebSocket must enforce API key validation when configured."""
+    from websockets.asyncio.client import connect as ws_connect
+    import uvicorn
+    import websockets.exceptions
+
+    settings.gateway.api_key = "ws-secret-key-999"
+    try:
+        pool = WorkerPool()
+        registry = PersonaRegistry()
+        mgr = SessionManager(pool=pool)
+        app = create_app(pool=pool, registry=registry, session_manager=mgr)
+
+        gw_port = 8767
+        config = uvicorn.Config(app, host="127.0.0.1", port=gw_port, log_level="warning")
+        server = uvicorn.Server(config)
+        server_task = asyncio.create_task(server.serve())
+        await asyncio.sleep(0.3)
+
+        # 1. Connecting without API key should be rejected
+        url_no_key = f"ws://127.0.0.1:{gw_port}/v1/realtime?persona_id=indian_pro"
+        with pytest.raises((websockets.exceptions.InvalidStatus, websockets.exceptions.ConnectionClosed)):
+            async with ws_connect(url_no_key) as ws:
+                await ws.recv()
+
+        # 2. Connecting with wrong API key should be rejected
+        url_wrong_key = f"ws://127.0.0.1:{gw_port}/v1/realtime?persona_id=indian_pro&api_key=wrong"
+        with pytest.raises((websockets.exceptions.InvalidStatus, websockets.exceptions.ConnectionClosed)):
+            async with ws_connect(url_wrong_key) as ws:
+                await ws.recv()
+
+        # 3. Connecting with correct API key should succeed
+        url_valid_key = f"ws://127.0.0.1:{gw_port}/v1/realtime?persona_id=indian_pro&api_key=ws-secret-key-999"
+        async with ws_connect(url_valid_key) as ws:
+            # First frame received is handshake (0x00)
+            frame = await ws.recv()
+            assert frame[0] == 0x00
+
+        server.should_exit = True
+        await server_task
+    finally:
+        settings.gateway.api_key = None
+
