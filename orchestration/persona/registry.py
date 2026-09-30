@@ -13,6 +13,7 @@ import re
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 from pydantic import BaseModel, Field, model_validator
+from .prompts import build_system_prompt
 
 
 # 18 official PersonaPlex voice preset IDs
@@ -79,7 +80,7 @@ def estimate_token_count(text: str) -> int:
     return max(1, int(len(words) * 1.35))
 
 
-def validate_system_prompt(text: str, max_tokens: int = 350) -> str:
+def validate_system_prompt(text: str, max_tokens: Optional[int] = None) -> str:
     """
     Validates that system prompt fits within safe latency bounds.
     Upstream steps each token sequentially during startup; long prompts cause connection timeouts.
@@ -87,16 +88,17 @@ def validate_system_prompt(text: str, max_tokens: int = 350) -> str:
     cleaned = sanitize_system_prompt(text)
     if not cleaned:
         raise ValueError("System prompt cannot be empty.")
-    tokens = estimate_token_count(cleaned)
-    if tokens > max_tokens:
-        raise ValueError(
-            f"System prompt too long ({tokens} estimated tokens > {max_tokens} max). "
-            "Please shorten to avoid initialization timeouts."
-        )
+    if max_tokens is not None:
+        tokens = estimate_token_count(cleaned)
+        if tokens > max_tokens:
+            raise ValueError(
+                f"System prompt too long ({tokens} estimated tokens > {max_tokens} max). "
+                "Please shorten to avoid initialization timeouts."
+            )
     return cleaned
 
 
-def wrap_with_system_tags(text: str, max_tokens: int = 350) -> str:
+def wrap_with_system_tags(text: str, max_tokens: Optional[int] = None) -> str:
     """
     Format text prompt with the exact system delimiters expected by PersonaPlex:
     '<system> {text} <system>'
@@ -161,7 +163,7 @@ class PersonaConfig(BaseModel):
                 data["voice_prompt"] = data.get("voice_ref", "NATF2.pt")
         return data
 
-    def get_formatted_text_prompt(self, max_tokens: int = 350) -> str:
+    def get_formatted_text_prompt(self, max_tokens: Optional[int] = None) -> str:
         """Returns the system prompt properly delimited with <system> tags."""
         content = self.system_prompt or self.text_prompt or ""
         return wrap_with_system_tags(content, max_tokens=max_tokens)
@@ -264,14 +266,13 @@ class PersonaRegistry:
                 name="Aarav (Colloquial Indian English • Male)",
                 description="Articulate, natural, conversational Indian English speaker with relaxed cadence.",
                 gender="male",
+                accent="Indian English",
+                character="Professional",
                 voice_ref="NATM0.pt",
                 neural_voice="en-IN-PrabhatNeural",
                 speaking_style="colloquial, articulate",
                 language="en",
-                system_prompt=(
-                    "You are Aarav, an articulate and conversational Indian English speaker. Speak naturally in short, "
-                    "engaging sentences. Use natural phrases like 'sounds good', 'let's do that', and 'absolutely'."
-                ),
+                system_prompt=build_system_prompt("indian", "professional"),
             )
         )
 
@@ -282,14 +283,13 @@ class PersonaRegistry:
                 name="Priya (Colloquial Indian English • Female)",
                 description="Warm, bright, empathetic, and colloquial Indian English speaker.",
                 gender="female",
+                accent="Indian English",
+                character="Warm",
                 voice_ref="NATF0.pt",
                 neural_voice="priya_colloquial",
                 speaking_style="warm, empathetic",
                 language="en",
-                system_prompt=(
-                    "You are Priya, a warm and empathetic conversationalist. Speak casually, listen intently, "
-                    "and keep responses brief, natural, and friendly."
-                ),
+                system_prompt=build_system_prompt("indian", "warm"),
             )
         )
 
@@ -300,14 +300,13 @@ class PersonaRegistry:
                 name="Kabir (Colloquial Indian English • Friendly & Funny)",
                 description="Witty, warm, charismatic Indian English conversational companion.",
                 gender="male",
+                accent="Indian English",
+                character="Friendly & Funny",
                 voice_ref="NATM3.pt",
                 neural_voice="en-IN-NeerjaExpressiveNeural",
                 speaking_style="witty, charismatic",
                 language="en",
-                system_prompt=(
-                    "You are Kabir, a cheerful and witty friend. Bring light humor, quick banter, and warm energy "
-                    "to every turn without overexplaining."
-                ),
+                system_prompt=build_system_prompt("indian", "funny"),
             )
         )
 
