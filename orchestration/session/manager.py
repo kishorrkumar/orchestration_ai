@@ -66,12 +66,37 @@ class SessionMetrics:
         self.connected_at: Optional[float] = None
         self.ended_at: Optional[float] = None
 
+        # 1. Listening
         self.user_frames_in = 0
-        self.agent_frames_out = 0
+        self.dropped_frames = 0
+        self.vad_speech_frames = 0
+
+        # 2. Understanding
         self.text_tokens_out = 0
-        self.barge_in_events = 0
-        self.underrun_events = 0
         self.transcript_tokens: List[str] = []
+
+        # 3. Reasoning & Goals
+        self.business_goal: Optional[Dict[str, Any]] = None
+        self.reasoning_notes: List[str] = []
+
+        # 4. Speaking
+        self.agent_frames_out = 0
+        self.clipping_events = 0
+        self.underrun_events = 0
+
+        # 5. Latency
+        self.ttfa_history_ms: List[float] = []
+        self.frame_step_times_ms: List[float] = []
+
+        # 6. Conversation Dynamics
+        self.barge_in_events = 0
+        self.backchannel_events = 0
+        self.turn_count = 0
+        self.silence_frames = 0
+
+        # 7. Task Success & Outcome Tagging
+        self.outcome_tag: str = "in_progress"  # in_progress, success, resolved, escalated, dropped
+        self.outcome_metadata: Dict[str, Any] = {}
 
     @property
     def duration_sec(self) -> float:
@@ -83,6 +108,30 @@ class SessionMetrics:
     def full_transcript(self) -> str:
         return "".join(self.transcript_tokens).strip()
 
+    @property
+    def ttfa_p50_ms(self) -> float:
+        if not self.ttfa_history_ms:
+            return 0.0
+        s = sorted(self.ttfa_history_ms)
+        return round(s[len(s) // 2], 2)
+
+    @property
+    def frame_step_avg_ms(self) -> float:
+        if not self.frame_step_times_ms:
+            return 0.0
+        return round(sum(self.frame_step_times_ms) / len(self.frame_step_times_ms), 2)
+
+    def record_ttfa(self, ttfa_ms: float) -> None:
+        self.ttfa_history_ms.append(round(ttfa_ms, 2))
+
+    def record_frame_step(self, step_ms: float) -> None:
+        self.frame_step_times_ms.append(round(step_ms, 2))
+
+    def tag_outcome(self, outcome: str, metadata: Optional[Dict[str, Any]] = None) -> None:
+        self.outcome_tag = outcome
+        if metadata:
+            self.outcome_metadata.update(metadata)
+
     def to_dict(self) -> dict:
         return {
             "session_id": self.session_id,
@@ -93,6 +142,43 @@ class SessionMetrics:
             "connected_at": self.connected_at,
             "ended_at": self.ended_at,
             "duration_sec": round(self.duration_sec, 2),
+            # 7 Dimensions
+            "listening": {
+                "user_frames_in": self.user_frames_in,
+                "dropped_frames": self.dropped_frames,
+                "vad_speech_frames": self.vad_speech_frames,
+            },
+            "understanding": {
+                "transcript": self.full_transcript,
+                "text_tokens_out": self.text_tokens_out,
+                "word_count": len(self.full_transcript.split()),
+            },
+            "reasoning": {
+                "persona_id": self.persona_id,
+                "business_goal": self.business_goal,
+                "reasoning_notes": self.reasoning_notes,
+            },
+            "speaking": {
+                "agent_frames_out": self.agent_frames_out,
+                "clipping_events": self.clipping_events,
+                "underrun_events": self.underrun_events,
+            },
+            "latency": {
+                "ttfa_p50_ms": self.ttfa_p50_ms,
+                "frame_step_avg_ms": self.frame_step_avg_ms,
+                "target_ttfa_met": self.ttfa_p50_ms < 300.0 if self.ttfa_history_ms else True,
+                "target_step_met": self.frame_step_avg_ms < 80.0 if self.frame_step_times_ms else True,
+            },
+            "conversation": {
+                "barge_in_events": self.barge_in_events,
+                "backchannel_events": self.backchannel_events,
+                "turn_count": self.turn_count,
+            },
+            "task_success": {
+                "outcome_tag": self.outcome_tag,
+                "outcome_metadata": self.outcome_metadata,
+            },
+            # Top-level backwards compatibility fields
             "user_frames_in": self.user_frames_in,
             "agent_frames_out": self.agent_frames_out,
             "text_tokens_out": self.text_tokens_out,
