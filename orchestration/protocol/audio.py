@@ -32,7 +32,7 @@ def float32_to_int16(audio: np.ndarray) -> np.ndarray:
 
 def int16_to_float32(audio: np.ndarray) -> np.ndarray:
     """Convert int16 audio [-32768, 32767] to float32 [-1.0, 1.0]."""
-    return (audio.astype(np.float32) / 32767.0)
+    return np.clip(audio.astype(np.float32) / 32767.0, -1.0, 1.0)
 
 
 def compute_rms(samples: np.ndarray) -> float:
@@ -150,11 +150,25 @@ class AudioFrameBuffer:
         self._underrun_count: int = 0
         self._total_frames_pushed: int = 0
         self._total_frames_popped: int = 0
+        self._byte_remainder: bytes = b""
 
     def push_pcm_bytes(self, pcm_bytes: bytes, is_int16: bool = False) -> None:
         """Push raw PCM bytes into buffer."""
+        if not pcm_bytes and not self._byte_remainder:
+            return
+        if self._byte_remainder:
+            pcm_bytes = self._byte_remainder + pcm_bytes
+            self._byte_remainder = b""
+
+        elem_size = 2 if is_int16 else 4
+        remainder = len(pcm_bytes) % elem_size
+        if remainder != 0:
+            self._byte_remainder = pcm_bytes[-remainder:]
+            pcm_bytes = pcm_bytes[:-remainder]
+
         if not pcm_bytes:
             return
+
         if is_int16:
             samples_i16 = np.frombuffer(pcm_bytes, dtype=np.int16)
             samples = int16_to_float32(samples_i16) if self.dtype == np.float32 else samples_i16
@@ -213,6 +227,7 @@ class AudioFrameBuffer:
     def clear(self) -> None:
         """Clear all buffered audio."""
         self._buffer = np.empty(0, dtype=self.dtype)
+        self._byte_remainder = b""
 
     @property
     def buffered_samples(self) -> int:

@@ -89,3 +89,31 @@ def test_frame_buffer_push_pcm_bytes():
     buffer.push_pcm_bytes(int16_samples.tobytes(), is_int16=True)
     assert buffer.buffered_samples == 3
     assert buffer._buffer.dtype == np.float32
+
+
+def test_frame_buffer_partial_byte_remainder_and_odd_bytes():
+    """AUDIT-004: Push odd number of bytes across chunks without crashing on np.frombuffer."""
+    buffer = AudioFrameBuffer(dtype=np.float32)
+    int16_samples = np.array([500, -500], dtype=np.int16)
+    full_bytes = int16_samples.tobytes()  # 4 bytes
+    assert len(full_bytes) == 4
+
+    # Push 3 bytes (first sample + 1 byte of second sample)
+    buffer.push_pcm_bytes(full_bytes[:3], is_int16=True)
+    assert buffer.buffered_samples == 1  # Only 1 complete int16 sample so far
+
+    # Push the remaining 1 byte of the second sample
+    buffer.push_pcm_bytes(full_bytes[3:], is_int16=True)
+    assert buffer.buffered_samples == 2
+    assert buffer._buffer[0] == pytest.approx(500.0 / 32767.0, rel=1e-3)
+    assert buffer._buffer[1] == pytest.approx(-500.0 / 32767.0, rel=1e-3)
+
+
+def test_int16_to_float32_asymmetry_bounds():
+    """AUDIT-013: int16 min (-32768) must not exceed -1.0."""
+    extreme = np.array([-32768, 32767], dtype=np.int16)
+    converted = int16_to_float32(extreme)
+    assert converted[0] >= -1.0
+    assert converted[0] == -1.0
+    assert converted[1] <= 1.0
+
