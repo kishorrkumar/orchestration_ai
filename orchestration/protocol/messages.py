@@ -128,10 +128,15 @@ def encode_message(message: WSMessage) -> bytes:
         raise ValueError(f"Unknown message type: {type(message)}")
 
 
+MAX_MESSAGE_SIZE: int = 4 * 1024 * 1024  # 4 MB max payload
+
+
 def decode_message(payload: bytes) -> WSMessage:
     """Decode a binary payload into the corresponding WSMessage."""
     if not payload:
         raise ValueError("Cannot decode empty payload")
+    if len(payload) > MAX_MESSAGE_SIZE:
+        raise ValueError(f"Payload exceeds maximum allowed size ({len(payload)} > {MAX_MESSAGE_SIZE})")
 
     kind = payload[0]
     body = payload[1:]

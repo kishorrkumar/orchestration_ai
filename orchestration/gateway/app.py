@@ -659,7 +659,12 @@ def create_app(
         try:
             while True:
                 msg_bytes = await websocket.receive_bytes()
-                await session.ingest_client_message(msg_bytes)
+                res = await session.ingest_client_message(msg_bytes)
+                if isinstance(res, ErrorMessage):
+                    try:
+                        await websocket.send_bytes(encode_message(res))
+                    except Exception:
+                        break
         except WebSocketDisconnect:
             logger.info(f"Client disconnected from session {session.session_id}")
         except Exception as e:

@@ -106,3 +106,11 @@ def test_empty_payload_fails():
 def test_invalid_kind_fails():
     with pytest.raises(ValueError, match="Unknown message kind"):
         decode_message(b"\xFF\x01\x02")
+
+
+def test_oversized_payload_fails():
+    """AUDIT-003: Payload exceeding MAX_MESSAGE_SIZE must be rejected."""
+    oversized = b"\x01" + (b"\x00" * (4 * 1024 * 1024 + 1))
+    with pytest.raises(ValueError, match="Payload exceeds maximum allowed size"):
+        decode_message(oversized)
+

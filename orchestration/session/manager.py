@@ -246,10 +246,17 @@ class VoiceSession:
         - If text (0x02): forward to worker.
         - If control (0x03): forward to worker.
         """
-        if self._state not in (SessionState.ACTIVE, SessionState.INTERRUPTED):
-            return None
+        try:
+            msg = decode_message(raw_bytes)
+        except Exception as e:
+            return ErrorMessage(error=f"Malformed frame: {str(e)}")
 
-        msg = decode_message(raw_bytes)
+        if self._state not in (SessionState.ACTIVE, SessionState.INTERRUPTED):
+            if msg.type == MessageType.AUDIO:
+                return ErrorMessage(error="Handshake not completed. Audio not accepted before session is active.")
+            elif msg.type == MessageType.HANDSHAKE:
+                return None
+            return None
 
         if msg.type == MessageType.AUDIO:
             audio_data = msg.data
