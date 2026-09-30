@@ -1,0 +1,42 @@
+# ==============================================================================
+# Caddyfile: Production TLS Reverse Proxy for PersonaPlex Gateway
+# Handles:
+# 1. Automatic HTTPS certificate provisioning (Let's Encrypt / ZeroSSL)
+# 2. WebSocket upgrade for /v1/realtime (WSS required for browser microphone access)
+# 3. HTTP reverse proxy with client IP header preservation
+# ==============================================================================
+
+your-domain-or-ip.com {
+    # WebSocket and HTTP proxy to Gateway on port 8000
+    reverse_proxy 127.0.0.1:8000 {
+        # WebSocket headers
+        header_up Host {host}
+        header_up X-Real-IP {remote_host}
+        header_up X-Forwarded-For {remote_host}
+        header_up X-Forwarded-Proto {scheme}
+
+        # Generous timeouts for persistent streaming calls
+        flush_interval -1
+    }
+
+    # Max upload limit for voice clone reference samples (30 MB)
+    request_body {
+        max_size 30MB
+    }
+
+    # Security Headers
+    header {
+        Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+        X-Content-Type-Options "nosniff"
+        X-Frame-Options "DENY"
+        Referrer-Policy "strict-origin-when-cross-origin"
+    }
+
+    # Logging
+    log {
+        output file /var/log/caddy/personaplex.log {
+            roll_size 50mb
+            roll_keep 5
+        }
+    }
+}

@@ -1,0 +1,38 @@
+[Unit]
+Description=NVIDIA PersonaPlex 7B Inference Worker on Port %I
+After=network.target nvidia-persistenced.service
+Wants=nvidia-persistenced.service
+
+[Service]
+Type=simple
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/home/ubuntu/orchestration_ai
+Environment="PATH=/home/ubuntu/personaplex_env/bin:/usr/local/cuda/bin:/usr/bin:/bin"
+Environment="HF_HOME=/data/huggingface"
+Environment="PYTHONUNBUFFERED=1"
+Environment="CUDA_VISIBLE_DEVICES=0"
+
+# Bind strictly to localhost: worker %I (e.g. 8998, 8999)
+ExecStart=/home/ubuntu/personaplex_env/bin/python -m moshi.server \
+    --host 127.0.0.1 \
+    --port %I \
+    --voice-prompt-dir /data/huggingface/voices
+
+# Restart policies to recover from OOM or worker crash
+Restart=always
+RestartSec=5s
+KillMode=mixed
+TimeoutStopSec=15s
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=personaplex-worker-%I
+
+# Resource limits
+LimitNOFILE=65536
+LimitMEMLOCK=infinity
+
+[Install]
+WantedBy=multi-user.target

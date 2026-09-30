@@ -140,6 +140,8 @@ def create_app(
         lifespan=lifespan,
     )
 
+    from .security import SecurityMiddleware
+    app.add_middleware(SecurityMiddleware)
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["*"],

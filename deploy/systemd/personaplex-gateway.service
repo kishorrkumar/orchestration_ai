@@ -1,0 +1,32 @@
+[Unit]
+Description=NVIDIA PersonaPlex Real-Time Orchestration Gateway
+After=network.target
+
+[Service]
+Type=simple
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/home/ubuntu/orchestration_ai
+Environment="PATH=/home/ubuntu/personaplex_env/bin:/usr/local/cuda/bin:/usr/bin:/bin"
+Environment="PYTHONUNBUFFERED=1"
+EnvironmentFile=-/etc/personaplex/gateway.env
+
+# Launch Gateway binding to 127.0.0.1:8000 (reverse-proxied by Caddy/Nginx)
+ExecStart=/home/ubuntu/personaplex_env/bin/python -m orchestration.cli run-gateway \
+    --host 127.0.0.1 \
+    --port 8000 \
+    --worker 127.0.0.1:8998
+
+Restart=always
+RestartSec=3s
+KillMode=mixed
+TimeoutStopSec=10s
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=personaplex-gateway
+
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target
