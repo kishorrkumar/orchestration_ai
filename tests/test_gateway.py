@@ -227,3 +227,56 @@ async def test_gateway_websocket_realtime():
 
     finally:
         await mock.stop()
+
+
+@pytest.mark.asyncio
+async def test_gateway_worker_drop_releases_lease():
+    """AUDIT-008: When upstream worker disconnects unexpectedly, gateway terminates session and releases lease."""
+    from websockets.asyncio.client import connect as ws_connect
+    import uvicorn
+
+    mock_port = 9893
+    mock = PersonaPlexMockServer(host="127.0.0.1", port=mock_port)
+    await mock.start()
+
+    try:
+        pool = WorkerPool()
+        pool.register_worker(WorkerNodeConfig(id="worker-drop-test", host="127.0.0.1", port=mock_port))
+        registry = PersonaRegistry()
+        mgr = SessionManager(pool=pool)
+        app = create_app(pool=pool, registry=registry, session_manager=mgr)
+
+        gw_port = 8766
+        config = uvicorn.Config(app, host="127.0.0.1", port=gw_port, log_level="warning")
+        server = uvicorn.Server(config)
+        server_task = asyncio.create_task(server.serve())
+        await asyncio.sleep(0.3)
+
+        url = f"ws://127.0.0.1:{gw_port}/v1/realtime?persona_id=wise_teacher"
+        async with ws_connect(url) as ws:
+            # Consume handshake
+            msg1 = await ws.recv()
+            assert decode_message(msg1).type == MessageType.HANDSHAKE
+            msg2 = await ws.recv()
+            assert decode_message(msg2).type == MessageType.METADATA
+
+            w = pool.get_worker("worker-drop-test")
+            assert not w.is_available
+
+            # Abruptly stop worker while client is idle (sending nothing)
+            await mock.stop()
+
+            # Gateway should notice worker forwarder termination within 1.0s and release lease
+            for _ in range(20):
+                if w.is_available:
+                    break
+                await asyncio.sleep(0.05)
+
+            assert w.is_available, "Worker was not released after worker disconnect!"
+
+        server.should_exit = True
+        await server_task
+    finally:
+        if mock._server and mock._server.is_serving():
+            await mock.stop()
+

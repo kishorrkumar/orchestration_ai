@@ -143,3 +143,70 @@ async def test_ingest_malformed_message_returns_error_without_crash():
     finally:
         await mock.stop()
 
+
+@pytest.mark.asyncio
+async def test_worker_release_on_start_failure():
+    """AUDIT-002: If session.start() fails, worker lease must be released back to the pool."""
+    pool = WorkerPool()
+    # Port 19999 has no server running
+    pool.register_worker(WorkerNodeConfig(id="worker-fail-start", host="127.0.0.1", port=19999))
+    manager = SessionManager(pool=pool)
+    persona = default_registry.get("indian_pro")
+
+    session = await manager.create_session(persona=persona, session_id="test-start-fail")
+    # Worker is leased
+    worker = pool.get_worker("worker-fail-start")
+    assert not worker.is_available
+
+    with pytest.raises(Exception):
+        await session.start()
+
+    # Worker MUST be released so another session can acquire it
+    assert worker.is_available, "Worker was leaked after session.start() failed!"
+
+
+@pytest.mark.asyncio
+async def test_barge_in_suppresses_agent_frames():
+    """AUDIT-007: When barge-in occurs, agent audio frames must be suppressed until user finishes speaking."""
+    port = 9891
+    mock = PersonaPlexMockServer(host="127.0.0.1", port=port, frame_interval_sec=0.02)
+    await mock.start()
+    try:
+        pool = WorkerPool()
+        pool.register_worker(WorkerNodeConfig(id="worker-sess-bargein", host="127.0.0.1", port=port))
+        manager = SessionManager(pool=pool)
+        persona = default_registry.get("indian_pro")
+        session = await manager.create_session(persona=persona, session_id="test-bargein-suppression")
+        await session.start()
+
+        received_audio: list[bytes] = []
+        async def send_to_client(payload: bytes):
+            if payload and payload[0] == 0x01:
+                received_audio.append(payload)
+
+        forwarder_task = asyncio.create_task(session.run_worker_forwarder(send_to_client))
+        await asyncio.sleep(0.1)
+        initial_count = len(received_audio)
+        assert initial_count > 0, "Expected initial agent audio frames"
+
+        # User interrupts with loud speech
+        loud_frame = np.ones(FRAME_SIZE, dtype=np.float32) * 0.5
+        await session.ingest_client_message(encode_message(AudioMessage(data=loud_frame.tobytes())))
+        assert session.state == SessionState.INTERRUPTED
+
+        # During interruption, no new agent audio frames should reach client
+        count_at_interrupt = len(received_audio)
+        await asyncio.sleep(0.1)
+        assert len(received_audio) == count_at_interrupt, "Agent audio frames leaked during user interruption!"
+
+        forwarder_task.cancel()
+        try:
+            await forwarder_task
+        except asyncio.CancelledError:
+            pass
+        await manager.end_session("test-bargein-suppression")
+    finally:
+        await mock.stop()
+
+
+

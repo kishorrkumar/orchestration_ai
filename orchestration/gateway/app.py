@@ -654,27 +654,36 @@ def create_app(
             except Exception:
                 pass
 
+        async def client_receive_loop():
+            try:
+                while True:
+                    msg_bytes = await websocket.receive_bytes()
+                    res = await session.ingest_client_message(msg_bytes)
+                    if isinstance(res, ErrorMessage):
+                        try:
+                            await websocket.send_bytes(encode_message(res))
+                        except Exception:
+                            break
+            except WebSocketDisconnect:
+                logger.info(f"Client disconnected from session {session.session_id}")
+            except Exception as e:
+                logger.warning(f"WebSocket error in session {session.session_id}: {e}")
+
         forwarder_task = asyncio.create_task(session.run_worker_forwarder(send_to_client))
+        receiver_task = asyncio.create_task(client_receive_loop())
 
         try:
-            while True:
-                msg_bytes = await websocket.receive_bytes()
-                res = await session.ingest_client_message(msg_bytes)
-                if isinstance(res, ErrorMessage):
-                    try:
-                        await websocket.send_bytes(encode_message(res))
-                    except Exception:
-                        break
-        except WebSocketDisconnect:
-            logger.info(f"Client disconnected from session {session.session_id}")
-        except Exception as e:
-            logger.warning(f"WebSocket error in session {session.session_id}: {e}")
+            done, pending = await asyncio.wait(
+                [forwarder_task, receiver_task],
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            for t in pending:
+                t.cancel()
+                try:
+                    await t
+                except (asyncio.CancelledError, Exception):
+                    pass
         finally:
-            forwarder_task.cancel()
-            try:
-                await forwarder_task
-            except asyncio.CancelledError:
-                pass
             await mgr.end_session(session.session_id)
 
     # ==========================================================

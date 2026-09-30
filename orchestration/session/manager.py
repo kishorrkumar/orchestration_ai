@@ -237,6 +237,10 @@ class VoiceSession:
             self.metrics.connected_at = time.time()
         except Exception as e:
             self.set_state(SessionState.FAILED)
+            try:
+                await self.pool.release_worker(self.worker.worker_id)
+            except Exception as rel_err:
+                logger.warning(f"Error releasing worker after start failure: {rel_err}")
             raise e
 
     async def ingest_client_message(self, raw_bytes: bytes) -> Optional[WSMessage]:
@@ -274,6 +278,10 @@ class VoiceSession:
                         self._user_speaking = True
                         self.metrics.barge_in_events += 1
                         self.set_state(SessionState.INTERRUPTED)
+                        try:
+                            await self.worker.send_control(ControlAction.PAUSE)
+                        except Exception:
+                            pass
                     self._last_user_speech_time = time.time()
                 elif self._user_speaking and (time.time() - self._last_user_speech_time > 0.6):
                     # 600ms conversational hangtime before taking the floor
@@ -300,6 +308,9 @@ class VoiceSession:
 
                 if worker_msg.type == MessageType.AUDIO:
                     self.metrics.agent_frames_out += 1
+                    # Barge-in: immediately suppress forwarding agent audio while user is interrupting
+                    if self._state == SessionState.INTERRUPTED:
+                        continue
                     # Forward agent audio 0x01 to client
                     await send_to_client_fn(encode_message(worker_msg))
 
