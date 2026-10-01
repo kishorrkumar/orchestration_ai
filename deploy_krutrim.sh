@@ -54,7 +54,9 @@ success "System packages verified."
 
 # --- 3. Persistent Disk & Hugging Face Storage ---
 log "3. Configuring persistent model storage..."
-if [ -d "/data" ] && [ -w "/data" ]; then
+if [ -d "/workspace" ] && [ -w "/workspace" ]; then
+    export HF_HOME="/workspace/huggingface"
+elif [ -d "/data" ] && [ -w "/data" ]; then
     export HF_HOME="/data/huggingface"
 else
     export HF_HOME="$HOME/.cache/huggingface"
@@ -125,7 +127,8 @@ fi
 if [ -f "$PERSONAPLEX_DIR/moshi/pyproject.toml" ]; then
     sed -i -E 's/torch<2.5,>=2.2.0/torch>=2.2.0/g; s/<2.5[0-9.]*//g' "$PERSONAPLEX_DIR/moshi/pyproject.toml" || true
 fi
-pip install -e "$PERSONAPLEX_DIR/moshi"
+pip install rustymimi sounddevice einops sentencepiece || true
+pip install --no-deps -e "$PERSONAPLEX_DIR/moshi"
 pip install accelerate  # Required for cpu-offload support
 
 # --- 8. Pre-downloading Model Weights & Voice Presets ---
@@ -160,9 +163,13 @@ success "All model weights and 18 voice presets downloaded to persistent cache."
 
 # --- 9. Orchestration AI Layer Setup ---
 log "9. Installing Orchestration AI Layer..."
-ORCH_DIR="$HOME/orchestration_ai"
-if [ ! -d "$ORCH_DIR" ]; then
-    git clone https://github.com/kishorrkumar/orchestration_ai.git "$ORCH_DIR"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ORCH_DIR="${SCRIPT_DIR}"
+if [ ! -f "$ORCH_DIR/setup.py" ] && [ ! -f "$ORCH_DIR/pyproject.toml" ]; then
+    ORCH_DIR="$HOME/orchestration_ai"
+    if [ ! -d "$ORCH_DIR" ]; then
+        git clone https://github.com/kishorrkumar/orchestration_ai.git "$ORCH_DIR"
+    fi
 fi
 pip install -r "$ORCH_DIR/requirements.txt"
 pip install -e "$ORCH_DIR"
@@ -174,9 +181,9 @@ mkdir -p "$ORCH_DIR/data/transcripts"
 # --- 10. Systemd Service Units Installation ---
 log "10. Configuring systemd services..."
 if [ -d "/etc/systemd/system" ] && command -v systemctl &> /dev/null; then
-    sudo cp "$ORCH_DIR/deploy/systemd/personaplex-gateway.service" /etc/systemd/system/
-    sudo cp "$ORCH_DIR/deploy/systemd/personaplex-worker@.service" /etc/systemd/system/
-    sudo systemctl daemon-reload
+    sudo cp "$ORCH_DIR/deploy/systemd/personaplex-gateway.service" /etc/systemd/system/ || true
+    sudo cp "$ORCH_DIR/deploy/systemd/personaplex-worker@.service" /etc/systemd/system/ || true
+    sudo systemctl daemon-reload 2>/dev/null || true
     success "Systemd services installed (personaplex-gateway, personaplex-worker@)."
 fi
 
