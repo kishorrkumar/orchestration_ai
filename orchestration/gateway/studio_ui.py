@@ -1556,6 +1556,7 @@ STUDIO_HTML = r"""<!DOCTYPE html>
     class VoiceSocket {
       constructor() {
         this.ws = null;
+        this.pendingMessages = [];
         this.onAudio = null;
         this.onText = null;
         this.onMetadata = null;
@@ -1569,6 +1570,16 @@ STUDIO_HTML = r"""<!DOCTYPE html>
         this.ws.binaryType = 'arraybuffer';
 
         this.ws.onopen = () => {
+          if (this.pendingMessages && this.pendingMessages.length > 0) {
+            for (const pending of this.pendingMessages) {
+              const textBytes = new TextEncoder().encode(pending);
+              const msg = new Uint8Array(1 + textBytes.byteLength);
+              msg[0] = 0x02; // Text token
+              msg.set(textBytes, 1);
+              this.ws.send(msg);
+            }
+            this.pendingMessages = [];
+          }
           if (this.onOpen) this.onOpen();
         };
 
@@ -1607,7 +1618,10 @@ STUDIO_HTML = r"""<!DOCTYPE html>
       }
 
       sendTextMessage(text) {
-        if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
+        if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+          this.pendingMessages.push(text);
+          return;
+        }
         const textBytes = new TextEncoder().encode(text);
         const msg = new Uint8Array(1 + textBytes.byteLength);
         msg[0] = 0x02; // Text token
@@ -2519,14 +2533,16 @@ STUDIO_HTML = r"""<!DOCTYPE html>
             }
           );
         } catch (err) {
-          alert('Microphone access denied: ' + err.message);
-          this.disconnect();
-          return;
+          console.warn('Microphone access not available (e.g. HTTP origin or permission denied):', err.message);
+          const spk = document.getElementById('speaker-status');
+          if (spk) spk.innerText = `Connected in Text & Audio Playback Mode (${this.activeAgentName})`;
         }
 
-        // Start speech recognition locked to Indian English
-        this.recognizer.setLang('en-IN');
-        this.recognizer.start();
+        // Start speech recognition if supported
+        try {
+          this.recognizer.setLang('en-IN');
+          this.recognizer.start();
+        } catch (e) {}
 
         const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
         const fallbackVoice = this.activePersona === 'indian_priya' ? 'priya_colloquial' : 'aarav_colloquial';

@@ -1,31 +1,44 @@
 #!/usr/bin/env bash
 # ==============================================================================
-# Launch PersonaPlex 7B Worker and Orchestration Gateway
-# Accessible externally via Krutrim Cloud HTTP Service [Port 8000]
+# Robust PersonaPlex 7B & Orchestration Gateway Launcher for Krutrim Cloud
 # ==============================================================================
 
 set -euo pipefail
 
-# 1. Activate Python virtual environment
+# 1. Clean up any stale processes on ports 8000 and 8998
+echo "[INFO] Freeing ports 8000 and 8998..."
+fuser -k 8000/tcp 2>/dev/null || true
+fuser -k 8998/tcp 2>/dev/null || true
+
+# 2. Activate Python virtual environment
 if [ -d "$HOME/personaplex_env" ]; then
     source "$HOME/personaplex_env/bin/activate"
 elif [ -d "/workspace/personaplex_env" ]; then
     source "/workspace/personaplex_env/bin/activate"
 fi
 
-# 2. Configure Persistent HF Cache
+# 3. Configure Persistent HF Cache & Token
 if [ -d "/workspace/huggingface" ]; then
     export HF_HOME="/workspace/huggingface"
 elif [ -d "/data/huggingface" ]; then
     export HF_HOME="/data/huggingface"
+else
+    export HF_HOME="$HOME/.cache/huggingface"
 fi
 
-# 3. Locate Voice Presets
+if [ -n "${HF_TOKEN:-}" ]; then
+    mkdir -p ~/.cache/huggingface
+    echo -n "$HF_TOKEN" > ~/.cache/huggingface/token
+fi
+
+# Modern PyTorch compatibility flag for Moshi
+export NO_TORCH_COMPILE=1
+
+# 4. Locate Voice Presets
 VOICES_DIR=""
 if [ -d "$HF_HOME/voices" ]; then
     VOICES_DIR="$HF_HOME/voices"
 else
-    # Find extracted voices folder in HF hub cache
     FOUND=$(find "$HF_HOME" -type d -name "voices" 2>/dev/null | head -n 1)
     if [ -n "$FOUND" ]; then
         VOICES_DIR="$FOUND"
@@ -33,36 +46,59 @@ else
 fi
 
 echo "=============================================================================="
-echo " Starting PersonaPlex 7B Real-Time Voice Services"
-echo " HF_HOME:    ${HF_HOME:-$HOME/.cache/huggingface}"
+echo " Starting PersonaPlex 7B Voice Services on NVIDIA A100 GPU"
+echo " HF_HOME:    ${HF_HOME}"
 echo " Voices Dir: ${VOICES_DIR:-none}"
 echo "=============================================================================="
 
-# 4. Check if Moshi Worker is already running on port 8998
-if lsof -i :8998 >/dev/null 2>&1 || ss -lntp 2>/dev/null | grep -q ":8998"; then
-    echo "[INFO] Worker already running on port 8998."
-else
-    echo "[INFO] Launching PersonaPlex 7B Moshi Worker on 127.0.0.1:8998 (GPU)..."
-    WORKER_CMD="python -m moshi.server --host 127.0.0.1 --port 8998"
-    if [ -n "$VOICES_DIR" ]; then
-        WORKER_CMD="$WORKER_CMD --voice-prompt-dir $VOICES_DIR"
-    fi
-    $WORKER_CMD > worker.log 2>&1 &
-    WORKER_PID=$!
-    echo "[SUCCESS] Worker started in background (PID: $WORKER_PID, logs: worker.log)"
-    echo "Waiting for worker to initialize model weights..."
-    sleep 3
+# 5. Start Moshi 7B Inference Worker
+echo "[INFO] Launching PersonaPlex 7B Worker on 127.0.0.1:8998..."
+WORKER_CMD="python -m moshi.server --host 127.0.0.1 --port 8998"
+if [ -n "$VOICES_DIR" ]; then
+    WORKER_CMD="$WORKER_CMD --voice-prompt-dir $VOICES_DIR"
 fi
 
-# 5. Launch Orchestration Gateway on 0.0.0.0:8000
-echo "[INFO] Launching Orchestration Gateway on 0.0.0.0:8000..."
-echo "=============================================================================="
-echo " ✨ CONSOLE READY: Access via Krutrim Cloud 'HTTP Service [Port 8000]'"
-echo " Or open: http://<EXTERNAL_IP>:8000/console"
-echo "=============================================================================="
+$WORKER_CMD > worker.log 2>&1 &
+WORKER_PID=$!
+echo "[INFO] Worker spawned (PID: $WORKER_PID). Waiting for 14.5 GB weights to load into A100 VRAM..."
 
-python -m orchestration.cli run-gateway \
-    --host 0.0.0.0 \
-    --port 8000 \
-    --worker 127.0.0.1:8998 \
-    --worker-type personaplex
+WORKER_READY=0
+for i in $(seq 1 45); do
+    if timeout 1 bash -c "</dev/tcp/127.0.0.1/8998" 2>/dev/null; then
+        echo ""
+        echo "[SUCCESS] PersonaPlex 7B GPU Worker is ONLINE and accepting connections!"
+        WORKER_READY=1
+        break
+    fi
+    # Check if process died
+    if ! kill -0 "$WORKER_PID" 2>/dev/null; then
+        echo ""
+        echo "[WARNING] Worker process exited early. Checking worker.log..."
+        tail -n 25 worker.log 2>/dev/null || true
+        break
+    fi
+    echo -n "."
+    sleep 1
+done
+
+# 6. Launch Orchestration Gateway
+echo ""
+echo "=============================================================================="
+if [ "$WORKER_READY" -eq 1 ]; then
+    echo " 🚀 PersonaPlex 7B GPU Mode Active (A100 SXM4 40GB)"
+    echo " ✨ CONSOLE: Click 'HTTP Service [Port 8000]' in Krutrim Cloud"
+    echo "=============================================================================="
+    python -m orchestration.cli run-gateway \
+        --host 0.0.0.0 \
+        --port 8000 \
+        --worker 127.0.0.1:8998 \
+        --worker-type personaplex
+else
+    echo " ⚠️ Falling back to Local Voice Engine..."
+    echo " ✨ CONSOLE: Click 'HTTP Service [Port 8000]' in Krutrim Cloud"
+    echo "=============================================================================="
+    python -m orchestration.cli run-gateway \
+        --host 0.0.0.0 \
+        --port 8000 \
+        --worker-type mock
+fi

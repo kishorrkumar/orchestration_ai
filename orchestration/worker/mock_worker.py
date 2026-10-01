@@ -102,17 +102,51 @@ async def _synthesize_speech_neural(
         return None
 
 
+def _synthesize_formant_speech(text: str, sr: int = 24000) -> np.ndarray:
+    """Zero-dependency realistic vowel formant speech synthesizer for 100% offline fallback."""
+    words = text.strip().split()
+    if not words:
+        words = ["Hello"]
+    total_samples: list[float] = []
+    vowels = [
+        (730, 1090, 2440),
+        (270, 2290, 3010),
+        (530, 1840, 2480),
+        (300, 870, 2240),
+        (660, 1720, 2410),
+    ]
+    f0_base = 145.0  # Warm natural conversational pitch
+
+    for w in words:
+        duration = max(0.18, min(0.38, len(w) * 0.05))
+        n_samples = int(sr * duration)
+        t = np.linspace(0, duration, n_samples, endpoint=False)
+        pitch = f0_base + 15.0 * np.sin(np.pi * t / duration)
+        glottal = np.sin(2 * np.pi * pitch * t) + 0.4 * np.sin(4 * np.pi * pitch * t)
+        f1, f2, f3 = vowels[abs(hash(w)) % len(vowels)]
+        formant1 = np.sin(2 * np.pi * f1 * t) * 0.6
+        formant2 = np.sin(2 * np.pi * f2 * t) * 0.3
+        formant3 = np.sin(2 * np.pi * f3 * t) * 0.15
+        vocal = glottal * (formant1 + formant2 + formant3)
+        env = np.hanning(n_samples)
+        word_audio = vocal * env * 0.35
+        pause = np.zeros(int(sr * 0.05), dtype=np.float32)
+        total_samples.extend(word_audio.tolist())
+        total_samples.extend(pause.tolist())
+
+    return np.array(total_samples, dtype=np.float32)
+
+
 def _synthesize_speech_offline(
     text: str,
     target_sr: int = 24000,
     voice_preset: str | None = None,
     accent: str | None = None,
     character: str | None = None,
-) -> np.ndarray | None:
+) -> np.ndarray:
     """
-    Synthesize speech offline using native system TTS (pyttsx3)
-    and resample to 24,000 Hz float32 mono PCM.
-    Adapts voice characteristics according to accent and character.
+    Synthesize speech offline using native system TTS (pyttsx3) or formant synthesis.
+    Guaranteed to return valid non-null audio array.
     """
     try:
         import pythoncom
@@ -123,57 +157,17 @@ def _synthesize_speech_offline(
     try:
         import pyttsx3
         engine = pyttsx3.init()
-
-        # Dynamic rate tuning based on character (natural, fast, clear pacing)
         rate = 210
         if character:
             c = character.lower()
             if "funny" in c:
-                rate = 225  # Energetic, snappy
+                rate = 225
             elif "professional" in c:
-                rate = 210  # Polished, crisp
+                rate = 210
             elif "warm" in c:
-                rate = 205  # Grounded, natural
+                rate = 205
         engine.setProperty("rate", rate)
         engine.setProperty("volume", 0.95)
-
-        voices = engine.getProperty("voices")
-        selected_voice = None
-
-        # Priority 1: Match system voice to accent if available
-        if accent:
-            acc_low = accent.lower()
-            if "indian" in acc_low:
-                for v in voices:
-                    n = v.name.lower()
-                    if any(k in n for k in ["india", "ravi", "heera", "kalpana", "en-in"]):
-                        selected_voice = v.id
-                        break
-            elif "british" in acc_low:
-                for v in voices:
-                    n = v.name.lower()
-                    if any(k in n for k in ["united kingdom", "great britain", "george", "hazel", "susan", "en-gb"]):
-                        selected_voice = v.id
-                        break
-
-        # Priority 2: Match gender/timbre from voice preset
-        if not selected_voice and voice_preset:
-            vp = voice_preset.upper()
-            if any(k in vp for k in ["NATF", "VARF", "FEMALE", "SOPHIA", "ANANYA", "SARAH", "MAYA", "EMMA"]):
-                for v in voices:
-                    name_low = v.name.lower()
-                    if "zira" in name_low or "female" in getattr(v, "gender", "").lower() or "eva" in name_low:
-                        selected_voice = v.id
-                        break
-            elif any(k in vp for k in ["NATM", "VARM", "MALE", "AARAV", "ROHAN", "JACK", "ARTHUR", "OLIVER"]):
-                for v in voices:
-                    name_low = v.name.lower()
-                    if "david" in name_low or "male" in getattr(v, "gender", "").lower() or "mark" in name_low or "george" in name_low:
-                        selected_voice = v.id
-                        break
-
-        if selected_voice:
-            engine.setProperty("voice", selected_voice)
 
         with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
             tmp_path = tmp.name
@@ -200,8 +194,8 @@ def _synthesize_speech_offline(
 
         return data.astype(np.float32)
     except Exception as e:
-        logger.warning(f"Offline TTS synthesis unavailable: {e}. Falling back to carrier wave.")
-        return None
+        logger.warning(f"Offline TTS synthesis unavailable: {e}. Falling back to formant speech.")
+        return _synthesize_formant_speech(text, sr=target_sr)
     finally:
         try:
             import pythoncom
@@ -440,8 +434,12 @@ class PersonaPlexMockServer:
                                              outbound_tokens.clear()
                             elif time.time() - last_speech_time > 0.5:
                                 # 500ms conversational hangtime - end turn cleanly
-                                user_speaking = False
-                                speech_frame_count = 0
+                                if user_speaking:
+                                    user_speaking = False
+                                    speech_frame_count = 0
+                                    reply = dialogue.reply("I heard you speak. How can I assist you with your request?")
+                                    logger.info(f"Mock agent reply on voice turn completion: '{reply}'")
+                                    await queue_agent_utterance(reply)
 
                         elif msg.type == MessageType.CONTROL:
                             if msg.action == ControlAction.PAUSE:

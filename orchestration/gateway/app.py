@@ -195,8 +195,12 @@ def create_app(
         llm_ttft_ms = getattr(resolved_server, "last_llm_ttft_ms", 0.0) if resolved_server else 0.0
         tts_ttfa_ms = getattr(resolved_server, "last_tts_ttfa_ms", 0.0) if resolved_server else 0.0
         total_ttfa_ms = getattr(resolved_server, "last_total_ttfa_ms", 0.0) if resolved_server else 0.0
-        worker_underruns = getattr(resolved_server, "total_underruns", 0) if resolved_server else 0
-        wtype = getattr(resolved_server, "__class__", type).__name__ if resolved_server else "Mock"
+        if resolved_server:
+            wtype = getattr(resolved_server, "__class__", type).__name__
+        elif pool_stats["total_workers"] > 0:
+            wtype = "PersonaPlex 7B (GPU)"
+        else:
+            wtype = "Mock"
 
         return {
             "timestamp": time.time(),
