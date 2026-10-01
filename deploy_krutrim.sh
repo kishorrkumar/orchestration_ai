@@ -152,11 +152,12 @@ hf_hub_download(repo, 'model.safetensors', token=token)
 
 print('Downloading voice presets archive...')
 voices_tgz = hf_hub_download(repo, 'voices.tgz', token=token)
-voices_dir = Path(voices_tgz).parent / 'voices'
+voices_path = Path(voices_tgz)
+voices_dir = voices_path.parent / 'voices'
 if not voices_dir.exists():
-    print(f'Extracting {voices_tgz}...')
-    with tarfile.open(voices_tgz, 'r:gz') as tar:
-        tar.extractall(path=voices_tgz.parent)
+    print(f'Extracting {voices_path}...')
+    with tarfile.open(voices_path, 'r:gz') as tar:
+        tar.extractall(path=voices_path.parent)
 print('Voice presets extracted to:', voices_dir)
 "
 success "All model weights and 18 voice presets downloaded to persistent cache."
