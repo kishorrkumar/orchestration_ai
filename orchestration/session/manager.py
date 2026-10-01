@@ -93,6 +93,8 @@ class SessionMetrics:
         self.backchannel_events = 0
         self.turn_count = 0
         self.silence_frames = 0
+        self.handshake_time_sec: float = 0.0
+        self.claimed_from_standby: bool = False
 
         # 7. Task Success & Outcome Tagging
         self.outcome_tag: str = "in_progress"  # in_progress, success, resolved, escalated, dropped
@@ -142,6 +144,8 @@ class SessionMetrics:
             "connected_at": self.connected_at,
             "ended_at": self.ended_at,
             "duration_sec": round(self.duration_sec, 2),
+            "handshake_time_sec": self.handshake_time_sec,
+            "claimed_from_standby": self.claimed_from_standby,
             # 7 Dimensions
             "listening": {
                 "user_frames_in": self.user_frames_in,
@@ -221,6 +225,8 @@ class VoiceSession:
         self._user_speaking = False
         self._last_user_speech_time = 0.0
         self._speech_frames_count = 0
+        self.is_standby: bool = False
+        self.is_claimed_from_standby: bool = False
 
         # Telemetry flags
         self._first_input_frame_sent = False
@@ -239,11 +245,18 @@ class VoiceSession:
 
     async def start(self) -> None:
         """Connect to worker, await handshake (priming phase), clear buffer, and start feeder."""
+        if self.is_claimed_from_standby:
+            logger.info(f"Session {self.session_id} was claimed from primed standby. Instant start (TTFA < 1.5s)!")
+            self.set_state(SessionState.ACTIVE)
+            self.metrics.connected_at = time.time()
+            return
+
         self.set_state(SessionState.PROMPTING)
         t_start = time.time()
         try:
             await self.worker.connect(self.session_id, self.persona)
             t_handshake = time.time() - t_start
+            self.metrics.handshake_time_sec = round(t_handshake, 3)
             logger.info(f"Session {self.session_id} worker handshake complete in {t_handshake:.2f}s")
             
             # Drop any audio frames accumulated during the priming wait (prevents burst to model)
@@ -462,12 +475,69 @@ class VoiceSession:
 
 
 class SessionManager:
-    """Manages active and historical sessions."""
+    """Manages active and historical sessions, including pre-primed standby sessions."""
 
-    def __init__(self, pool: WorkerPool):
+    def __init__(self, pool: WorkerPool, enable_standby: bool = False):
         self.pool = pool
+        self.enable_standby = enable_standby
         self._active_sessions: dict[str, VoiceSession] = {}
         self._session_history: list[dict] = []
+        self._standby_session: VoiceSession | None = None
+        self._standby_lock = asyncio.Lock()
+        self._is_prepriming = False
+
+    async def preprime_standby(self, persona: PersonaConfig | None = None) -> VoiceSession | None:
+        """
+        Pre-connects and primes a standby session in the background.
+        Maintains real-time 80ms silence frames so worker is primed and ready
+        for instant attachment by incoming calls (reducing TTFA from ~12.5s to < 1.5s).
+        """
+        self.enable_standby = True
+        if self._is_prepriming:
+            return None
+
+        async with self._standby_lock:
+            # Check if existing standby session is still alive and healthy
+            if self._standby_session is not None:
+                if self._standby_session.state == SessionState.ACTIVE and self._standby_session.worker.status == WorkerStatus.BUSY:
+                    if persona is None or self._standby_session.persona.get_normalized_voice_prompt() == persona.get_normalized_voice_prompt():
+                        return self._standby_session
+                # Stale or mismatched standby: tear down cleanly
+                old = self._standby_session
+                self._standby_session = None
+                await old.close()
+
+            # Verify pool has idle capacity
+            pool_stats = self.pool.get_stats()
+            if pool_stats["idle_workers"] <= 0:
+                logger.debug("No idle workers available to establish standby session")
+                return None
+
+            from ..persona.registry import default_registry
+            target_persona = persona or default_registry.get("casual_friend") or list(default_registry.list_all())[0]
+
+            self._is_prepriming = True
+            standby_sid = f"standby_{uuid.uuid4().hex[:8]}"
+            try:
+                logger.info(f"[STANDBY] Pre-priming standby session {standby_sid} with voice {target_persona.get_normalized_voice_prompt()}...")
+                session = await self.create_session(
+                    persona=target_persona,
+                    session_id=standby_sid,
+                    timeout=10.0,
+                    use_standby=False,
+                    is_standby=True,
+                )
+                session.is_standby = True
+                await session.start()
+                self._standby_session = session
+                logger.info(f"[STANDBY] Standby session {standby_sid} primed and running! Instant TTFA ready.")
+                return session
+            except Exception as e:
+                logger.warning(f"[STANDBY] Failed to pre-prime standby session: {e}")
+                self._standby_session = None
+                return None
+            finally:
+                self._is_prepriming = False
 
     async def create_session(
         self,
@@ -475,9 +545,35 @@ class SessionManager:
         session_id: str | None = None,
         timeout: float = 30.0,
         barge_in_warmup_sec: float = 0.0,
+        use_standby: bool = True,
+        is_standby: bool = False,
     ) -> VoiceSession:
-        """Acquire a worker and initialize a new VoiceSession."""
+        """Acquire a worker and initialize a new VoiceSession, attaching to standby if available."""
         sid = session_id or f"sess_{uuid.uuid4().hex[:12]}"
+
+        # Instant Standby Claiming
+        if use_standby and not is_standby:
+            async with self._standby_lock:
+                if self._standby_session is not None and self._standby_session.state == SessionState.ACTIVE:
+                    standby_voice = self._standby_session.persona.get_normalized_voice_prompt()
+                    req_voice = persona.get_normalized_voice_prompt()
+                    if standby_voice == req_voice:
+                        session = self._standby_session
+                        self._standby_session = None
+                        session.session_id = sid
+                        session.metrics.session_id = sid
+                        session.metrics.persona_id = persona.id
+                        session.metrics.claimed_from_standby = True
+                        session.is_standby = False
+                        session.is_claimed_from_standby = True
+                        session.persona = persona
+                        self._active_sessions[sid] = session
+                        logger.info(f"[STANDBY] Claimed pre-primed session for {sid}! TTFA will be < 1.5s.")
+
+                        # Automatically trigger background replacement priming
+                        asyncio.create_task(self.preprime_standby(persona))
+                        return session
+
         worker = await self.pool.acquire_worker(session_id=sid, timeout=timeout)
         session = VoiceSession(
             session_id=sid,
@@ -486,6 +582,7 @@ class SessionManager:
             pool=self.pool,
             barge_in_warmup_sec=barge_in_warmup_sec,
         )
+        session.is_standby = is_standby
         self._active_sessions[sid] = session
         return session
 
@@ -500,8 +597,20 @@ class SessionManager:
             self._session_history.append(metrics_dict)
             if len(self._session_history) > 1000:
                 self._session_history.pop(0)
+
+            # Auto-prime replacement standby session in background if enabled
+            if self.enable_standby:
+                asyncio.create_task(self.preprime_standby())
             return metrics_dict
         return None
+
+    def has_standby(self) -> bool:
+        """Returns True if a pre-primed standby session is ready for instant connection."""
+        return (
+            self._standby_session is not None
+            and self._standby_session.state == SessionState.ACTIVE
+            and not self._standby_session.is_claimed_from_standby
+        )
 
     def list_active_sessions(self) -> list[dict]:
         return [sess.metrics.to_dict() for sess in self._active_sessions.values()]

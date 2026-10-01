@@ -81,6 +81,9 @@ class PersonaPlexWorkerClient:
         self.frames_received: int = 0
         self.tokens_received: int = 0
         self.last_latency_ms: float = 0.0
+        self.last_connect_metrics: dict[str, float] = {}
+        self.last_frame_step_ms: float = 0.0
+        self._last_frame_recv_time: float = 0.0
 
     @property
     def status(self) -> WorkerStatus:
@@ -145,6 +148,7 @@ class PersonaPlexWorkerClient:
                 logger.warning(f"sphn library unavailable. Opus transcoding disabled: {e}")
                 self.use_opus = False
 
+        t0 = time.perf_counter()
         try:
             logger.info(f"Connecting worker {self.worker_id} to {url} for session {session_id}")
             self._ws = await asyncio.wait_for(
@@ -156,10 +160,13 @@ class PersonaPlexWorkerClient:
                 ),
                 timeout=self.connect_timeout,
             )
+            t_tcp = time.perf_counter()
 
             # Wait for handshake (0x00) which signals that system prompts have finished loading
             assert self._ws is not None
             first_msg = await asyncio.wait_for(self._ws.recv(), timeout=self.handshake_timeout)
+            t_handshake = time.perf_counter()
+
             if not isinstance(first_msg, bytes):
                 raise WorkerConnectionError(f"Expected binary handshake, received {type(first_msg)}")
 
@@ -172,7 +179,17 @@ class PersonaPlexWorkerClient:
             self.frames_sent = 0
             self.frames_received = 0
             self.tokens_received = 0
-            logger.info(f"Worker {self.worker_id} handshake complete for session {session_id}")
+            self.last_connect_metrics = {
+                "tcp_connect_ms": round((t_tcp - t0) * 1000, 2),
+                "priming_wait_ms": round((t_handshake - t_tcp) * 1000, 2),
+                "total_connect_ms": round((t_handshake - t0) * 1000, 2),
+            }
+            logger.info(
+                f"Worker {self.worker_id} handshake complete for session {session_id} in "
+                f"{self.last_connect_metrics['total_connect_ms']}ms "
+                f"(TCP: {self.last_connect_metrics['tcp_connect_ms']}ms, "
+                f"Priming: {self.last_connect_metrics['priming_wait_ms']}ms)"
+            )
 
         except Exception as e:
             self._status = WorkerStatus.UNHEALTHY
@@ -237,6 +254,10 @@ class PersonaPlexWorkerClient:
                     msg = decode_message(raw)
                     if isinstance(msg, AudioMessage):
                         self.frames_received += 1
+                        now = time.perf_counter()
+                        if self._last_frame_recv_time > 0:
+                            self.last_frame_step_ms = round((now - self._last_frame_recv_time) * 1000, 2)
+                        self._last_frame_recv_time = now
                         if self.use_opus and self._opus_reader is not None:
                             if len(msg.data) == 1920 * 4 and not msg.data.startswith(b"OggS"):
                                 # Raw PCM from mock server in unit tests

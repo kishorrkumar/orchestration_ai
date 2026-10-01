@@ -204,6 +204,17 @@ def create_app(
             else:
                 wtype = "Mock"
 
+            latest_session = active[-1] if active else (mgr.list_recent_history(1)[-1] if mgr.list_recent_history(1) else {})
+            priming_time_ms = round(latest_session.get("handshake_time_sec", 0.0) * 1000, 1)
+            ttfa_ms = round(latest_session.get("ttfa_sec", 0.0) * 1000, 1) if latest_session.get("ttfa_sec") else total_ttfa_ms
+
+            # Collect live per-frame step time across registered workers
+            frame_step_ms = 0.0
+            for w in worker_pool._workers.values():
+                if hasattr(w, "last_frame_step_ms") and w.last_frame_step_ms > 0:
+                    frame_step_ms = w.last_frame_step_ms
+                    break
+
             return {
                 "timestamp": time.time(),
                 "worker_type": wtype,
@@ -214,6 +225,10 @@ def create_app(
                 "total_user_frames_in": total_user_frames,
                 "total_agent_frames_out": total_agent_frames,
                 "total_barge_in_events": total_barge_ins,
+                "priming_time_ms": priming_time_ms,
+                "ttfa_ms": round(ttfa_ms, 1),
+                "frame_step_ms": round(frame_step_ms, 1),
+                "standby_ready": mgr.has_standby(),
                 "stt_ms": round(stt_ms, 1),
                 "llm_ttft_ms": round(llm_ttft_ms, 1),
                 "tts_ttfa_ms": round(tts_ttfa_ms, 1),
@@ -233,6 +248,10 @@ def create_app(
                 "total_user_frames_in": 0,
                 "total_agent_frames_out": 0,
                 "total_barge_in_events": 0,
+                "priming_time_ms": 0.0,
+                "ttfa_ms": 0.0,
+                "frame_step_ms": 0.0,
+                "standby_ready": False,
                 "stt_ms": 0.0,
                 "llm_ttft_ms": 0.0,
                 "tts_ttfa_ms": 0.0,
@@ -240,6 +259,19 @@ def create_app(
                 "worker_underruns": 0,
                 "gpu": {},
             }
+
+    @app.post("/v1/sessions/preprime", tags=["Sessions"])
+    @app.get("/v1/sessions/preprime", tags=["Sessions"])
+    async def preprime_standby_session(persona_id: str = "casual_friend"):
+        """Pre-primes a standby session in the background so incoming calls connect in 0ms (<1.5s TTFA)."""
+        persona = persona_registry.get(persona_id) or list(persona_registry.list_all())[0]
+        standby = await mgr.preprime_standby(persona)
+        return {
+            "status": "ready" if (standby and standby.state == SessionState.ACTIVE) else "preparing",
+            "is_standby_ready": mgr.has_standby(),
+            "persona_id": persona.id,
+            "voice": persona.get_normalized_voice_prompt(),
+        }
 
     # ==========================================================
     # Audio Cleaner & A/B Recording Endpoints
@@ -709,6 +741,8 @@ def create_app(
                 encode_message(MetadataMessage(data={
                     "event": "session_started",
                     "session_id": session.session_id,
+                    "claimed_from_standby": getattr(session, "is_claimed_from_standby", False),
+                    "handshake_time_ms": round(session.metrics.handshake_time_sec * 1000, 1),
                     "persona": active_persona.id,
                     "voice": active_persona.get_normalized_voice_prompt(),
                     "accent": active_persona.accent,

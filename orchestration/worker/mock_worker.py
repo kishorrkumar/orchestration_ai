@@ -244,12 +244,16 @@ class PersonaPlexMockServer:
         self,
         host: str = "127.0.0.1",
         port: int = 8998,
-        prompt_init_delay: float = 0.05,
+        prompt_init_delay: float | None = None,
         frame_interval_sec: float = 0.08,  # 80ms = 12.5 Hz
     ):
         self.host = host
         self.port = port
-        self.prompt_init_delay = prompt_init_delay
+        self.prompt_init_delay = (
+            prompt_init_delay
+            if prompt_init_delay is not None
+            else float(os.environ.get("PERSONAPLEX_MOCK_PRIMING_DELAY", "0.5"))
+        )
         self.frame_interval = frame_interval_sec
 
         self._server: Server | None = None

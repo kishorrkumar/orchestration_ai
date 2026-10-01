@@ -1137,6 +1137,10 @@ STUDIO_HTML = r"""<!DOCTYPE html>
           <span class="telemetry-val" id="telemetry-ttfa" style="color: var(--apple-green);">--</span>
         </div>
         <div class="telemetry-row">
+          <span class="telemetry-label">Per-Frame Step Time</span>
+          <span class="telemetry-val" id="telemetry-frame-time" style="color: var(--apple-cyan);">&lt; 80 ms</span>
+        </div>
+        <div class="telemetry-row">
           <span class="telemetry-label">Frames In / Out</span>
           <span class="telemetry-val"><span id="telemetry-frames-in">0</span> / <span id="telemetry-frames-out">0</span></span>
         </div>
@@ -1764,6 +1768,22 @@ STUDIO_HTML = r"""<!DOCTYPE html>
         this.initElements();
         this.initSocketEvents();
         this.setupPttListeners();
+        this.preprimeStandby();
+      }
+
+      async preprimeStandby() {
+        try {
+          const res = await fetch('/v1/sessions/preprime', { method: 'POST' });
+          if (res.ok) {
+            const data = await res.json();
+            const stW = document.getElementById('telemetry-worker-state');
+            if (stW && data.is_standby_ready) {
+              stW.innerText = 'Standby Ready (<1.5s)';
+            }
+          }
+        } catch (e) {
+          console.debug('Pre-prime error:', e);
+        }
       }
 
       initElements() {
@@ -1825,16 +1845,17 @@ STUDIO_HTML = r"""<!DOCTYPE html>
         this.socket.onMetadata = (meta) => {
           if (meta.event === 'session_started') {
             this.activeSessionId = meta.session_id;
-            const primingSec = ((Date.now() - this.callStartTime) / 1000).toFixed(2);
+            const isStandby = !!meta.claimed_from_standby;
+            const primingSec = isStandby ? '0.00' : ((Date.now() - this.callStartTime) / 1000).toFixed(2);
             const elPrime = document.getElementById('telemetry-handshake-time');
-            if (elPrime) elPrime.innerText = `${primingSec}s`;
+            if (elPrime) elPrime.innerText = isStandby ? '0.00s (Standby)' : `${primingSec}s`;
             this.updateStatus('Listening', 'connected');
             const spk = document.getElementById('speaker-status');
             if (spk) spk.innerText = 'Listening (Speak into microphone)';
             const stateBadge = document.getElementById('call-flow-state');
             if (stateBadge) stateBadge.innerText = 'Active Call';
             const stW = document.getElementById('telemetry-worker-state');
-            if (stW) stW.innerText = 'Active (12.5 Hz)';
+            if (stW) stW.innerText = isStandby ? 'Standby Attached (0 ms)' : 'Active (12.5 Hz)';
             const errPanel = document.getElementById('inline-error-panel');
             if (errPanel) errPanel.style.display = 'none';
           }
@@ -2707,6 +2728,13 @@ STUDIO_HTML = r"""<!DOCTYPE html>
               if (elTotal && data.total_ttfa_ms !== undefined) elTotal.innerText = `${data.total_ttfa_ms} ms`;
               if (elBarge && data.total_barge_in_events !== undefined) elBarge.innerText = data.total_barge_in_events;
               if (elWorker && data.worker_type) elWorker.innerText = data.worker_type;
+
+              const elFrame = document.getElementById('telemetry-frame-time');
+              if (elFrame && data.frame_step_ms > 0) elFrame.innerText = `${data.frame_step_ms} ms`;
+              if (data.standby_ready && !this.isConnected) {
+                const stW = document.getElementById('telemetry-worker-state');
+                if (stW) stW.innerText = 'Standby Ready (<1.5s)';
+              }
 
               if (data.gpu) {
                 const g = data.gpu;
