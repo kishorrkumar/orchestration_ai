@@ -75,16 +75,27 @@ async def _run_gateway_cmd(args):
             pool.register_worker(WorkerNodeConfig(id=m_id, host="127.0.0.1", port=m_port))
             logger.info(f"Attached Mock Worker {m_id} on port {m_port}")
 
-    # Register any explicit real GPU workers (--worker id:host:port:gpu)
+    # Register any explicit real GPU workers (--worker [id:]host:port[:gpu])
     if getattr(args, "worker", None):
         for w_str in args.worker:
-            parts = w_str.split(":")
-            wid = parts[0]
-            host = parts[1]
-            port = int(parts[2])
-            gpu = int(parts[3]) if len(parts) > 3 else None
+            parts = [p.strip() for p in w_str.split(":")]
+            if len(parts) == 2:
+                host, port_str = parts
+                wid = f"worker-{host}-{port_str}"
+                port = int(port_str)
+                gpu = None
+            elif len(parts) == 3:
+                wid, host, port_str = parts
+                port = int(port_str)
+                gpu = None
+            elif len(parts) >= 4:
+                wid, host, port_str, gpu_str = parts[:4]
+                port = int(port_str)
+                gpu = int(gpu_str)
+            else:
+                continue
             pool.register_worker(WorkerNodeConfig(id=wid, host=host, port=port, gpu_id=gpu))
-            logger.info(f"Registered real PersonaPlex worker node {wid} ({host}:{port} on GPU {gpu})")
+            logger.info(f"Registered real PersonaPlex worker node {wid} ({host}:{port})")
 
     app = create_app(pool=pool, worker_type=worker_type, active_server=spawned_servers[0] if spawned_servers else None)
     config = uvicorn.Config(app, host=args.host, port=args.port, log_level="info")
