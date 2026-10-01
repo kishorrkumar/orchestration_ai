@@ -165,8 +165,8 @@ class CallerAudioCleaner:
             self.is_speech_active = True
         else:
             self.is_speech_active = False
-            # During confirmed silence, apply gentle ambient gating without destroying speech onset
-            cleaned_24k *= 0.85
+            # During confirmed silence, apply ambient gating without destroying speech onset
+            cleaned_24k *= 0.30
 
         # 6. Speaker Isolation Gate (smooth attenuation of background voices)
         if self.speaker_isolation and self.is_speech_active:
@@ -190,8 +190,8 @@ class CallerAudioCleaner:
         fft_vals = np.fft.rfft(audio)
         mag = np.abs(fft_vals)
         phase = np.angle(fft_vals)
-        noise_floor = np.median(mag) * self.suppression_strength
-        cleaned_mag = np.maximum(mag - noise_floor, 0.05 * mag)
+        noise_floor = np.median(mag) * self.suppression_strength * 2.6
+        cleaned_mag = np.maximum(mag - noise_floor, 0.03 * mag)
         reconstructed = np.fft.irfft(cleaned_mag * np.exp(1j * phase), n=len(audio))
         return reconstructed.astype(np.float32)
 

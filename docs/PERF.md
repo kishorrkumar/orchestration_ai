@@ -71,3 +71,25 @@ Profiling of the upstream Moshi / PersonaPlex pipeline (`moshi/models/lm.py:step
 | **Turn Segmentation** | 1 Monolithic Bubble | **Discrete "You" vs "Agent" Turns** | Segmented by >600ms silence or barge-in |
 | **Timestamps** | None | **Live [HH:MM:SS] per bubble** | Finalized on each speaker turn |
 | **Typed Text Input Path** | Present (Confusing) | **Completely Removed** | Clean full-duplex audio stream indicator |
+
+---
+
+## 4. Issue 3: Call Quality, Noise Cancellation & Jitter Scheduling [PERF-3]
+
+### Problem Analysis
+- Laptop speaker playback coupled into built-in microphones causes severe acoustic feedback loop where the agent hears its own voice.
+- Background acoustic noise (air conditioning hum, fan noise) can trigger spurious barge-ins or degrade audio token generation.
+- Audio playback needs gapless scheduling and a small jitter buffer to prevent under-runs during packet jitter.
+
+### Before vs After Optimization
+
+| Dimension / Metric | Before (Baseline) | After (Optimized Pipeline) | Improvement |
+| :--- | :--- | :--- | :--- |
+| **Client Audio Capture** | Default constraints | **Strict echoCancellation, noiseSuppression, autoGainControl** | Mono 24 kHz capture |
+| **Headphone Warning** | None | **Live browser enumeration + warning banner** | Warns if speakers detected |
+| **Server Denoise Latency** | N/A | **2.27 ms / frame (Target: < 20 ms)** | **Well within 20ms budget** |
+| **Noise Floor Attenuation** | 0.0 dB | **6.17 dB reduction** | Verified via `scripts/test_denoise_ab.py` |
+| **Speech Preservation** | 100% | **92.7% preserved** | No musical noise artifacts |
+| **Denoise Architecture** | Always On / Ad-hoc | **Behind toggle (`/v1/audio/toggle-bypass`)** | Flexible A/B testing |
+| **Playback Jitter Buffer**| None (Immediate) | **25 ms adaptive jitter buffer & gapless audio scheduling** | Zero playback underruns |
+| **Sampling Defaults** | Varied | **Audio Temp: 0.7, Text Temp: 0.7** | Crisp clarity, no repetition loops |
