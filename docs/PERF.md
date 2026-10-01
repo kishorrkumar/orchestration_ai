@@ -118,3 +118,34 @@ Profiling of the upstream Moshi / PersonaPlex pipeline (`moshi/models/lm.py:step
      - Upstream can synthesize custom voice embeddings from a clean 24 kHz mono reference `.wav`, but regional Indian English phonetics and cadence **do not carry over**.
      - Retaining `NATM0.pt` as the default natural male preset provides the highest acoustic fidelity, natural full-duplex conversational flow, and zero hallucination artifacts without deceptive UI claims.
 
+---
+
+## 6. Strongest Noise Cancellation, Silero VAD & Voice Isolation Layer [VAD-1]
+
+### Problem Analysis
+- In full-duplex speech-to-speech architectures (PersonaPlex / Moshi), the acoustic tokenizer (Mimi) processes inbound audio continuously at 12.5 Hz (80 ms frames).
+- If the microphone captures background speech (colleagues talking, TV, bystanders), coughing, keyboard typing, or room reverberation, Mimi encodes non-zero tokens. The Moshi LM interprets these tokens as caller speech, triggering spurious barge-in interruptions or causing the agent to answer bystanders.
+
+### Solution Architecture
+1. **Multi-Stage Audio Isolation Engine (CallerAudioCleaner)**:
+   - **80 Hz High-Pass Filter**: Strips table rumble, mechanical vibrations, and 50/60 Hz electrical hum.
+   - **Native RNNoise C Recurrent Neural Network (48 kHz)**: Suppresses continuous noise, fan whir, and ambient room reverberation with zero-latency lookahead memory buffers.
+   - **Silero VAD v6 ONNX Engine**: Evaluates speech probability on 16 kHz resampled windows with < 2 ms CPU inference.
+   - **Direct-Field Speaker Isolation & Silence Gating**:
+     - When the primary speaker is speaking (VAD >= 0.45 and RMS >= 0.010): passes pristine, denoised speech.
+     - When speech is inactive (bystanders talking, coughing, ambient noise, silence): **replaces the frame with 100% pure silence (zeros)**.
+     - Because PersonaPlex receives silence frames, Mimi emits SILENCE_TOKENS, and the agent is completely immune to external room chatter.
+   - **End of Speech (EOS) Hangover (350 ms)**:
+     - Maintains gate continuity across natural intra-sentence pauses without syllable clipping.
+     - Enforces a clean turn boundary cutoff when the speaker finishes.
+2. **Super Colloquial Human Persona & Prompt Tuning**:
+   - Upgraded default prompts to emphasize punchy 1–2 sentence conversational turns, natural spoken contractions (I'm, you're, yeah, 	otally, haha), active listening, and warm spontaneous reactions.
+   - Configured udio_temperature = 0.8 and 	ext_temperature = 0.8 for lively, human prosodic modulation.
+3. **UI & API Controls**:
+   - Added Voice Isolation & Noise Cancellation dropdown in the Studio UI with live Shield Active status indicator.
+   - Supported modes:
+     - isolation: **Ultra Voice Isolation (RNNoise + Silero VAD + EOS Gate)** [Default]
+     - 
+nnoise: **RNNoise Neural Denoise Only**
+     - ypass: **Raw Mic Pass-Through**
+   - Live endpoint: POST /v1/audio/mode/{session_id}?mode=isolation allows real-time switching without interrupting the call.

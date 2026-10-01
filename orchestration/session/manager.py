@@ -371,8 +371,19 @@ class VoiceSession:
 
         if isinstance(msg, AudioMessage):
             audio_data = msg.data
+            raw_samples = np.frombuffer(audio_data, dtype=np.float32) if len(audio_data) > 0 else np.empty(0, dtype=np.float32)
+            raw_rms = compute_rms(raw_samples) if len(raw_samples) > 0 else 0.0
+
+            # Process through Voice Isolation & Noise Cancellation cleaner
+            clean_frames = self.cleaner.process_chunk(audio_data)
             prev_frames = self.inbound_buffer.available_frames
-            self.inbound_buffer.push_pcm_bytes(audio_data, is_int16=False)
+
+            if self.cleaner.mode == "bypass":
+                self.inbound_buffer.push_pcm_bytes(audio_data, is_int16=False)
+            else:
+                for cf in clean_frames:
+                    self.inbound_buffer.push_frame(cf)
+
             curr_frames = self.inbound_buffer.available_frames
             new_frames = max(0, curr_frames - prev_frames)
 
@@ -393,9 +404,6 @@ class VoiceSession:
                     if frame_data is None:
                         continue
 
-                    # Record to cleaner for A/B comparison and optional CPU denoise
-                    self.cleaner.process_chunk(frame_data)
-
                     rms = compute_rms(frame_data)
                     is_agent_spk = (self.metrics.agent_frames_out > 0 and (now - self.transcriber._last_agent_audio_time < 0.35))
                     spk_now, turn_done, completed_audio = self.turn_detector.push_frame(
@@ -404,13 +412,20 @@ class VoiceSession:
                         is_agent_speaking=is_agent_spk,
                     )
 
-                    # Guard: require warmup delay (if configured) before enabling barge-in
-                    if session_age >= self.barge_in_warmup_sec and rms > self.barge_in_rms_threshold:
+                    # Guard: require speech activity confirmation to avoid barge-in from background chatter
+                    is_valid_user_speech = (
+                        self.cleaner.is_speech_active
+                        or self.cleaner.mode == "bypass"
+                        or raw_rms > 0.15
+                    )
+                    effective_rms = max(rms, raw_rms)
+
+                    if session_age >= self.barge_in_warmup_sec and is_valid_user_speech and effective_rms > self.barge_in_rms_threshold:
                         if not self._user_speaking:
                             self._user_speaking = True
                             self.metrics.barge_in_events += 1
                             logger.info(
-                                f"Session {self.session_id} barge-in triggered (RMS={rms:.4f} > {self.barge_in_rms_threshold:.4f}, age={session_age:.2f}s)"
+                                f"Session {self.session_id} barge-in triggered (RMS={effective_rms:.4f} > {self.barge_in_rms_threshold:.4f}, VAD={self.cleaner.is_speech_active})"
                             )
                             self.set_state(SessionState.INTERRUPTED)
                             asyncio.create_task(self.transcriber.finalize_agent_turn(reason="caller_barge_in"))

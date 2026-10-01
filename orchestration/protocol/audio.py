@@ -200,6 +200,10 @@ class AudioFrameBuffer:
             dropped = len(self._buffer) - self.max_buffer_samples
             self._buffer = self._buffer[dropped:]
 
+    def push_frame(self, frame: np.ndarray) -> None:
+        """Push a single audio frame into the buffer."""
+        self.push_samples(frame)
+
     def has_frame(self) -> bool:
         """Returns True if at least one complete 1920-sample frame is ready."""
         return len(self._buffer) >= FRAME_SIZE

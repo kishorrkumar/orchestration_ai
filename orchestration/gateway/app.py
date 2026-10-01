@@ -305,6 +305,14 @@ def create_app(
         session.cleaner.bypass = not session.cleaner.bypass
         return {"session_id": session_id, "bypass": session.cleaner.bypass}
 
+    @app.post("/v1/audio/mode/{session_id}", tags=["Audio"])
+    async def set_audio_mode(session_id: str, mode: str = "isolation"):
+        session = mgr.get_session(session_id)
+        if not session or not hasattr(session, "cleaner"):
+            raise HTTPException(status_code=404, detail="Session not found")
+        session.cleaner.set_mode(mode)
+        return {"session_id": session_id, "mode": session.cleaner.mode}
+
     # ==========================================================
     # Persona & Agent Catalog
     # ==========================================================
@@ -662,6 +670,7 @@ def create_app(
         accent: str | None = Query(default=None, description="Optional accent override (Indian English)"),
         character: str | None = Query(default=None, description="Optional character override (Professional, Friendly & Funny)"),
         call_flow: str | None = Query(default=None, description="Optional call flow role"),
+        cleaner_mode: str = Query(default="isolation", description="Audio cleaning mode: isolation, rnnoise, bypass"),
     ):
         # 0. Check Rate Limit
         client_ip = websocket.client.host if websocket.client else "127.0.0.1"
@@ -724,6 +733,8 @@ def create_app(
                 timeout=30.0,
                 barge_in_warmup_sec=1.5,
             )
+            if hasattr(session, "cleaner"):
+                session.cleaner.set_mode(cleaner_mode)
         except PoolCapacityExceededError as e:
             logger.warning(f"Capacity exceeded for session request: {e}")
             err = encode_message(ErrorMessage(error=f"503 Service Unavailable: All workers busy. {e!s}"))

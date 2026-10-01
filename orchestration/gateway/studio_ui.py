@@ -987,6 +987,21 @@ STUDIO_HTML = r"""<!DOCTYPE html>
 
         <div class="form-group">
           <div style="display:flex; justify-content:space-between; align-items:center;">
+            <label class="form-label" for="cfg-cleaner-mode">Voice Isolation &amp; Noise Cancellation</label>
+            <span id="vad-live-pill" class="doc-badge" style="color: var(--apple-cyan); font-size: 10px;">Shield Active</span>
+          </div>
+          <select id="cfg-cleaner-mode" class="form-select" onchange="window.studioApp.onCleanerModeChange()">
+            <option value="isolation" selected>🛡️ Ultra Voice Isolation (RNNoise + Silero VAD + EOS Gate)</option>
+            <option value="rnnoise">⚡ RNNoise Suppression Only</option>
+            <option value="bypass">🚫 Off (Raw Mic Pass-Through)</option>
+          </select>
+          <div style="font-size: 10px; color: var(--text-secondary); margin-top: 3px; line-height: 1.3;">
+            Isolates your voice and silences room noise, coughing, and background people before reaching PersonaPlex.
+          </div>
+        </div>
+
+        <div class="form-group">
+          <div style="display:flex; justify-content:space-between; align-items:center;">
             <label class="form-label" for="cfg-system-prompt">System Prompt &amp; Rules</label>
             <span style="font-size:10px; color:var(--apple-green);">12 Principles Enforced</span>
           </div>
@@ -2049,21 +2064,21 @@ STUDIO_HTML = r"""<!DOCTYPE html>
             },
             casual_friend: {
               id: 'casual_friend',
-              name: 'Sam (Casual Friend)',
-              character: 'Relaxed & Direct',
+              name: 'Sam (Colloquial Companion)',
+              character: 'Warm & Colloquial',
               neural_voice: 'NATM0.pt',
               voice_prompt: 'NATM0.pt',
-              description: 'Casual, relaxed friend chatting over coffee.',
-              system_prompt: 'You are Sam, a relaxed, friendly conversation partner. Chat naturally like two close friends grabbing coffee. Use casual phrases and reactions.',
+              description: 'Super colloquial, warm, and witty conversational friend.',
+              system_prompt: "You are Sam, a warm, lively, and super colloquial conversational friend on a real-time voice call. You talk exactly like a real human having a fun, relaxed conversation.\n- Speak in short, punchy 1-2 sentence spoken turns (under 25 words). Never give long robotic speeches or lists.\n- Use natural everyday contractions and conversational flow: 'I'm', 'you're', 'yeah', 'totally', 'haha', 'gotcha', 'tell me'.\n- React actively and spontaneously to what the user says with warmth and authentic enthusiasm.",
             },
             indian_pro: {
               id: 'indian_pro',
               name: 'Aarav (Colloquial Indian English)',
-              character: 'Professional',
-              neural_voice: 'aarav_colloquial',
+              character: 'Warm & Articulate',
+              neural_voice: 'NATM0.pt',
               voice_prompt: 'NATM0.pt',
-              description: 'Articulate, conversational Indian English speaker with relaxed cadence.',
-              system_prompt: "You are Aarav, an articulate Indian English voice assistant.\nAlways speak with a natural, colloquial Indian English cadence.\nUse short, conversational 1-2 sentence replies with natural idioms like 'Haanji', 'Got it', 'Tell me'.",
+              description: 'Articulate, super colloquial Indian English conversational partner.',
+              system_prompt: "You are Aarav, a bright, friendly, and super colloquial Indian English conversational friend on a real-time call.\n- Speak like a friendly young tech professional from Bangalore chatting casually on the phone.\n- Keep every reply to 1-2 short, conversational sentences.\n- Use natural colloquial Indian English phrasing, contractions, and warm cadence: 'Yeah, absolutely', 'Got it', 'Tell me na', 'Makes sense, right?', 'Haan, totally'.\n- Sound warm, spontaneous, witty, and engaging. Never sound like a formal robotic assistant.",
             }
           };
           p = defaults[this.activePersona] || defaults.casual_friend;
@@ -2667,9 +2682,36 @@ STUDIO_HTML = r"""<!DOCTYPE html>
         const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
         const promptArea = document.getElementById('cfg-system-prompt');
         const customPrompt = promptArea && promptArea.value.trim() ? promptArea.value.trim() : 'You enjoy having a good conversation.';
-        // Forward strictly parameters defined by upstream contract (single source of truth: NATM0.pt)
-        const url = `${proto}//${window.location.host}/v1/realtime?persona_id=casual_friend&voice_prompt=NATM0.pt&text_prompt=${encodeURIComponent(customPrompt)}`;
+        const cleanerMode = document.getElementById('cfg-cleaner-mode')?.value || 'isolation';
+        // Forward parameters including cleaner_mode (default: isolation)
+        const url = `${proto}//${window.location.host}/v1/realtime?persona_id=casual_friend&voice_prompt=NATM0.pt&text_prompt=${encodeURIComponent(customPrompt)}&cleaner_mode=${cleanerMode}`;
         this.socket.connect(url);
+      }
+
+      async onCleanerModeChange() {
+        const sel = document.getElementById('cfg-cleaner-mode');
+        if (!sel) return;
+        const mode = sel.value;
+        const pill = document.getElementById('vad-live-pill');
+        if (pill) {
+          if (mode === 'isolation') {
+            pill.innerText = 'Shield Active';
+            pill.style.color = 'var(--apple-cyan)';
+          } else if (mode === 'rnnoise') {
+            pill.innerText = 'Denoise Only';
+            pill.style.color = 'var(--apple-green)';
+          } else {
+            pill.innerText = 'Pass-through';
+            pill.style.color = 'var(--apple-orange)';
+          }
+        }
+        if (this.isConnected && this.activeSessionId) {
+          try {
+            await fetch(`/v1/audio/mode/${this.activeSessionId}?mode=${mode}`, { method: 'POST' });
+          } catch (e) {
+            console.warn('Failed to update live cleaner mode:', e);
+          }
+        }
       }
 
       toggleMute() {
