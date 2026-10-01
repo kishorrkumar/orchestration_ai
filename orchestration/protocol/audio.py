@@ -232,6 +232,19 @@ class AudioFrameBuffer:
         self._byte_remainder = b""
 
     @property
+    def available_frames(self) -> int:
+        """Returns number of full frames currently ready in buffer."""
+        return len(self._buffer) // FRAME_SIZE
+
+    def peek_frame(self, index: int = 0) -> np.ndarray | None:
+        """Peek at an available frame at 0-indexed position without popping."""
+        start = index * FRAME_SIZE
+        end = start + FRAME_SIZE
+        if len(self._buffer) < end:
+            return None
+        return self._buffer[start:end]
+
+    @property
     def buffered_samples(self) -> int:
         return len(self._buffer)
 

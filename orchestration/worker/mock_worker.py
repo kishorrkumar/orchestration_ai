@@ -80,12 +80,16 @@ async def _synthesize_speech_neural(
                 rate = "+18%"
                 pitch = "+0Hz"
 
-        comm = edge_tts.Communicate(text, voice, rate=rate, pitch=pitch)
-        buf = io.BytesIO()
-        async for chunk in comm.stream():
-            if chunk["type"] == "audio":
-                buf.write(chunk["data"])
-        buf.seek(0)
+        async def _stream_tts():
+            comm = edge_tts.Communicate(text, voice, rate=rate, pitch=pitch)
+            buf = io.BytesIO()
+            async for chunk in comm.stream():
+                if chunk["type"] == "audio":
+                    buf.write(chunk["data"])
+            buf.seek(0)
+            return buf
+
+        buf = await asyncio.wait_for(_stream_tts(), timeout=0.3)
         data, sr = sf.read(buf, dtype="float32")
         if data.ndim > 1:
             data = data.mean(axis=1)
@@ -98,7 +102,7 @@ async def _synthesize_speech_neural(
             ).astype(np.float32)
         return data.astype(np.float32)
     except Exception as e:
-        logger.warning(f"Neural TTS synthesis unavailable: {e}. Falling back to offline SAPI5.")
+        logger.warning(f"Neural TTS synthesis unavailable: {e}. Falling back to offline synthesis.")
         return None
 
 

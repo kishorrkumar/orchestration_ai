@@ -200,12 +200,14 @@ class VoiceSession:
         worker: PersonaPlexWorkerClient,
         pool: WorkerPool,
         barge_in_rms_threshold: float = 0.03,
+        barge_in_warmup_sec: float = 0.0,
     ):
         self.session_id = session_id
         self.persona = persona
         self.worker = worker
         self.pool = pool
         self.barge_in_rms_threshold = barge_in_rms_threshold
+        self.barge_in_warmup_sec = barge_in_warmup_sec
 
         self.metrics = SessionMetrics(session_id, persona.id, worker.worker_id)
         self.inbound_buffer = AudioFrameBuffer(dtype=np.float32)
@@ -215,9 +217,16 @@ class VoiceSession:
 
         self._state = SessionState.INITIALIZING
         self._stop_event = asyncio.Event()
+        self._feeder_task: asyncio.Task | None = None
         self._user_speaking = False
         self._last_user_speech_time = 0.0
         self._speech_frames_count = 0
+
+        # Telemetry flags
+        self._first_input_frame_sent = False
+        self._first_output_frame_received = False
+        self._first_text_token_received = False
+        self._last_telemetry_log_time = time.time()
 
     @property
     def state(self) -> SessionState:
@@ -229,12 +238,22 @@ class VoiceSession:
         logger.debug(f"Session {self.session_id} state -> {new_state.value}")
 
     async def start(self) -> None:
-        """Connect to worker and complete handshake."""
+        """Connect to worker, await handshake (priming phase), clear buffer, and start feeder."""
         self.set_state(SessionState.PROMPTING)
+        t_start = time.time()
         try:
             await self.worker.connect(self.session_id, self.persona)
+            t_handshake = time.time() - t_start
+            logger.info(f"Session {self.session_id} worker handshake complete in {t_handshake:.2f}s")
+            
+            # Drop any audio frames accumulated during the priming wait (prevents burst to model)
+            self.inbound_buffer.clear()
+
             self.set_state(SessionState.ACTIVE)
             self.metrics.connected_at = time.time()
+
+            # Start dedicated continuous 12.5 Hz (80 ms) feeder loop to upstream worker
+            self._feeder_task = asyncio.create_task(self._continuous_worker_feeder())
         except Exception as e:
             self.set_state(SessionState.FAILED)
             try:
@@ -243,10 +262,63 @@ class VoiceSession:
                 logger.warning(f"Error releasing worker after start failure: {rel_err}")
             raise e
 
+    async def _continuous_worker_feeder(self) -> None:
+        """
+        Continuously stream 80ms frames (1,920 samples @ 24kHz) to the worker at 12.5 Hz cadence.
+        If user audio frames are queued, pops and sends them.
+        If user buffer is empty, sends silence frames to drive Moshi's autoregressive generation loop.
+        """
+        logger.info(f"Session {self.session_id}: Continuous worker feeder started at 12.5 Hz cadence")
+        silence_frame = np.zeros(FRAME_SIZE, dtype=np.float32)
+
+        try:
+            while not self._stop_event.is_set():
+                t_frame_start = time.time()
+
+                # Pop user frame if available; otherwise supply silence frame
+                frame = self.inbound_buffer.pop_frame()
+                if frame is None:
+                    frame = silence_frame
+                    self.metrics.silence_frames += 1
+
+                # Send frame to worker
+                try:
+                    await self.worker.send_audio(frame)
+                    if not self._first_input_frame_sent:
+                        self._first_input_frame_sent = True
+                        elapsed = time.time() - (self.metrics.connected_at or self.metrics.created_at)
+                        logger.info(f"Session {self.session_id}: First input audio frame sent to worker at {elapsed:.2f}s")
+                except Exception as ex:
+                    logger.warning(f"Session {self.session_id} worker feeder send error: {ex}")
+                    break
+
+                # Periodic telemetry logging every 5 seconds
+                now = time.time()
+                if now - self._last_telemetry_log_time >= 5.0:
+                    self._last_telemetry_log_time = now
+                    logger.info(
+                        f"Session {self.session_id} [5s Telemetry] "
+                        f"Frames In: {self.metrics.user_frames_in} | "
+                        f"Silence Frames: {self.metrics.silence_frames} | "
+                        f"Frames Out: {self.metrics.agent_frames_out} | "
+                        f"Tokens Out: {self.metrics.text_tokens_out} | "
+                        f"Barge-ins: {self.metrics.barge_in_events} | "
+                        f"State: {self.state.value}"
+                    )
+
+                # Maintain strict 80ms (12.5 Hz) frame interval
+                elapsed = time.time() - t_frame_start
+                sleep_dur = max(0.0, 0.080 - elapsed)
+                await asyncio.sleep(sleep_dur)
+        except asyncio.CancelledError:
+            pass
+        except Exception as e:
+            logger.error(f"Error in session {self.session_id} continuous feeder: {e}")
+
     async def ingest_client_message(self, raw_bytes: bytes) -> WSMessage | None:
         """
         Process an incoming raw binary message from client:
-        - If audio (0x01): de-noise, buffer, slice into 1920-sample frames, check barge-in, push to worker.
+        - If audio (0x01): buffer, slice into 1920-sample frames, check barge-in, queue in inbound_buffer.
         - If text (0x02): forward to worker.
         - If control (0x03): forward to worker.
         """
@@ -264,31 +336,46 @@ class VoiceSession:
 
         if isinstance(msg, AudioMessage):
             audio_data = msg.data
+            prev_frames = self.inbound_buffer.available_frames
             self.inbound_buffer.push_pcm_bytes(audio_data, is_int16=False)
+            curr_frames = self.inbound_buffer.available_frames
+            new_frames = max(0, curr_frames - prev_frames)
 
-            # Pop all available 1920-sample frames and feed to worker
-            frames = self.inbound_buffer.pop_all_available_frames()
-            for raw_frame in frames:
-                self.metrics.user_frames_in += 1
-                rms = compute_rms(raw_frame)
+            # Cap queued frames to keep live latency under 250ms (drop excess older frames)
+            while self.inbound_buffer.available_frames > 4:
+                self.inbound_buffer.pop_frame()
+                self.metrics.dropped_frames += 1
 
-                # Voice Activity & Barge-in tracking
-                if rms > self.barge_in_rms_threshold:
-                    if not self._user_speaking:
-                        self._user_speaking = True
-                        self.metrics.barge_in_events += 1
-                        self.set_state(SessionState.INTERRUPTED)
-                        try:
-                            await self.worker.send_control(ControlAction.PAUSE)
-                        except Exception:
-                            pass
-                    self._last_user_speech_time = time.time()
-                elif self._user_speaking and (time.time() - self._last_user_speech_time > 0.6):
-                    # 600ms conversational hangtime before taking the floor
-                    self._user_speaking = False
-                    self.set_state(SessionState.ACTIVE)
+            if new_frames > 0:
+                self.metrics.user_frames_in += new_frames
+                avail = self.inbound_buffer.available_frames
+                start_idx = max(0, avail - new_frames)
+                for idx in range(start_idx, avail):
+                    frame_data = self.inbound_buffer.peek_frame(idx)
+                    if frame_data is None:
+                        continue
+                    rms = compute_rms(frame_data)
+                    now = time.time()
+                    session_age = now - (self.metrics.connected_at or self.metrics.created_at)
 
-                await self.worker.send_audio(raw_frame)
+                    # Guard: require warmup delay (if configured) before enabling barge-in
+                    if session_age >= self.barge_in_warmup_sec and rms > self.barge_in_rms_threshold:
+                        if not self._user_speaking:
+                            self._user_speaking = True
+                            self.metrics.barge_in_events += 1
+                            logger.info(
+                                f"Session {self.session_id} barge-in triggered (RMS={rms:.4f} > {self.barge_in_rms_threshold:.4f}, age={session_age:.2f}s)"
+                            )
+                            self.set_state(SessionState.INTERRUPTED)
+                            try:
+                                await self.worker.send_control(ControlAction.PAUSE)
+                            except Exception:
+                                pass
+                        self._last_user_speech_time = now
+                    elif self._user_speaking and (now - self._last_user_speech_time > 0.6):
+                        # 600ms conversational hangtime before yielding floor back
+                        self._user_speaking = False
+                        self.set_state(SessionState.ACTIVE)
 
         elif isinstance(msg, TextMessage):
             await self.worker.send_text(msg.text)
@@ -308,6 +395,11 @@ class VoiceSession:
 
                 if isinstance(worker_msg, AudioMessage):
                     self.metrics.agent_frames_out += 1
+                    if not self._first_output_frame_received:
+                        self._first_output_frame_received = True
+                        elapsed = time.time() - (self.metrics.connected_at or self.metrics.created_at)
+                        logger.info(f"Session {self.session_id}: First agent audio frame received at {elapsed:.2f}s")
+
                     # Barge-in: immediately suppress forwarding agent audio while user is interrupting
                     if self._state == SessionState.INTERRUPTED:
                         continue
@@ -316,6 +408,10 @@ class VoiceSession:
 
                 elif isinstance(worker_msg, TextMessage):
                     self.metrics.text_tokens_out += 1
+                    if not self._first_text_token_received:
+                        self._first_text_token_received = True
+                        elapsed = time.time() - (self.metrics.connected_at or self.metrics.created_at)
+                        logger.info(f"Session {self.session_id}: First text token received at {elapsed:.2f}s: {worker_msg.text!r}")
                     self.metrics.transcript_tokens.append(worker_msg.text)
                     # Forward text token 0x02 to client
                     await send_to_client_fn(encode_message(worker_msg))
@@ -324,6 +420,7 @@ class VoiceSession:
                     await send_to_client_fn(encode_message(worker_msg))
 
                 elif isinstance(worker_msg, ErrorMessage):
+                    logger.warning(f"Session {self.session_id} received worker error: {worker_msg.error}")
                     await send_to_client_fn(encode_message(worker_msg))
                     break
 
@@ -334,13 +431,20 @@ class VoiceSession:
             self._stop_event.set()
 
     async def close(self) -> None:
-        """Cleanly close session, update metrics, and release worker to pool."""
+        """Cleanly close session, update metrics, stop feeder, and release worker to pool."""
         if self._state in (SessionState.COMPLETED, SessionState.CLOSING):
             return
 
         self.set_state(SessionState.CLOSING)
         self._stop_event.set()
         self.metrics.ended_at = time.time()
+
+        if self._feeder_task and not self._feeder_task.done():
+            self._feeder_task.cancel()
+            try:
+                await self._feeder_task
+            except (asyncio.CancelledError, Exception):
+                pass
 
         try:
             await self.pool.release_worker(self.worker.worker_id)
@@ -369,12 +473,19 @@ class SessionManager:
         self,
         persona: PersonaConfig,
         session_id: str | None = None,
-        timeout: float = 5.0,
+        timeout: float = 30.0,
+        barge_in_warmup_sec: float = 0.0,
     ) -> VoiceSession:
         """Acquire a worker and initialize a new VoiceSession."""
         sid = session_id or f"sess_{uuid.uuid4().hex[:12]}"
         worker = await self.pool.acquire_worker(session_id=sid, timeout=timeout)
-        session = VoiceSession(session_id=sid, persona=persona, worker=worker, pool=self.pool)
+        session = VoiceSession(
+            session_id=sid,
+            persona=persona,
+            worker=worker,
+            pool=self.pool,
+            barge_in_warmup_sec=barge_in_warmup_sec,
+        )
         self._active_sessions[sid] = session
         return session
 

@@ -684,7 +684,12 @@ def create_app(
 
         # 3. Acquire Worker and Create Session
         try:
-            session = await mgr.create_session(persona=active_persona, session_id=session_id, timeout=6.0)
+            session = await mgr.create_session(
+                persona=active_persona,
+                session_id=session_id,
+                timeout=30.0,
+                barge_in_warmup_sec=1.5,
+            )
         except PoolCapacityExceededError as e:
             logger.warning(f"Capacity exceeded for session request: {e}")
             err = encode_message(ErrorMessage(error=f"503 Service Unavailable: All workers busy. {e!s}"))
