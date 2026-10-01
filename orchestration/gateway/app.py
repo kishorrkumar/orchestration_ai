@@ -183,42 +183,63 @@ def create_app(
 
     @app.get("/metrics", tags=["System"])
     async def get_metrics():
-        from ..telemetry.gpu import get_live_gpu_telemetry
-        gpu = get_live_gpu_telemetry()
-        active = mgr.list_active_sessions()
-        pool_stats = worker_pool.get_stats()
-        total_user_frames = sum(s.get("user_frames_in", 0) for s in active)
-        total_agent_frames = sum(s.get("agent_frames_out", 0) for s in active)
-        total_barge_ins = sum(s.get("barge_in_events", 0) for s in active)
+        try:
+            from ..telemetry.gpu import get_live_gpu_telemetry
+            gpu = get_live_gpu_telemetry()
+            active = mgr.list_active_sessions()
+            pool_stats = worker_pool.get_stats()
+            total_user_frames = sum(s.get("user_frames_in", 0) for s in active)
+            total_agent_frames = sum(s.get("agent_frames_out", 0) for s in active)
+            total_barge_ins = sum(s.get("barge_in_events", 0) for s in active)
 
-        stt_ms = getattr(resolved_server, "last_stt_ms", 0.0) if resolved_server else 0.0
-        llm_ttft_ms = getattr(resolved_server, "last_llm_ttft_ms", 0.0) if resolved_server else 0.0
-        tts_ttfa_ms = getattr(resolved_server, "last_tts_ttfa_ms", 0.0) if resolved_server else 0.0
-        total_ttfa_ms = getattr(resolved_server, "last_total_ttfa_ms", 0.0) if resolved_server else 0.0
-        if resolved_server:
-            wtype = getattr(resolved_server, "__class__", type).__name__
-        elif pool_stats["total_workers"] > 0:
-            wtype = "PersonaPlex 7B (GPU)"
-        else:
-            wtype = "Mock"
+            stt_ms = getattr(resolved_server, "last_stt_ms", 0.0) if resolved_server else 0.0
+            llm_ttft_ms = getattr(resolved_server, "last_llm_ttft_ms", 0.0) if resolved_server else 0.0
+            tts_ttfa_ms = getattr(resolved_server, "last_tts_ttfa_ms", 0.0) if resolved_server else 0.0
+            total_ttfa_ms = getattr(resolved_server, "last_total_ttfa_ms", 0.0) if resolved_server else 0.0
+            worker_underruns = getattr(resolved_server, "total_underruns", 0) if resolved_server else 0
+            if resolved_server:
+                wtype = getattr(resolved_server, "__class__", type).__name__
+            elif pool_stats["total_workers"] > 0:
+                wtype = "PersonaPlex 7B (GPU)"
+            else:
+                wtype = "Mock"
 
-        return {
-            "timestamp": time.time(),
-            "worker_type": wtype,
-            "workers_total": pool_stats["total_workers"],
-            "workers_idle": pool_stats["idle_workers"],
-            "workers_busy": pool_stats["busy_workers"],
-            "active_sessions_count": len(active),
-            "total_user_frames_in": total_user_frames,
-            "total_agent_frames_out": total_agent_frames,
-            "total_barge_in_events": total_barge_ins,
-            "stt_ms": round(stt_ms, 1),
-            "llm_ttft_ms": round(llm_ttft_ms, 1),
-            "tts_ttfa_ms": round(tts_ttfa_ms, 1),
-            "total_ttfa_ms": round(total_ttfa_ms, 1),
-            "worker_underruns": worker_underruns,
-            "gpu": gpu,
-        }
+            return {
+                "timestamp": time.time(),
+                "worker_type": wtype,
+                "workers_total": pool_stats["total_workers"],
+                "workers_idle": pool_stats["idle_workers"],
+                "workers_busy": pool_stats["busy_workers"],
+                "active_sessions_count": len(active),
+                "total_user_frames_in": total_user_frames,
+                "total_agent_frames_out": total_agent_frames,
+                "total_barge_in_events": total_barge_ins,
+                "stt_ms": round(stt_ms, 1),
+                "llm_ttft_ms": round(llm_ttft_ms, 1),
+                "tts_ttfa_ms": round(tts_ttfa_ms, 1),
+                "total_ttfa_ms": round(total_ttfa_ms, 1),
+                "worker_underruns": worker_underruns,
+                "gpu": gpu,
+            }
+        except Exception as e:
+            logger.warning(f"Error serving /metrics: {e}")
+            return {
+                "timestamp": time.time(),
+                "worker_type": "PersonaPlex",
+                "workers_total": 1,
+                "workers_idle": 1,
+                "workers_busy": 0,
+                "active_sessions_count": 0,
+                "total_user_frames_in": 0,
+                "total_agent_frames_out": 0,
+                "total_barge_in_events": 0,
+                "stt_ms": 0.0,
+                "llm_ttft_ms": 0.0,
+                "tts_ttfa_ms": 0.0,
+                "total_ttfa_ms": 0.0,
+                "worker_underruns": 0,
+                "gpu": {},
+            }
 
     # ==========================================================
     # Audio Cleaner & A/B Recording Endpoints
