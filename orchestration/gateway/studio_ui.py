@@ -882,11 +882,11 @@ STUDIO_HTML = r"""<!DOCTYPE html>
 
   <!-- Main Container -->
   <div class="studio-container">
-    <!-- Left Column: Indian Voice Agent Customizer (Locked to 1 Voice & 1 Tone) -->
+    <!-- Left Column: Voice Agent Customizer (PersonaPlex 7B NATM0.pt) -->
     <div class="panel" style="overflow-y: auto;">
       <div class="panel-header">
         <span class="panel-title">Voice Agent</span>
-        <span id="active-agent-badge" class="doc-badge" style="color: var(--apple-cyan);">Aarav</span>
+        <span id="active-agent-badge" class="doc-badge" style="color: var(--apple-cyan);">NATM0 (Male Preset)</span>
       </div>
 
       <!-- Persona Selector (Locked to Single Voice NATM0.pt) -->
@@ -901,12 +901,12 @@ STUDIO_HTML = r"""<!DOCTYPE html>
       <div class="single-agent-profile">
         <div class="profile-top">
           <span class="profile-name" id="profile-agent-name">PersonaPlex 7B</span>
-          <span class="profile-badge" id="profile-agent-badge">Mimi 24 kHz Codec</span>
+          <span class="profile-badge" id="profile-agent-badge">Male Preset (NATM0.pt)</span>
         </div>
-        <div class="profile-desc" id="profile-agent-desc">NVIDIA PersonaPlex full-duplex speech-to-speech voice agent conditioned on NATM0.pt.</div>
+        <div class="profile-desc" id="profile-agent-desc">NVIDIA PersonaPlex speech-to-speech agent conditioned on NATM0.pt (Conversational Male, English-trained Western timbre). Text prompts condition conversational tone, not regional Indian accents.</div>
         <div class="profile-meta-row">
           <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3z"/><path d="M17 11c0 2.76-2.24 5-5 5s-5-2.24-5-5H5c0 3.53 2.61 6.43 6 6.92V21h2v-3.08c3.39-.49 6-3.39 6-6.92h-2z"/></svg>
-          <span id="profile-agent-meta">NATM0.pt (Discrete Audio Tokens)</span>
+          <span id="profile-agent-meta">NATM0.pt (Mimi 24 kHz Codec)</span>
         </div>
       </div>
 
@@ -1054,6 +1054,15 @@ STUDIO_HTML = r"""<!DOCTYPE html>
         <div id="inline-error-text" style="color: #f5f5f7; font-family: var(--font-mono); font-size: 11px; word-break: break-all; line-height: 1.4; user-select: text;"></div>
       </div>
 
+      <!-- Headphone & Echo Warning Banner -->
+      <div id="headphone-warning-banner" style="display: none; background: rgba(255, 159, 10, 0.12); border: 0.5px solid var(--apple-orange); border-radius: 12px; padding: 8px 14px; margin: 4px 16px; align-items: center; justify-content: space-between; gap: 10px;">
+        <div style="display: flex; align-items: center; gap: 8px; font-size: 11.5px; color: #ffd60a;">
+          <svg width="16" height="16" fill="currentColor" viewBox="0 0 24 24"><path d="M12 3a9 9 0 00-9 9v7c0 1.1.9 2 2 2h3v-8H5v-1a7 7 0 0114 0v1h-3v8h3c1.1 0 2-.9 2-2v-7a9 9 0 00-9-9z"/></svg>
+          <span><strong>Headphone Recommended:</strong> Built-in speakers can create microphone echo. Use headphones so the agent doesn't hear itself.</span>
+        </div>
+        <button onclick="document.getElementById('headphone-warning-banner').style.display='none'" style="background: transparent; border: none; color: #ffd60a; cursor: pointer; font-size: 14px; padding: 0 4px;">✕</button>
+      </div>
+
       <!-- Transcript Container — starts empty; agent greeting appears when call begins -->
       <div class="chat-transcript" id="chat-transcript">
       </div>
@@ -1066,14 +1075,11 @@ STUDIO_HTML = r"""<!DOCTYPE html>
           </svg>
         </button>
 
-        <!-- Push-to-Talk Hidden: Full-Duplex Continuous Streaming Active -->
-        <button id="btn-ptt-toggle" class="btn-circle" style="display: none;" title="Toggle Push-to-Talk" onclick="window.studioApp.togglePttMode()">PTT</button>
-
-        <input type="text" id="user-text-input" class="chat-input" placeholder="Full-duplex real-time voice call active. Speak into your microphone." disabled style="opacity: 0.65; cursor: not-allowed;">
-
-        <button class="btn-circle" style="display: none;" title="Send Text" onclick="window.studioApp.sendTextMessage()">
-          <svg width="16" height="16" fill="currentColor" viewBox="0 0 24 24"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/></svg>
-        </button>
+        <!-- Live Audio Input Status (Typed text path removed: PersonaPlex is an audio-in model) -->
+        <div class="audio-stream-indicator" style="flex: 1; display: flex; align-items: center; gap: 8px; padding: 0 14px; height: 38px; background: rgba(255, 255, 255, 0.05); border: 0.5px solid var(--border-subtle); border-radius: var(--radius-full); font-size: 11.5px; color: var(--text-secondary);">
+          <span style="width: 7px; height: 7px; border-radius: 50%; background: var(--apple-green); display: inline-block;"></span>
+          <span id="call-input-status-text">Microphone Stream Active • 24 kHz Full-Duplex Audio In</span>
+        </div>
 
         <button id="btn-call-action" class="btn-call" onclick="window.studioApp.toggleCall()">
           <svg width="16" height="16" fill="currentColor" viewBox="0 0 24 24"><path d="M6.62 10.79a15.053 15.053 0 006.59 6.59l2.2-2.2c.27-.27.67-.36 1.02-.24 1.12.37 2.33.57 3.57.57.55 0 1 .45 1 1V20c0 .55-.45 1-1 1-9.39 0-17-7.61-17-17 0-.55.45-1 1-1h3.5c.55 0 1 .45 1 1 0 1.25.2 2.45.57 3.57.11.35.03.74-.25 1.02l-2.2 2.2z"/></svg>
@@ -1301,11 +1307,13 @@ STUDIO_HTML = r"""<!DOCTYPE html>
         this.micStream = await navigator.mediaDevices.getUserMedia({
           audio: {
             channelCount: 1,
+            sampleRate: this.sampleRate,
             echoCancellation: true,
             noiseSuppression: true,
             autoGainControl: true,
           }
         });
+        this.checkHeadphones();
 
         this.micSource = this.audioCtx.createMediaStreamSource(this.micStream);
         this.processor = this.audioCtx.createScriptProcessor(2048, 1, 1);
@@ -1444,6 +1452,28 @@ STUDIO_HTML = r"""<!DOCTYPE html>
           this.micSource = null;
         }
         this.micBuffer = [];
+      }
+
+      async checkHeadphones() {
+        try {
+          if (!navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices) return;
+          const devices = await navigator.mediaDevices.enumerateDevices();
+          const outputs = devices.filter(d => d.kind === 'audiooutput');
+          let hasHeadphones = false;
+          for (const d of outputs) {
+            const label = (d.label || '').toLowerCase();
+            if (label.includes('headphone') || label.includes('headset') || label.includes('airpods') || label.includes('earphone') || label.includes('buds') || label.includes('bluetooth')) {
+              hasHeadphones = true;
+              break;
+            }
+          }
+          const banner = document.getElementById('headphone-warning-banner');
+          if (banner) {
+            banner.style.display = (outputs.length > 0 && !hasHeadphones) ? 'flex' : 'none';
+          }
+        } catch (e) {
+          console.debug('Headphone check error:', e);
+        }
       }
     }
 
@@ -1869,6 +1899,9 @@ STUDIO_HTML = r"""<!DOCTYPE html>
             this.orb.setAgentSpeaking(false);
             const spk = document.getElementById('speaker-status');
             if (spk) spk.innerText = 'Interrupted (Barge-in)';
+          }
+          if (meta.event === 'transcript') {
+            this.handleTranscriptEvent(meta);
           }
         };
 
@@ -2645,44 +2678,58 @@ STUDIO_HTML = r"""<!DOCTYPE html>
         btn.classList.toggle('active', isMuted);
       }
 
-      async sendTextMessage() {
-        const input = document.getElementById('user-text-input');
-        const text = input.value.trim();
-        if (!text) return;
-        input.value = '';
-
-        // Resume or initialize audio context on user gesture
-        if (!this.audio.audioCtx) {
-          try { await this.audio.initialize(); } catch (e) {}
-        } else if (this.audio.audioCtx.state === 'suspended') {
-          try { await this.audio.audioCtx.resume(); } catch (e) {}
-        }
-
-        if (!this.isConnected) {
-          await this.startCall();
-        }
-
-        this.currentAgentBubble = null;
-        this.appendMessage('user', text);
-        this.audio.stopPlayback();
-        this.orb.setAgentSpeaking(false);
-        this.socket.sendTextMessage(text);
-      }
-
-      appendMessage(author, text, isGrounded = false) {
+      handleTranscriptEvent(meta) {
         const transcript = document.getElementById('chat-transcript');
-        const row = document.createElement('div');
-        row.className = `message-row ${author} ${isGrounded ? 'grounded' : ''}`;
-        const authorName = author === 'user' ? 'You' : (this.activeAgentName || 'Agent');
-        row.innerHTML = `
-          <span class="message-author">${authorName}</span>
-          <div class="bubble">${text}</div>
-        `;
-        transcript.appendChild(row);
-        transcript.scrollTop = transcript.scrollHeight;
-        if (author === 'user') {
+        const role = meta.role; // 'user' or 'agent'
+        const text = meta.text;
+        const isFinal = !!meta.is_final;
+        const ts = meta.timestamp || new Date().toLocaleTimeString([], { hour12: false });
+
+        if (role === 'user') {
+          // User spoke: seal any active agent bubble so turns are separated
           this.currentAgentBubble = null;
+
+          let userRow = document.getElementById('live-user-bubble');
+          if (!userRow) {
+            userRow = document.createElement('div');
+            userRow.id = 'live-user-bubble';
+            userRow.className = 'message-row user';
+            userRow.innerHTML = `
+              <div style="display: flex; align-items: center; justify-content: flex-end; gap: 6px; margin-bottom: 3px;">
+                <span class="message-author">You</span>
+                <span class="message-time" style="font-size: 10px; color: var(--text-tertiary); font-family: var(--font-mono);">${ts}</span>
+              </div>
+              <div class="bubble"></div>
+            `;
+            transcript.appendChild(userRow);
+          }
+          const bubble = userRow.querySelector('.bubble');
+          bubble.innerText = text;
+
+          if (isFinal) {
+            userRow.removeAttribute('id'); // Lock turn into permanent bubble
+          }
+        } else if (role === 'agent') {
+          if (isFinal) {
+            if (this.currentAgentBubble) {
+              this.currentAgentBubble.innerText = text;
+              this.currentAgentBubble = null; // Lock turn
+            } else {
+              const row = document.createElement('div');
+              row.className = 'message-row agent';
+              const authorName = this.activeAgentName || 'Agent';
+              row.innerHTML = `
+                <div style="display: flex; align-items: center; gap: 6px; margin-bottom: 3px;">
+                  <span class="message-author">${authorName}</span>
+                  <span class="message-time" style="font-size: 10px; color: var(--text-tertiary); font-family: var(--font-mono);">${ts}</span>
+                </div>
+                <div class="bubble">${text}</div>
+              `;
+              transcript.appendChild(row);
+            }
+          }
         }
+        transcript.scrollTop = transcript.scrollHeight;
       }
 
       appendTranscriptToken(author, token) {
@@ -2692,8 +2739,12 @@ STUDIO_HTML = r"""<!DOCTYPE html>
             const row = document.createElement('div');
             row.className = 'message-row agent';
             const authorName = this.activeAgentName || 'Agent';
+            const ts = new Date().toLocaleTimeString([], { hour12: false });
             row.innerHTML = `
-              <span class="message-author">${authorName}</span>
+              <div style="display: flex; align-items: center; gap: 6px; margin-bottom: 3px;">
+                <span class="message-author">${authorName}</span>
+                <span class="message-time" style="font-size: 10px; color: var(--text-tertiary); font-family: var(--font-mono);">${ts}</span>
+              </div>
               <div class="bubble"></div>
             `;
             transcript.appendChild(row);

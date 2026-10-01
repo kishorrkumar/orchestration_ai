@@ -217,7 +217,21 @@ class VoiceSession:
         self.inbound_buffer = AudioFrameBuffer(dtype=np.float32)
         self.noise_canceller = AdaptiveNoiseCanceller()
         from ..audio.cleaner import CallerAudioCleaner
+        from ..audio.caller_transcriber import CallerTranscriber
+        from ..audio.turn_detector import TurnDetector
+
         self.cleaner = CallerAudioCleaner(sample_rate=SAMPLE_RATE, frame_size=FRAME_SIZE)
+        self._send_to_client_fn = None
+        self.turn_detector = TurnDetector(
+            sample_rate=SAMPLE_RATE,
+            frame_size=FRAME_SIZE,
+            base_silence_sec=0.60,
+            speech_rms_threshold=self.barge_in_rms_threshold,
+        )
+        self.transcriber = CallerTranscriber(
+            sample_rate=SAMPLE_RATE,
+            on_transcript_callback=self._broadcast_transcript,
+        )
 
         self._state = SessionState.INITIALIZING
         self._stop_event = asyncio.Event()
@@ -234,6 +248,13 @@ class VoiceSession:
         self._first_text_token_received = False
         self._last_telemetry_log_time = time.time()
 
+    async def _broadcast_transcript(self, payload: dict[str, Any]) -> None:
+        if self._send_to_client_fn:
+            try:
+                await self._send_to_client_fn(encode_message(MetadataMessage(data=payload)))
+            except Exception as e:
+                logger.debug(f"Failed to forward transcript metadata: {e}")
+
     @property
     def state(self) -> SessionState:
         return self._state
@@ -245,6 +266,7 @@ class VoiceSession:
 
     async def start(self) -> None:
         """Connect to worker, await handshake (priming phase), clear buffer, and start feeder."""
+        self.transcriber.start()
         if self.is_claimed_from_standby:
             logger.info(f"Session {self.session_id} was claimed from primed standby. Instant start (TTFA < 1.5s)!")
             self.set_state(SessionState.ACTIVE)
@@ -363,13 +385,24 @@ class VoiceSession:
                 self.metrics.user_frames_in += new_frames
                 avail = self.inbound_buffer.available_frames
                 start_idx = max(0, avail - new_frames)
+                now = time.time()
+                session_age = now - (self.metrics.connected_at or self.metrics.created_at)
+
                 for idx in range(start_idx, avail):
                     frame_data = self.inbound_buffer.peek_frame(idx)
                     if frame_data is None:
                         continue
+
+                    # Record to cleaner for A/B comparison and optional CPU denoise
+                    self.cleaner.process_chunk(frame_data)
+
                     rms = compute_rms(frame_data)
-                    now = time.time()
-                    session_age = now - (self.metrics.connected_at or self.metrics.created_at)
+                    is_agent_spk = (self.metrics.agent_frames_out > 0 and (now - self.transcriber._last_agent_audio_time < 0.35))
+                    spk_now, turn_done, completed_audio = self.turn_detector.push_frame(
+                        frame_data,
+                        rms=rms,
+                        is_agent_speaking=is_agent_spk,
+                    )
 
                     # Guard: require warmup delay (if configured) before enabling barge-in
                     if session_age >= self.barge_in_warmup_sec and rms > self.barge_in_rms_threshold:
@@ -380,15 +413,19 @@ class VoiceSession:
                                 f"Session {self.session_id} barge-in triggered (RMS={rms:.4f} > {self.barge_in_rms_threshold:.4f}, age={session_age:.2f}s)"
                             )
                             self.set_state(SessionState.INTERRUPTED)
+                            asyncio.create_task(self.transcriber.finalize_agent_turn(reason="caller_barge_in"))
                             try:
                                 await self.worker.send_control(ControlAction.PAUSE)
                             except Exception:
                                 pass
                         self._last_user_speech_time = now
                     elif self._user_speaking and (now - self._last_user_speech_time > 0.6):
-                        # 600ms conversational hangtime before yielding floor back
                         self._user_speaking = False
                         self.set_state(SessionState.ACTIVE)
+
+                    # Caller speech turn finalized: submit for lightweight CPU transcription
+                    if turn_done and completed_audio is not None and len(completed_audio) > 0:
+                        self.transcriber.enqueue_caller_speech(completed_audio)
 
         elif isinstance(msg, TextMessage):
             await self.worker.send_text(msg.text)
@@ -400,7 +437,23 @@ class VoiceSession:
     async def run_worker_forwarder(self, send_to_client_fn) -> None:
         """
         Receive generated frames and text tokens from worker and forward to client.
+        Segments agent text into separate turns based on audio silence and user onset.
         """
+        self._send_to_client_fn = send_to_client_fn
+
+        # Background silence watchdog to finalize agent turns after speech ends (>600ms)
+        async def agent_silence_watchdog():
+            while not self._stop_event.is_set():
+                try:
+                    await asyncio.sleep(0.15)
+                    await self.transcriber.check_agent_silence_timeout(silence_threshold_sec=0.60)
+                except asyncio.CancelledError:
+                    break
+                except Exception:
+                    pass
+
+        watchdog_task = asyncio.create_task(agent_silence_watchdog())
+
         try:
             async for worker_msg in self.worker.recv_messages():
                 if self._stop_event.is_set():
@@ -408,6 +461,7 @@ class VoiceSession:
 
                 if isinstance(worker_msg, AudioMessage):
                     self.metrics.agent_frames_out += 1
+                    self.transcriber.on_agent_audio_frame()
                     if not self._first_output_frame_received:
                         self._first_output_frame_received = True
                         elapsed = time.time() - (self.metrics.connected_at or self.metrics.created_at)
@@ -421,12 +475,13 @@ class VoiceSession:
 
                 elif isinstance(worker_msg, TextMessage):
                     self.metrics.text_tokens_out += 1
+                    self.transcriber.on_agent_token(worker_msg.text)
                     if not self._first_text_token_received:
                         self._first_text_token_received = True
                         elapsed = time.time() - (self.metrics.connected_at or self.metrics.created_at)
                         logger.info(f"Session {self.session_id}: First text token received at {elapsed:.2f}s: {worker_msg.text!r}")
                     self.metrics.transcript_tokens.append(worker_msg.text)
-                    # Forward text token 0x02 to client
+                    # Forward live partial text token 0x02 to client
                     await send_to_client_fn(encode_message(worker_msg))
 
                 elif isinstance(worker_msg, MetadataMessage):
@@ -441,16 +496,21 @@ class VoiceSession:
             logger.error(f"Error in session {self.session_id} worker forwarder: {e}")
             self.set_state(SessionState.FAILED)
         finally:
+            watchdog_task.cancel()
             self._stop_event.set()
 
     async def close(self) -> None:
-        """Cleanly close session, update metrics, stop feeder, and release worker to pool."""
+        """Cleanly close session, update metrics, stop feeder and transcriber, and release worker."""
         if self._state in (SessionState.COMPLETED, SessionState.CLOSING):
             return
 
         self.set_state(SessionState.CLOSING)
         self._stop_event.set()
         self.metrics.ended_at = time.time()
+
+        # Stop transcriber and finalize any pending agent turn
+        await self.transcriber.finalize_agent_turn(reason="session_close")
+        await self.transcriber.stop()
 
         if self._feeder_task and not self._feeder_task.done():
             self._feeder_task.cancel()

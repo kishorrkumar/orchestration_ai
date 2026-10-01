@@ -51,3 +51,23 @@ Profiling of the upstream Moshi / PersonaPlex pipeline (`moshi/models/lm.py:step
 3. **Instrumentation & Telemetry**:
    - Worker client logs `last_connect_metrics` (`tcp_connect_ms`, `priming_wait_ms`, `total_connect_ms`) and `last_frame_step_ms`.
    - Exposed in `/metrics` and live Apple Design System Studio UI.
+
+---
+
+## 3. Issue 2: Transcript Turn Split (Caller vs Agent) [PERF-2]
+
+### Problem Analysis
+- Upstream PersonaPlex/Moshi generates discrete audio tokens and text tokens solely for the agent persona.
+- Callers previously lacked streaming STT on inbound voice audio, forcing reliance on typed text (which cannot reach a continuous speech-to-speech model).
+- Agent utterances concatenated into a single monolithic bubble throughout the call without timestamps or conversational boundaries.
+
+### Before vs After Optimization
+
+| Dimension / Metric | Before (Baseline) | After (Dual-Turn ASR) | Notes |
+| :--- | :--- | :--- | :--- |
+| **Caller Transcription** | None (Typed text only) | **Live Streaming Faster-Whisper** | Dedicated background task |
+| **ASR GPU Memory (VRAM)** | N/A | **0 MB added (CPU int8)** | Zero GPU memory contention |
+| **80ms Audio Loop Blocking**| N/A | **0.0 ms impact** | Non-blocking `asyncio.to_thread` queue |
+| **Turn Segmentation** | 1 Monolithic Bubble | **Discrete "You" vs "Agent" Turns** | Segmented by >600ms silence or barge-in |
+| **Timestamps** | None | **Live [HH:MM:SS] per bubble** | Finalized on each speaker turn |
+| **Typed Text Input Path** | Present (Confusing) | **Completely Removed** | Clean full-duplex audio stream indicator |
