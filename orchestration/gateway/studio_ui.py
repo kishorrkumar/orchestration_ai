@@ -149,6 +149,7 @@ STUDIO_HTML = r"""<!DOCTYPE html>
     .status-pill.connected .status-dot { background: var(--apple-green); }
     .status-pill.speaking .status-dot { background: var(--apple-cyan); }
     .status-pill.barge-in .status-dot { background: var(--apple-red); }
+    .status-pill.error .status-dot { background: var(--apple-red); box-shadow: 0 0 8px var(--apple-red); }
 
     /* Main Studio Container */
     .studio-container {
@@ -888,26 +889,24 @@ STUDIO_HTML = r"""<!DOCTYPE html>
         <span id="active-agent-badge" class="doc-badge" style="color: var(--apple-cyan);">Aarav</span>
       </div>
 
-      <!-- Persona Selector (4 Core PersonaPlex Personas + Indian English) -->
+      <!-- Persona Selector (Locked to Single Voice NATM0.pt) -->
       <div class="segmented-control" style="margin-bottom: 6px; flex-wrap: wrap;">
-        <button id="btn-agent-support" class="segmented-btn" onclick="window.studioApp.selectAgentPreset('support_agent')">Alex (Support)</button>
-        <button id="btn-agent-teacher" class="segmented-btn" onclick="window.studioApp.selectAgentPreset('wise_teacher')">Dr. Elena (Teacher)</button>
-        <button id="btn-agent-sales" class="segmented-btn" onclick="window.studioApp.selectAgentPreset('sales_caller')">Marcus (Sales)</button>
-        <button id="btn-agent-friend" class="segmented-btn" onclick="window.studioApp.selectAgentPreset('casual_friend')">Sam (Friend)</button>
-        <button id="btn-agent-aarav" class="segmented-btn active" onclick="window.studioApp.selectAgentPreset('indian_pro')">Aarav (IN)</button>
-        <button id="btn-agent-clone" class="segmented-btn" style="color: var(--apple-purple); font-weight: 600;" onclick="window.studioApp.openCloneModal()">🧬 Clone</button>
+        <button id="btn-agent-natm0" class="segmented-btn active" style="font-weight: 700;">NATM0 (PersonaPlex)</button>
+        <button class="segmented-btn" disabled style="opacity: 0.45; cursor: not-allowed;">Elena (Coming Soon)</button>
+        <button class="segmented-btn" disabled style="opacity: 0.45; cursor: not-allowed;">Marcus (Coming Soon)</button>
+        <button class="segmented-btn" disabled style="opacity: 0.45; cursor: not-allowed;">🧬 Clone (Coming Soon)</button>
       </div>
 
-      <!-- Colloquial Voice Profile Card -->
+      <!-- Natural Voice Profile Card -->
       <div class="single-agent-profile">
         <div class="profile-top">
-          <span class="profile-name" id="profile-agent-name">Aarav</span>
-          <span class="profile-badge" id="profile-agent-badge">Colloquial Kokoro Neural (Male)</span>
+          <span class="profile-name" id="profile-agent-name">PersonaPlex 7B</span>
+          <span class="profile-badge" id="profile-agent-badge">Mimi 24 kHz Codec</span>
         </div>
-        <div class="profile-desc" id="profile-agent-desc">Natural, articulate, and colloquial Indian English conversational voice agent.</div>
+        <div class="profile-desc" id="profile-agent-desc">NVIDIA PersonaPlex full-duplex speech-to-speech voice agent conditioned on NATM0.pt.</div>
         <div class="profile-meta-row">
           <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3z"/><path d="M17 11c0 2.76-2.24 5-5 5s-5-2.24-5-5H5c0 3.53 2.61 6.43 6 6.92V21h2v-3.08c3.39-.49 6-3.39 6-6.92h-2z"/></svg>
-          <span id="profile-agent-meta">aarav_colloquial (Kokoro 24 kHz)</span>
+          <span id="profile-agent-meta">NATM0.pt (Discrete Audio Tokens)</span>
         </div>
       </div>
 
@@ -920,16 +919,13 @@ STUDIO_HTML = r"""<!DOCTYPE html>
       <div class="customizer-form">
         <div class="form-group">
           <label class="form-label" for="cfg-agent-name">Agent Display Name</label>
-          <input type="text" id="cfg-agent-name" class="form-input" value="Aarav (Colloquial Indian English • Male)" placeholder="Agent Name">
+          <input type="text" id="cfg-agent-name" class="form-input" value="PersonaPlex 7B (NATM0)" placeholder="Agent Name">
         </div>
 
         <div class="form-group">
-          <label class="form-label" for="cfg-call-flow">Call Flow &amp; Role</label>
+          <label class="form-label" for="cfg-call-flow">Persona / Conversation Flow</label>
           <select id="cfg-call-flow" class="form-select" onchange="window.studioApp.onCallFlowChange()">
-            <option value="conversational_companion">Conversational Companion (Warm &amp; Witty)</option>
-            <option value="customer_support">Customer Support &amp; Resolution</option>
-            <option value="tech_specialist">Tech &amp; AI Specialist</option>
-            <option value="inbound_concierge">Inbound Concierge &amp; Booking</option>
+            <option value="conversational_companion">Conversational (You enjoy having a good conversation.)</option>
           </select>
         </div>
 
@@ -1027,18 +1023,42 @@ STUDIO_HTML = r"""<!DOCTYPE html>
         <div class="visualizer-overlay">
           <span class="speaker-label" id="speaker-status">Ready to Speak</span>
           <span class="cadence-badge" id="cadence-indicator">24 kHz • 12.5 Hz • Full-Duplex</span>
-          <div style="width: 140px; height: 5px; background: rgba(255,255,255,0.12); border-radius: 999px; overflow: hidden; margin-top: 4px; box-shadow: inset 0 1px 2px rgba(0,0,0,0.5);">
-            <div id="mic-meter" style="width: 0%; height: 100%; background: linear-gradient(90deg, var(--apple-green), var(--apple-cyan)); transition: width 0.06s ease;"></div>
+          
+          <!-- Dual Live Audio Meters: Mic Input & Agent Output -->
+          <div style="display:flex; gap:16px; align-items:center; margin-top: 6px;">
+            <div style="display:flex; flex-direction:column; align-items:center; gap:2px;">
+              <span style="font-size:9.5px; color:var(--text-secondary); text-transform:uppercase; letter-spacing:0.04em;">Mic In</span>
+              <div style="width: 85px; height: 5px; background: rgba(255,255,255,0.12); border-radius: 999px; overflow: hidden;">
+                <div id="mic-meter" style="width: 0%; height: 100%; background: linear-gradient(90deg, var(--apple-green), var(--apple-cyan)); transition: width 0.05s ease;"></div>
+              </div>
+            </div>
+            <div style="display:flex; flex-direction:column; align-items:center; gap:2px;">
+              <span style="font-size:9.5px; color:var(--text-secondary); text-transform:uppercase; letter-spacing:0.04em;">Agent Out</span>
+              <div style="width: 85px; height: 5px; background: rgba(255,255,255,0.12); border-radius: 999px; overflow: hidden;">
+                <div id="agent-meter" style="width: 0%; height: 100%; background: linear-gradient(90deg, var(--apple-purple), var(--apple-cyan)); transition: width 0.05s ease;"></div>
+              </div>
+            </div>
           </div>
         </div>
+      </div>
+
+      <!-- Inline Error Panel (replaces alert popups) -->
+      <div id="inline-error-panel" style="display: none; background: rgba(255, 69, 58, 0.12); border: 1px solid var(--apple-red); border-radius: 12px; padding: 10px 14px; margin: 8px 16px; flex-direction: column; gap: 6px;">
+        <div style="display: flex; justify-content: space-between; align-items: center;">
+          <span style="color: var(--apple-red); font-weight: 600; font-size: 12px; display: flex; align-items: center; gap: 6px;">
+            <svg width="14" height="14" fill="currentColor" viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z"/></svg>
+            Session Error
+          </span>
+          <button id="btn-copy-error" class="segmented-btn" style="font-size: 10.5px; padding: 2px 8px;" onclick="window.studioApp.copyErrorMessage()">Copy Error</button>
+        </div>
+        <div id="inline-error-text" style="color: #f5f5f7; font-family: var(--font-mono); font-size: 11px; word-break: break-all; line-height: 1.4; user-select: text;"></div>
       </div>
 
       <!-- Transcript Container — starts empty; agent greeting appears when call begins -->
       <div class="chat-transcript" id="chat-transcript">
       </div>
 
-
-      <!-- Bottom Call Controls -->
+      <!-- Bottom Call Controls (Continuous Mic Streaming) -->
       <div class="call-controls">
         <button id="btn-mic-toggle" class="btn-circle" title="Toggle Mute" onclick="window.studioApp.toggleMute()">
           <svg width="18" height="18" fill="currentColor" viewBox="0 0 24 24">
@@ -1046,11 +1066,12 @@ STUDIO_HTML = r"""<!DOCTYPE html>
           </svg>
         </button>
 
-        <button id="btn-ptt-toggle" class="btn-circle" title="Toggle Push-to-Talk (Hold Space)" onclick="window.studioApp.togglePttMode()" style="font-size: 11px; font-weight: 700;">PTT</button>
+        <!-- Push-to-Talk Hidden: Full-Duplex Continuous Streaming Active -->
+        <button id="btn-ptt-toggle" class="btn-circle" style="display: none;" title="Toggle Push-to-Talk" onclick="window.studioApp.togglePttMode()">PTT</button>
 
-        <input type="text" id="user-text-input" class="chat-input" placeholder="Speak into mic or type a prompt..." onkeydown="if(event.key==='Enter') window.studioApp.sendTextMessage()">
+        <input type="text" id="user-text-input" class="chat-input" placeholder="Full-duplex real-time voice call active. Speak into your microphone." disabled style="opacity: 0.65; cursor: not-allowed;">
 
-        <button class="btn-circle" title="Send Text" onclick="window.studioApp.sendTextMessage()">
+        <button class="btn-circle" style="display: none;" title="Send Text" onclick="window.studioApp.sendTextMessage()">
           <svg width="16" height="16" fill="currentColor" viewBox="0 0 24 24"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/></svg>
         </button>
 
@@ -1061,21 +1082,17 @@ STUDIO_HTML = r"""<!DOCTYPE html>
       </div>
     </div>
 
-    <!-- Right Column: Indian Neural Voice Engine & Conversation Rules -->
+    <!-- Right Column: NVIDIA PersonaPlex Acoustic Engine & Real Telemetry -->
     <div class="panel">
       <div class="panel-header">
         <span class="panel-title">Acoustic Engine</span>
-        <span class="doc-badge" style="color: var(--apple-cyan);">Indian Neural</span>
+        <span class="doc-badge" style="color: var(--apple-cyan);">PersonaPlex 7B</span>
       </div>
 
       <div class="telemetry-group" style="padding: 10px; font-size: 11.5px;">
         <div class="telemetry-row">
-          <span class="telemetry-label">Active Neural Voice</span>
-          <span class="telemetry-val" id="active-neural-voice-badge">aarav_colloquial</span>
-        </div>
-        <div class="telemetry-row">
-          <span class="telemetry-label">Accent / Dialect</span>
-          <span class="telemetry-val">Indian English (en-IN)</span>
+          <span class="telemetry-label">Active Voice</span>
+          <span class="telemetry-val" id="active-neural-voice-badge">NATM0.pt (Mimi 24kHz)</span>
         </div>
         <div class="telemetry-row">
           <span class="telemetry-label">Sampling Quality</span>
@@ -1085,100 +1102,51 @@ STUDIO_HTML = r"""<!DOCTYPE html>
           <span class="telemetry-label">Frame Cadence</span>
           <span class="telemetry-val">12.5 Hz (80ms turns)</span>
         </div>
+        <div class="telemetry-row">
+          <span class="telemetry-label">Model Architecture</span>
+          <span class="telemetry-val" style="color: var(--apple-green);">NVIDIA PersonaPlex (Moshi)</span>
+        </div>
       </div>
 
       <div class="panel-header" style="margin-top: 8px;">
-        <span class="panel-title">12 Conversation Principles</span>
+        <span class="panel-title">System Prompt</span>
         <span class="doc-badge" style="color: var(--apple-green);">Active</span>
       </div>
 
-      <div class="system-prompt-card" style="max-height: 180px; overflow-y: auto;">
-        <div class="prompt-body" style="font-size: 10.5px; line-height: 1.45;">1. Listen First (Understand before reply)
-2. Respond to Latest Message
-3. Concise (1–2 sentences)
-4. One Question at a Time
-5. Do Not Repeat Known Info
-6. Natural Acknowledgement
-7. Human-like Turn Taking
-8. Never Sound Robotic (Zero filler)
-9. Handle Interruptions (Instant cut)
-10. Handle Uncertainty Gracefully
-11. Maintain Context &amp; Goals
-12. Truthful &amp; Non-hallucinatory</div>
+      <div class="system-prompt-card" style="max-height: 120px; overflow-y: auto;">
+        <div class="prompt-body" style="font-size: 11px; line-height: 1.45; color: var(--apple-cyan);">
+          &lt;system&gt; You enjoy having a good conversation. &lt;system&gt;
+        </div>
       </div>
 
       <div class="panel-header" style="margin-top: 8px;">
-        <span class="panel-title">Session Telemetry</span>
+        <span class="panel-title">Real-Time Telemetry</span>
       </div>
 
       <div class="telemetry-group">
         <div class="telemetry-row">
           <span class="telemetry-label">Active Worker</span>
-          <span class="telemetry-val" id="telemetry-worker">worker-1</span>
+          <span class="telemetry-val" id="telemetry-worker">PersonaPlex 7B (127.0.0.1:8998)</span>
+        </div>
+        <div class="telemetry-row">
+          <span class="telemetry-label">Model Priming Time</span>
+          <span class="telemetry-val" id="telemetry-handshake-time">--</span>
+        </div>
+        <div class="telemetry-row">
+          <span class="telemetry-label">Time to First Audio</span>
+          <span class="telemetry-val" id="telemetry-ttfa" style="color: var(--apple-green);">--</span>
         </div>
         <div class="telemetry-row">
           <span class="telemetry-label">Frames In / Out</span>
           <span class="telemetry-val"><span id="telemetry-frames-in">0</span> / <span id="telemetry-frames-out">0</span></span>
         </div>
         <div class="telemetry-row">
-          <span class="telemetry-label">STT Latency</span>
-          <span class="telemetry-val" id="telemetry-stt-ms">--</span>
-        </div>
-        <div class="telemetry-row">
-          <span class="telemetry-label">LLM TTFT</span>
-          <span class="telemetry-val" id="telemetry-llm-ttft">--</span>
-        </div>
-        <div class="telemetry-row">
-          <span class="telemetry-label">TTS TTFA</span>
-          <span class="telemetry-val" id="telemetry-tts-ttfa">--</span>
-        </div>
-        <div class="telemetry-row">
-          <span class="telemetry-label">Total TTFA</span>
-          <span class="telemetry-val" id="telemetry-total-ttfa" style="color: var(--apple-green);">--</span>
-        </div>
-        <div class="telemetry-row">
           <span class="telemetry-label">Barge-in Events</span>
           <span class="telemetry-val" id="telemetry-barge-in">0</span>
         </div>
         <div class="telemetry-row">
-          <span class="telemetry-label">Audio Cleaner</span>
-          <button id="btn-toggle-bypass" onclick="window.studioApp.toggleAudioBypass()" class="segmented-btn active" style="font-size: 10px; padding: 2px 6px;">Clean: ON</button>
-        </div>
-        <div class="telemetry-row" style="margin-top: 4px; gap: 4px;">
-          <button onclick="window.studioApp.downloadRawWav()" class="segmented-btn" style="font-size: 10px; flex: 1;">Raw WAV</button>
-          <button onclick="window.studioApp.downloadCleanWav()" class="segmented-btn" style="font-size: 10px; flex: 1;">Clean WAV</button>
-        </div>
-      </div>
-
-      <!-- Live Pipeline Stages & GPU Status Panel -->
-      <div class="panel-header" style="margin-top: 8px;">
-        <span class="panel-title">Pipeline Stage Status &amp; GPU</span>
-        <span class="doc-badge" id="gpu-device-badge" style="color: var(--apple-cyan);">CUDA</span>
-      </div>
-      <div class="telemetry-group" style="padding: 10px; font-size: 11px;">
-        <div class="telemetry-row">
-          <span class="telemetry-label">🎤 Heard Speech</span>
-          <span class="telemetry-val" id="stage-heard-speech">Idle</span>
-        </div>
-        <div class="telemetry-row">
-          <span class="telemetry-label">📝 STT Transcript</span>
-          <span class="telemetry-val" id="stage-transcript">--</span>
-        </div>
-        <div class="telemetry-row">
-          <span class="telemetry-label">🧠 LLM Thinking</span>
-          <span class="telemetry-val" id="stage-llm-thinking">Idle</span>
-        </div>
-        <div class="telemetry-row">
-          <span class="telemetry-label">🔊 TTS Speaking</span>
-          <span class="telemetry-val" id="stage-tts-speaking">Idle</span>
-        </div>
-        <div class="telemetry-row" style="border-top: 1px solid rgba(255,255,255,0.06); padding-top: 4px; margin-top: 4px;">
-          <span class="telemetry-label">⚡ GPU VRAM</span>
-          <span class="telemetry-val" id="gpu-vram-text">-- / 4096 MB</span>
-        </div>
-        <div class="telemetry-row">
-          <span class="telemetry-label">🔥 GPU Temp / Util</span>
-          <span class="telemetry-val" id="gpu-temp-util">--°C / --%</span>
+          <span class="telemetry-label">Worker State</span>
+          <span class="telemetry-val" id="telemetry-worker-state" style="color: var(--apple-cyan);">Standby</span>
         </div>
       </div>
     </div>
@@ -1397,18 +1365,22 @@ STUDIO_HTML = r"""<!DOCTYPE html>
         }
         if (!this.audioCtx) return;
 
-        // Skip pure silence frames so nextPlayTime doesn't wander into future
+        // Compute RMS for live output level meter
         let sumSq = 0;
         for (let i = 0; i < floatSamples.length; i++) {
           sumSq += floatSamples[i] * floatSamples[i];
         }
         const rms = Math.sqrt(sumSq / floatSamples.length);
-        if (rms < 0.0004) return;
+        const agentMeter = document.getElementById('agent-meter');
+        if (agentMeter) {
+          const pct = Math.min(100, Math.round(rms * 700));
+          agentMeter.style.width = `${pct}%`;
+        }
 
         const now = this.audioCtx.currentTime;
         if (this.nextPlayTime < now || this.nextPlayTime > now + 0.35) {
-          // Snap directly to current time with 15ms buffer for immediate speech
-          this.nextPlayTime = now + 0.015;
+          // Snap directly to current time with 20ms jitter buffer
+          this.nextPlayTime = now + 0.020;
         }
 
         const buffer = this.audioCtx.createBuffer(1, floatSamples.length, this.sampleRate);
@@ -1430,6 +1402,9 @@ STUDIO_HTML = r"""<!DOCTYPE html>
         source.onended = () => {
           const idx = this.activeSources.indexOf(source);
           if (idx >= 0) this.activeSources.splice(idx, 1);
+          if (this.activeSources.length === 0 && agentMeter) {
+            agentMeter.style.width = '0%';
+          }
         };
       }
 
@@ -1815,6 +1790,13 @@ STUDIO_HTML = r"""<!DOCTYPE html>
           const elOut = document.getElementById('telemetry-frames-out');
           if (elOut) elOut.innerText = this.framesOut;
 
+          if (!this.firstAudioReceived) {
+            this.firstAudioReceived = true;
+            const ttfa = ((Date.now() - this.callStartTime) / 1000).toFixed(2);
+            const elTTFA = document.getElementById('telemetry-ttfa');
+            if (elTTFA) elTTFA.innerText = `${ttfa}s`;
+          }
+
           let sumSq = 0;
           for (let i = 0; i < floatSamples.length; i++) {
             sumSq += floatSamples[i] * floatSamples[i];
@@ -1823,17 +1805,15 @@ STUDIO_HTML = r"""<!DOCTYPE html>
           if (rms > 0.005) {
             this.agentSpeaking = true;
             this.orb.setAgentSpeaking(true);
+            this.updateStatus('Agent speaking', 'speaking');
             const spk = document.getElementById('speaker-status');
-            if (spk) spk.innerText = `${this.activeAgentName} Speaking`;
-            const stTTS = document.getElementById('stage-tts-speaking');
-            if (stTTS) stTTS.innerText = 'Speaking (24kHz)';
+            if (spk) spk.innerText = 'PersonaPlex Speaking';
           } else if (this.agentSpeaking && (!this.audio.activeSources || this.audio.activeSources.length === 0)) {
             this.agentSpeaking = false;
             this.orb.setAgentSpeaking(false);
+            this.updateStatus('Listening', 'connected');
             const spk = document.getElementById('speaker-status');
-            if (spk) spk.innerText = `Listening (${this.activeAgentName} ready)`;
-            const stTTS = document.getElementById('stage-tts-speaking');
-            if (stTTS) stTTS.innerText = 'Idle';
+            if (spk) spk.innerText = 'Listening (Speak into microphone)';
           }
           this.audio.playChunk(floatSamples);
         };
@@ -1845,43 +1825,84 @@ STUDIO_HTML = r"""<!DOCTYPE html>
         this.socket.onMetadata = (meta) => {
           if (meta.event === 'session_started') {
             this.activeSessionId = meta.session_id;
-          }
-          if (meta.event === 'user_transcript' && meta.text) {
-            this.updateUserLiveBubble(meta.text, true);
-            const stageTr = document.getElementById('stage-transcript');
-            if (stageTr) stageTr.innerText = meta.text.slice(0, 32);
+            const primingSec = ((Date.now() - this.callStartTime) / 1000).toFixed(2);
+            const elPrime = document.getElementById('telemetry-handshake-time');
+            if (elPrime) elPrime.innerText = `${primingSec}s`;
+            this.updateStatus('Listening', 'connected');
+            const spk = document.getElementById('speaker-status');
+            if (spk) spk.innerText = 'Listening (Speak into microphone)';
+            const stateBadge = document.getElementById('call-flow-state');
+            if (stateBadge) stateBadge.innerText = 'Active Call';
+            const stW = document.getElementById('telemetry-worker-state');
+            if (stW) stW.innerText = 'Active (12.5 Hz)';
+            const errPanel = document.getElementById('inline-error-panel');
+            if (errPanel) errPanel.style.display = 'none';
           }
           if (meta.event === 'barge_in') {
             this.bargeIns++;
             this.currentAgentBubble = null;
-            document.getElementById('telemetry-barge-in').innerText = this.bargeIns;
+            const elBarge = document.getElementById('telemetry-barge-in');
+            if (elBarge) elBarge.innerText = this.bargeIns;
             this.audio.stopPlayback();
             this.agentSpeaking = false;
             this.orb.setAgentSpeaking(false);
-            document.getElementById('speaker-status').innerText = 'Interrupted (Barge-in)';
+            const spk = document.getElementById('speaker-status');
+            if (spk) spk.innerText = 'Interrupted (Barge-in)';
           }
         };
 
         this.socket.onError = (err) => {
-          alert('Session Error: ' + err);
+          console.error('Session Error:', err);
+          this.showInlineError(err);
+          this.updateStatus('Error', 'error');
+          const spk = document.getElementById('speaker-status');
+          if (spk) spk.innerText = 'Session Error';
+          const stW = document.getElementById('telemetry-worker-state');
+          if (stW) stW.innerText = 'Error';
           this.disconnect();
         };
 
         this.socket.onClose = () => {
+          this.updateStatus('Ended', '');
+          const spk = document.getElementById('speaker-status');
+          if (spk) spk.innerText = 'Ready to Speak';
+          const stW = document.getElementById('telemetry-worker-state');
+          if (stW) stW.innerText = 'Idle';
           this.disconnect();
         };
       }
 
+      showInlineError(msg) {
+        const panel = document.getElementById('inline-error-panel');
+        const text = document.getElementById('inline-error-text');
+        if (panel && text) {
+          text.innerText = msg;
+          panel.style.display = 'flex';
+        }
+      }
+
+      copyErrorMessage() {
+        const text = document.getElementById('inline-error-text');
+        if (text && text.innerText) {
+          navigator.clipboard.writeText(text.innerText).then(() => {
+            const btn = document.getElementById('btn-copy-error');
+            if (btn) {
+              btn.innerText = '✓ Copied!';
+              setTimeout(() => { btn.innerText = 'Copy Error'; }, 2000);
+            }
+          });
+        }
+      }
+
       async boot() {
-        this.activePersona = 'indian_pro';
-        this.activeAgentName = 'Aarav';
-        this.activeNeuralVoice = 'aarav_colloquial';
+        this.activePersona = 'default';
+        this.activeAgentName = 'PersonaPlex';
         this.activeVoice = 'NATM0.pt';
-        this.activeCharacter = 'Professional';
+        this.activeNeuralVoice = 'NATM0.pt';
+        this.activeCharacter = 'Conversational';
         this.clonedVoices = [];
         this.startMetricsPolling();
         await this.loadPersonas();
-        await this.loadClonedVoices();
       }
 
       async loadPersonas() {
@@ -2456,6 +2477,25 @@ STUDIO_HTML = r"""<!DOCTYPE html>
         });
       }
 
+      disconnect() {
+        this.isConnected = false;
+        this.agentSpeaking = false;
+        if (this.orb) this.orb.setAgentSpeaking(false);
+        this.socket.disconnect();
+        this.audio.stop();
+        const micMeter = document.getElementById('mic-meter');
+        if (micMeter) micMeter.style.width = '0%';
+        const agentMeter = document.getElementById('agent-meter');
+        if (agentMeter) agentMeter.style.width = '0%';
+        const callBtn = document.getElementById('btn-call-action');
+        if (callBtn) {
+          callBtn.classList.remove('end');
+          document.getElementById('call-btn-text').innerText = 'Start Call';
+        }
+        const stateBadge = document.getElementById('call-flow-state');
+        if (stateBadge) stateBadge.innerText = 'Standby';
+      }
+
       async toggleCall() {
         if (this.isConnected) {
           this.disconnect();
@@ -2513,7 +2553,26 @@ STUDIO_HTML = r"""<!DOCTYPE html>
       }
 
       async startCall() {
-        this.updateStatus(`Connecting (${this.activeAgentName})...`, 'connecting');
+        // 1. Resume AudioContext synchronously on user gesture for browser autoplay policy
+        if (!this.audio.audioCtx) {
+          try { await this.audio.initialize(); } catch (e) {}
+        } else if (this.audio.audioCtx.state === 'suspended') {
+          try { await this.audio.audioCtx.resume(); } catch (e) {}
+        }
+
+        this.callStartTime = Date.now();
+        this.firstAudioReceived = false;
+        this.framesIn = 0;
+        this.framesOut = 0;
+        this.bargeIns = 0;
+        const errPanel = document.getElementById('inline-error-panel');
+        if (errPanel) errPanel.style.display = 'none';
+
+        this.updateStatus('Preparing agent (priming)...', 'connecting');
+        const spk = document.getElementById('speaker-status');
+        if (spk) spk.innerText = 'Preparing agent (priming model)...';
+        const stW = document.getElementById('telemetry-worker-state');
+        if (stW) stW.innerText = 'Priming (6s)';
 
         try {
           await this.audio.startMicrophone(
@@ -2533,24 +2592,16 @@ STUDIO_HTML = r"""<!DOCTYPE html>
             }
           );
         } catch (err) {
-          console.warn('Microphone access not available (e.g. HTTP origin or permission denied):', err.message);
-          const spk = document.getElementById('speaker-status');
-          if (spk) spk.innerText = `Connected in Text & Audio Playback Mode (${this.activeAgentName})`;
+          console.warn('Microphone access not available:', err.message);
+          this.showInlineError('Microphone access failed: ' + err.message + '. Please allow microphone permissions in your browser.');
+          return;
         }
 
-        // Start speech recognition if supported
-        try {
-          this.recognizer.setLang('en-IN');
-          this.recognizer.start();
-        } catch (e) {}
-
         const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-        const fallbackVoice = this.activePersona === 'indian_priya' ? 'priya_colloquial' : 'aarav_colloquial';
-        const fallbackPrompt = this.activePersona === 'indian_priya' ? 'NATF0.pt' : 'NATM0.pt';
-        const fallbackChar = this.activePersona === 'indian_priya' ? 'Warm' : 'Professional';
         const promptArea = document.getElementById('cfg-system-prompt');
-        const customPrompt = promptArea ? promptArea.value.trim() : '';
-        const url = `${proto}//${window.location.host}/v1/realtime?persona_id=${encodeURIComponent(this.activePersona)}&neural_voice=${encodeURIComponent(this.activeNeuralVoice || fallbackVoice)}&voice_prompt=${encodeURIComponent(this.activeVoice || fallbackPrompt)}&accent=Indian%20English&character=${encodeURIComponent(this.activeCharacter || fallbackChar)}&call_flow=${encodeURIComponent(this.activeCallFlow || 'conversational_companion')}&text_prompt=${encodeURIComponent(customPrompt)}`;
+        const customPrompt = promptArea && promptArea.value.trim() ? promptArea.value.trim() : 'You enjoy having a good conversation.';
+        // Forward strictly parameters defined by upstream contract (single source of truth: NATM0.pt)
+        const url = `${proto}//${window.location.host}/v1/realtime?persona_id=default&voice_prompt=NATM0.pt&text_prompt=${encodeURIComponent(customPrompt)}`;
         this.socket.connect(url);
       }
 
