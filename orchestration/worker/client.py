@@ -54,10 +54,10 @@ class PersonaPlexWorkerClient:
         host: str = "localhost",
         port: int = 8998,
         use_ssl: bool = False,
-        use_opus: bool = False,
+        use_opus: bool = True,
         sample_rate: int = 24000,
-        connect_timeout: float = 10.0,
-        handshake_timeout: float = 15.0,
+        connect_timeout: float = 15.0,
+        handshake_timeout: float = 60.0,
     ):
         self.worker_id = worker_id
         self.host = host
@@ -75,14 +75,6 @@ class PersonaPlexWorkerClient:
 
         self._opus_reader = None
         self._opus_writer = None
-        if self.use_opus:
-            try:
-                import sphn
-                self._opus_reader = sphn.OpusStreamReader(self.sample_rate)
-                self._opus_writer = sphn.OpusStreamWriter(self.sample_rate)
-            except Exception as e:
-                logger.warning(f"sphn library unavailable. Opus transcoding disabled: {e}")
-                self.use_opus = False
 
         # Telemetry
         self.frames_sent: int = 0
@@ -104,23 +96,28 @@ class PersonaPlexWorkerClient:
 
     def build_url(self, persona: PersonaConfig) -> str:
         protocol = "wss" if self.use_ssl else "ws"
+        raw_prompt = persona.get_formatted_text_prompt().strip()
+        if raw_prompt.startswith("<system>") and raw_prompt.endswith("<system>"):
+            clean_prompt = raw_prompt
+        elif raw_prompt:
+            clean_prompt = f"<system> {raw_prompt} <system>"
+        else:
+            clean_prompt = "<system> You enjoy having a good conversation. <system>"
+
+        voice = persona.get_normalized_voice_prompt()
+        if not voice.endswith(".pt"):
+            voice = f"{voice}.pt"
+
+        # Upstream moshi.server accepts ONLY these exact parameters:
         query_params = {
-            "text_prompt": persona.get_formatted_text_prompt(),
-            "voice_prompt": persona.get_normalized_voice_prompt(),
+            "text_prompt": clean_prompt,
+            "voice_prompt": voice,
             "audio_temperature": str(persona.audio_temperature),
             "text_temperature": str(persona.text_temperature),
             "audio_topk": str(persona.top_k_audio),
             "text_topk": str(persona.top_k_text),
         }
-        if persona.accent:
-            query_params["accent"] = persona.accent
-        if persona.character:
-            query_params["character"] = persona.character
-        if getattr(persona, "neural_voice", None):
-            query_params["neural_voice"] = persona.neural_voice
-        if getattr(persona, "call_flow", None):
-            query_params["call_flow"] = persona.call_flow
-        if persona.seed is not None:
+        if persona.seed is not None and persona.seed != -1:
             query_params["seed"] = str(persona.seed)
 
         qs = urllib.parse.urlencode(query_params)
@@ -137,6 +134,16 @@ class PersonaPlexWorkerClient:
         self._status = WorkerStatus.CONNECTING
         self._active_session_id = session_id
         url = self.build_url(persona)
+
+        # Fresh Opus codecs per session to guarantee valid Ogg container headers
+        if self.use_opus:
+            try:
+                import sphn
+                self._opus_writer = sphn.OpusStreamWriter(self.sample_rate)
+                self._opus_reader = sphn.OpusStreamReader(self.sample_rate)
+            except Exception as e:
+                logger.warning(f"sphn library unavailable. Opus transcoding disabled: {e}")
+                self.use_opus = False
 
         try:
             logger.info(f"Connecting worker {self.worker_id} to {url} for session {session_id}")
@@ -173,7 +180,8 @@ class PersonaPlexWorkerClient:
             if self._ws is not None:
                 await self._ws.close()
                 self._ws = None
-            raise WorkerConnectionError(f"Failed to connect worker {self.worker_id}: {e!s}") from e
+            err_desc = f"{type(e).__name__}: {e!s}" if str(e).strip() else type(e).__name__
+            raise WorkerConnectionError(f"Failed to connect worker {self.worker_id}: {err_desc}") from e
 
     async def send_audio(self, audio_data: bytes | np.ndarray) -> None:
         """Send audio frame upstream (Kind 0x01)."""
@@ -229,7 +237,7 @@ class PersonaPlexWorkerClient:
                     msg = decode_message(raw)
                     if isinstance(msg, AudioMessage):
                         self.frames_received += 1
-                        if self.use_opus and self._opus_reader is not None:
+                        if self.use_opus and self._opus_reader is not None and msg.data.startswith(b"OggS"):
                             self._opus_reader.append_bytes(msg.data)
                             pcm = self._opus_reader.read_pcm()
                             if len(pcm) > 0:
@@ -241,10 +249,18 @@ class PersonaPlexWorkerClient:
                         yield msg
                     else:
                         yield msg
+                except (GeneratorExit, asyncio.CancelledError):
+                    break
                 except Exception as ex:
+                    if "closed channel" in str(ex).lower():
+                        break
                     logger.warning(f"Error decoding worker message: {ex}")
-        except websockets.ConnectionClosed:
-            logger.info(f"Worker {self.worker_id} connection closed by upstream")
+        except websockets.ConnectionClosedOK:
+            logger.info(f"Worker {self.worker_id} connection closed cleanly by upstream (1000 OK)")
+        except websockets.ConnectionClosedError as ce:
+            logger.warning(f"Worker {self.worker_id} connection closed with error code {ce.code}: {ce.reason}")
+        except websockets.ConnectionClosed as cc:
+            logger.info(f"Worker {self.worker_id} connection closed: {cc.code}")
         finally:
             await self.close()
 

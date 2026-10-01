@@ -26,7 +26,7 @@ class WorkerNodeConfig(BaseModel):
     host: str = Field(default="localhost", description="Worker host or IP")
     port: int = Field(default=8998, ge=1, le=65535, description="Worker port")
     use_ssl: bool = Field(default=False, description="Use WSS if True")
-    use_opus: bool = Field(default=False, description="Use Opus transcoding for upstream moshi server")
+    use_opus: bool = Field(default=True, description="Use Opus transcoding for upstream moshi server")
     gpu_id: int | None = Field(default=None, description="GPU device index worker is pinned to")
 
 
@@ -40,7 +40,7 @@ class WorkerPool:
     to idle workers and managing their full-duplex session leases.
     """
 
-    def __init__(self, wait_timeout: float = 5.0):
+    def __init__(self, wait_timeout: float = 30.0):
         self.wait_timeout = wait_timeout
         self._workers: dict[str, PersonaPlexWorkerClient] = {}
         self._configs: dict[str, WorkerNodeConfig] = {}
