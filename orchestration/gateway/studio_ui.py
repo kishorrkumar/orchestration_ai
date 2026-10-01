@@ -1895,8 +1895,8 @@ STUDIO_HTML = r"""<!DOCTYPE html>
       }
 
       async boot() {
-        this.activePersona = 'default';
-        this.activeAgentName = 'PersonaPlex';
+        this.activePersona = 'casual_friend';
+        this.activeAgentName = 'Sam';
         this.activeVoice = 'NATM0.pt';
         this.activeNeuralVoice = 'NATM0.pt';
         this.activeCharacter = 'Conversational';
@@ -2012,13 +2012,13 @@ STUDIO_HTML = r"""<!DOCTYPE html>
               system_prompt: "You are Aarav, an articulate Indian English voice assistant.\nAlways speak with a natural, colloquial Indian English cadence.\nUse short, conversational 1-2 sentence replies with natural idioms like 'Haanji', 'Got it', 'Tell me'.",
             }
           };
-          p = defaults[this.activePersona] || defaults.support_agent;
+          p = defaults[this.activePersona] || defaults.casual_friend;
         }
 
-        const rawName = p.name || 'Alex';
+        const rawName = p.name || 'Sam';
         this.activeAgentName = rawName.split(' ')[0];
         this.activeCharacter = p.character || p.speaking_style || 'Conversational';
-        this.activeNeuralVoice = p.neural_voice || p.voice_ref || 'NATF1.pt';
+        this.activeNeuralVoice = p.neural_voice || p.voice_ref || 'NATM0.pt';
         this.activeVoice = p.voice_prompt || p.voice_ref || this.activeNeuralVoice;
 
         const badge = document.getElementById('active-agent-badge');
@@ -2488,6 +2488,9 @@ STUDIO_HTML = r"""<!DOCTYPE html>
         if (this.orb) this.orb.setAgentSpeaking(false);
         this.socket.disconnect();
         this.audio.stop();
+        if (this.recognizer) {
+          try { this.recognizer.stop(); } catch (e) {}
+        }
         const micMeter = document.getElementById('mic-meter');
         if (micMeter) micMeter.style.width = '0%';
         const agentMeter = document.getElementById('agent-meter');
@@ -2499,6 +2502,8 @@ STUDIO_HTML = r"""<!DOCTYPE html>
         }
         const stateBadge = document.getElementById('call-flow-state');
         if (stateBadge) stateBadge.innerText = 'Standby';
+        const stW = document.getElementById('telemetry-worker-state');
+        if (stW) stW.innerText = 'Standby';
       }
 
       async toggleCall() {
@@ -2596,6 +2601,9 @@ STUDIO_HTML = r"""<!DOCTYPE html>
               }
             }
           );
+          if (this.recognizer) {
+            try { this.recognizer.start(); } catch (e) {}
+          }
         } catch (err) {
           console.warn('Microphone access not available:', err.message);
           this.showInlineError('Microphone access failed: ' + err.message + '. Please allow microphone permissions in your browser.');
@@ -2606,7 +2614,7 @@ STUDIO_HTML = r"""<!DOCTYPE html>
         const promptArea = document.getElementById('cfg-system-prompt');
         const customPrompt = promptArea && promptArea.value.trim() ? promptArea.value.trim() : 'You enjoy having a good conversation.';
         // Forward strictly parameters defined by upstream contract (single source of truth: NATM0.pt)
-        const url = `${proto}//${window.location.host}/v1/realtime?persona_id=default&voice_prompt=NATM0.pt&text_prompt=${encodeURIComponent(customPrompt)}`;
+        const url = `${proto}//${window.location.host}/v1/realtime?persona_id=casual_friend&voice_prompt=NATM0.pt&text_prompt=${encodeURIComponent(customPrompt)}`;
         this.socket.connect(url);
       }
 

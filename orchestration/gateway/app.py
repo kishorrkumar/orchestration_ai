@@ -662,10 +662,12 @@ def create_app(
         active_persona = base_persona.model_copy()
         if voice_prompt:
             active_persona.voice_prompt = voice_prompt
+            active_persona.voice_ref = voice_prompt
         if neural_voice:
             active_persona.neural_voice = neural_voice
         if text_prompt:
             active_persona.text_prompt = text_prompt
+            active_persona.system_prompt = text_prompt
         if accent:
             active_persona.accent = accent
         if character:
