@@ -7,14 +7,34 @@ set -euo pipefail
 
 # 1. Clean up any stale processes on ports 8000 and 8998
 echo "[INFO] Freeing ports 8000 and 8998..."
+pkill -f "moshi.server" 2>/dev/null || true
+pkill -f "orchestration.cli" 2>/dev/null || true
+kill -9 $(lsof -t -i:8000 2>/dev/null) 2>/dev/null || true
+kill -9 $(lsof -t -i:8998 2>/dev/null) 2>/dev/null || true
 fuser -k 8000/tcp 2>/dev/null || true
 fuser -k 8998/tcp 2>/dev/null || true
 
 # 2. Activate Python virtual environment
-if [ -d "$HOME/personaplex_env" ]; then
-    source "$HOME/personaplex_env/bin/activate"
-elif [ -d "/workspace/personaplex_env" ]; then
-    source "/workspace/personaplex_env/bin/activate"
+FOUND_VENV=0
+for venv_candidate in \
+    "$HOME/personaplex_env" \
+    "/workspace/personaplex_env" \
+    "./.venv" \
+    "$HOME/.venv" \
+    "/workspace/.venv" \
+    "$HOME/venv" \
+    "/workspace/venv"; do
+    if [ -f "$venv_candidate/bin/activate" ]; then
+        echo "[INFO] Activating virtual environment: $venv_candidate"
+        # shellcheck disable=SC1090
+        source "$venv_candidate/bin/activate"
+        FOUND_VENV=1
+        break
+    fi
+done
+
+if [ "$FOUND_VENV" -eq 0 ]; then
+    echo "[INFO] No virtualenv activate script found. Using system python3: $(which python3 || echo 'none')"
 fi
 
 # 3. Configure Persistent HF Cache & Token

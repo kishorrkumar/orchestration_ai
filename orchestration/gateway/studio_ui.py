@@ -2217,7 +2217,7 @@ STUDIO_HTML = r"""<!DOCTYPE html>
             }
           }, 1000);
         } catch (e) {
-          alert('Microphone access required for voice cloning: ' + e.message);
+          this.showInlineError('Microphone access required for voice cloning: ' + e.message);
         }
       }
 
@@ -2253,13 +2253,13 @@ STUDIO_HTML = r"""<!DOCTYPE html>
 
         const consentCheck = document.getElementById('clone-consent-check');
         if (!consentCheck || !consentCheck.checked) {
-          alert('Voice cloning requires explicit legal consent. Please check the consent confirmation box.');
+          this.showInlineError('Voice cloning requires explicit legal consent. Please check the consent confirmation box.');
           return;
         }
 
         let audioFile = this.recordedCloneBlob || this.uploadedCloneFile;
         if (!audioFile) {
-          alert('Please record microphone audio or select an audio file first.');
+          this.showInlineError('Please record microphone audio or select an audio file first.');
           return;
         }
 
@@ -2296,10 +2296,10 @@ STUDIO_HTML = r"""<!DOCTYPE html>
               setTimeout(() => feedback.classList.remove('show'), 3500);
             }
           } else {
-            alert('Voice cloning failed: ' + (data.detail || JSON.stringify(data)));
+            this.showInlineError('Voice cloning failed: ' + (data.detail || JSON.stringify(data)));
           }
         } catch (e) {
-          alert('Error during voice cloning: ' + e.message);
+          this.showInlineError('Error during voice cloning: ' + e.message);
         } finally {
           submitBtn.disabled = false;
           submitBtn.innerText = '🧬 Create & Activate Cloned Voice';
@@ -2347,7 +2347,7 @@ STUDIO_HTML = r"""<!DOCTYPE html>
           await this.loadClonedVoices();
           this.renderClonedVoicesManager();
         } catch (e) {
-          alert('Failed to delete voice: ' + e.message);
+          this.showInlineError('Failed to delete voice: ' + e.message);
         }
       }
 
@@ -2404,6 +2404,10 @@ STUDIO_HTML = r"""<!DOCTYPE html>
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(updatedPersona)
           });
+          if (!res.ok) {
+            const errText = await res.text();
+            throw new Error(`Server returned HTTP ${res.status}: ${errText.slice(0, 100)}`);
+          }
           const result = await res.json();
           if (result.agent) {
             const idx = this.personas.findIndex(p => p.id === this.activePersona);
@@ -2428,7 +2432,8 @@ STUDIO_HTML = r"""<!DOCTYPE html>
             }
           }
         } catch (e) {
-          alert('Failed to save agent: ' + e.message);
+          console.error('Failed to save agent:', e);
+          this.showInlineError('Failed to save agent: ' + e.message + '. Ensure backend is running via bash start_services.sh on the pod.');
         }
       }
 
@@ -2743,7 +2748,7 @@ STUDIO_HTML = r"""<!DOCTYPE html>
         if (this.activeSessionId) {
           window.open(`/v1/audio/raw/${this.activeSessionId}`, '_blank');
         } else {
-          alert('Start an active call first to capture audio.');
+          this.showInlineError('Start an active call first to capture audio.');
         }
       }
 
@@ -2751,7 +2756,7 @@ STUDIO_HTML = r"""<!DOCTYPE html>
         if (this.activeSessionId) {
           window.open(`/v1/audio/clean/${this.activeSessionId}`, '_blank');
         } else {
-          alert('Start an active call first to capture audio.');
+          this.showInlineError('Start an active call first to capture audio.');
         }
       }
 
