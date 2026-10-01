@@ -121,6 +121,10 @@ if [ ! -d "$PERSONAPLEX_DIR" ]; then
 else
     git -C "$PERSONAPLEX_DIR" pull || true
 fi
+# Patch moshi pyproject.toml to relax <2.5 constraint for modern PyTorch / Python 3.13
+if [ -f "$PERSONAPLEX_DIR/moshi/pyproject.toml" ]; then
+    sed -i -E 's/torch<2.5,>=2.2.0/torch>=2.2.0/g; s/<2.5[0-9.]*//g' "$PERSONAPLEX_DIR/moshi/pyproject.toml" || true
+fi
 pip install -e "$PERSONAPLEX_DIR/moshi"
 pip install accelerate  # Required for cpu-offload support
 
