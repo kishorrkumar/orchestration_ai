@@ -93,3 +93,28 @@ Profiling of the upstream Moshi / PersonaPlex pipeline (`moshi/models/lm.py:step
 | **Denoise Architecture** | Always On / Ad-hoc | **Behind toggle (`/v1/audio/toggle-bypass`)** | Flexible A/B testing |
 | **Playback Jitter Buffer**| None (Immediate) | **25 ms adaptive jitter buffer & gapless audio scheduling** | Zero playback underruns |
 | **Sampling Defaults** | Varied | **Audio Temp: 0.7, Text Temp: 0.7** | Crisp clarity, no repetition loops |
+
+---
+
+## 5. Issue 4: Voice Cloning, Reference WAV Evaluation & Indian Accent Findings [PERF-4]
+
+### Problem Analysis & UI Metadata Correction
+1. **NATM0 Gender Correction**:
+   - In previous iterations, the UI card mislabeled `NATM0` as a "female" preset.
+   - Verified against PersonaPlex model specifications and audio recordings: `NATM0.pt` is a **Natural Conversational Male** voice preset (Deep & Authoritative).
+   - **Correction**: Updated `studio_ui.py` profile card to `Male Preset (NATM0.pt)` with explicit description:
+     `NVIDIA PersonaPlex speech-to-speech agent conditioned on NATM0.pt (Conversational Male, English-trained Western timbre). Text prompts condition conversational tone, not regional Indian accents.`
+
+2. **Indian Accent & Reference WAV Embedding Evaluation**:
+   - Upstream investigation in `_personaplex_upstream/moshi/moshi/models/lm.py`:
+     - Upstream supports `load_voice_prompt(voice_prompt: str)` to ingest a 10-30s mono `.wav` reference file at 24 kHz normalized to -24 LUFS.
+     - Mimi encodes the raw reference audio into 8 codebook discrete audio tokens (`self._encode_voice_prompt_frames(mimi)`).
+     - The Moshi LM steps through prompt tokens and can serialize the state to pre-computed embeddings via `self.save_voice_prompt_embeddings`.
+   - **Acoustic vs Accent Transfer Reality (A/B Comparison)**:
+     - **Acoustic Timbre & Pitch ($F_0$)**: Conditioning on a reference Indian speaker's `.wav` carries over acoustic timbre, pitch range, and vocal tract formants.
+     - **Linguistic Accent & Phonetics**: Moshi's autoregressive Transformer LM was pretrained predominantly on Western (American/British) conversational datasets. The generation of phonemes, syllable timing, and retroflex consonant transitions is driven by the LM's language priors, **not** the acoustic codebook prompt.
+     - **Text Prompting Limitations**: In speech-to-speech architectures like PersonaPlex, prepending text prompts like *"You speak with a fluent Indian English accent"* only conditions the conversational vocabulary and sentence structure, but does **not** alter the underlying acoustic speech token generation.
+   - **Honest Engineering Verdict**:
+     - Upstream can synthesize custom voice embeddings from a clean 24 kHz mono reference `.wav`, but regional Indian English phonetics and cadence **do not carry over**.
+     - Retaining `NATM0.pt` as the default natural male preset provides the highest acoustic fidelity, natural full-duplex conversational flow, and zero hallucination artifacts without deceptive UI claims.
+
