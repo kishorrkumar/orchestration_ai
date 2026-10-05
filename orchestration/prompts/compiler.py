@@ -98,6 +98,10 @@ class CompiledPrompt:
     time_line: str = ""
     day_part: str = "morning"
 
+    @property
+    def formatted_prompt(self) -> str:
+        return self.text
+
 
 def count_tokens(text: str) -> int:
     """Counts tokens using the official 32k PersonaPlex SentencePiece model."""
@@ -177,7 +181,11 @@ def compile_prompt(
     agent_name: str = "Assistant",
     timezone: str = "Asia/Kolkata",
     variables: Optional[dict[str, Any]] = None,
+    caller_name: Optional[str] = None,
+    customer_name: Optional[str] = None,
+    phone_number: Optional[str] = None,
     dt: Optional[datetime.datetime] = None,
+    **kwargs: Any,
 ) -> CompiledPrompt:
     """
     Compiles agent fields into the exact PersonaPlex <system> ... <system> prompt.
@@ -190,9 +198,18 @@ def compile_prompt(
         "date": time_ctx["date"],
         "day_part": time_ctx["day_part"],
     }
+    if caller_name:
+        var_dict["caller_name"] = caller_name
+    if customer_name:
+        var_dict["customer_name"] = customer_name
+    if phone_number:
+        var_dict["phone_number"] = phone_number
+
     if variables:
         for k, v in variables.items():
             var_dict[k] = str(v)
+    for k, v in kwargs.items():
+        var_dict[k] = str(v)
 
     def render_vars(text: str) -> str:
         for k, v in var_dict.items():

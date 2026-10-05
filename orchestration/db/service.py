@@ -328,3 +328,90 @@ class AgentService:
         res = await self.db.execute(stmt)
         await self.db.flush()
         return (res.rowcount or 0) > 0
+
+
+class CallSessionService:
+    """Service managing call sessions and transcript turn records."""
+
+    def __init__(self, db: AsyncSession):
+        self.db = db
+
+    async def create_session(
+        self,
+        agent_id: str,
+        agent_version_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+    ) -> CallSession:
+        from .models import CallSession
+        sid = session_id or generate_prefixed_id("ses")
+        call = CallSession(
+            id=sid,
+            agent_id=agent_id,
+            agent_version_id=agent_version_id,
+            duration_sec=0.0,
+            end_reason="",
+            ttfa_ms=0.0,
+            handshake_ms=0.0,
+        )
+        self.db.add(call)
+        await self.db.flush()
+        return call
+
+    async def add_turn(
+        self,
+        session_id: str,
+        idx: int,
+        role: str,
+        text: str,
+        started_ms: float = 0.0,
+    ) -> CallTurn:
+        from .models import CallTurn
+        turn = CallTurn(
+            id=generate_prefixed_id("trn"),
+            session_id=session_id,
+            idx=idx,
+            role=role,
+            text=text,
+            started_ms=started_ms,
+        )
+        self.db.add(turn)
+        await self.db.flush()
+        return turn
+
+    async def end_session(
+        self,
+        session_id: str,
+        end_reason: str = "user_hangup",
+        duration_sec: float = 0.0,
+        ttfa_ms: float = 0.0,
+        handshake_ms: float = 0.0,
+    ) -> Optional[CallSession]:
+        import datetime
+        from .models import CallSession
+        stmt = select(CallSession).where(CallSession.id == session_id)
+        res = await self.db.execute(stmt)
+        session = res.scalar_one_or_none()
+        if not session:
+            return None
+
+        session.ended_at = datetime.datetime.now(datetime.timezone.utc)
+        session.end_reason = end_reason
+        session.duration_sec = duration_sec
+        if ttfa_ms > 0:
+            session.ttfa_ms = ttfa_ms
+        if handshake_ms > 0:
+            session.handshake_ms = handshake_ms
+
+        await self.db.flush()
+        return session
+
+    async def get_session(self, session_id: str) -> Optional[CallSession]:
+        from .models import CallSession
+        stmt = (
+            select(CallSession)
+            .options(selectinload(CallSession.turns))
+            .where(CallSession.id == session_id)
+        )
+        res = await self.db.execute(stmt)
+        return res.scalar_one_or_none()
+
