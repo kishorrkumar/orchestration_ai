@@ -378,3 +378,49 @@ pytest tests/ -v
    - Since `moshi.server` holds a global lock per process, scaling concurrency requires running multiple Python processes bound to `127.0.0.1:8998`, `8999`, etc., with the FastAPI gateway acting as the reverse-proxy dispatcher.
 4. **Why Client-Side AEC?**
    - The browser has access to the physical microphone hardware and OS audio graph, allowing zero-latency acoustic echo subtraction before transmitting audio packets over WebSocket.
+
+---
+
+## 15. Lean S2S Voice Agent Platform (2026 Upgrade)
+
+The platform was upgraded to a focused, production-grade **Lean S2S Voice Agent Platform** for **NVIDIA PersonaPlex 7B**, adhering to strict audio engineering principles and an Apple/Linear design system.
+
+### 15.1 Six-Field Lean Agent Architecture
+Each agent is defined by exactly 6 essential fields (no unnecessary RAG, tools, or complex webhooks in the primary path):
+1. **Name**: Display name, dynamically injected into prompts as `{{agent_name}}`.
+2. **Voice**: One of the 18 official PersonaPlex `.pt` embeddings (`orchestration/persona/presets.py`).
+3. **Greeting**: First spoken words with `agent_speaks_first` toggle.
+4. **System Prompt**: Core instructions formatted with `<system> {prompt} <system>`, supporting dynamic variables (`{{time}}`, `{{date}}`, `{{timezone}}`).
+5. **Ending**: Final phrase spoken upon call completion, paired with `end_call_timeout_sec` and `silence_timeout_sec`.
+6. **Timezone**: Canonical IANA timezone identifier (e.g., `UTC`, `America/New_York`, `Asia/Kolkata`).
+
+### 15.2 Database & Immutable Versioning
+- **Models** (`orchestration/db/models.py`):
+  - `agents`: Primary record with UUID primary key.
+  - `agent_versions`: Immutable version snapshots (`v1`, `v2`, ...). Updating an agent automatically clones a new version, ensuring active calls never mutate in-flight.
+  - `call_sessions`: High-level call records with status (`in_progress`, `completed`, `failed`), end reason, and duration.
+  - `call_turns`: Chronological turn-by-turn logs with speaker tag, text transcript, and latency telemetry.
+- **Dual-Engine Persistence** (`orchestration/db/session.py`):
+  - Local development: SQLite via `aiosqlite` at `data/platform.db`.
+  - Cloud production: Neon Serverless PostgreSQL via `asyncpg` (`DATABASE_URL=postgresql+asyncpg://...`).
+
+### 15.3 Prompt Compilation & SentencePiece Token Meter
+- **Delimiters**: `<system> {prompt} <system>` (both tags are `<system>`, verified from upstream `moshi.server`).
+- **Token Counter**: Uses `models/tokenizer_spm_32k_3.model` to compute exact BPE token counts. Hard threshold: 350 tokens; recommended: $\le 150$ tokens.
+- **Voice Linter**: Flags written conventions that sound unnatural when spoken by PersonaPlex (URLs, markdown formatting, parentheticals, ALL-CAPS acronyms, bullet points).
+
+### 15.4 16 kHz Audio Core & Telephony Readiness
+- **Bit-Exact G.711 μ-law** (`orchestration/audio/codecs.py`): Pure NumPy ITU-T Recommendation G.711 encoder and decoder with $O(1)$ table lookups.
+- **Anti-Aliasing Resampling** (`orchestration/audio/resample.py`): `AudioResampler` and `StreamingResampleBuffer` backed by libsoxr (`soxr.ResampleStream`) providing >82 dB SNR and <0.2 ms delay. Output is framed into exact 480-sample 20ms frames matching Opus/PersonaPlex requirements.
+- **DSP Soft Limiter** (`orchestration/audio/dsp.py`): Non-linear hyperbolic tangent (`tanh`) compressor preventing harsh clipping or DAC distortion.
+
+### 15.5 S2S Runtime (`/v2/voice`)
+- **Protocol**: Binary WebSocket stream supporting 16 kHz PCM (Web) and 8 kHz G.711 μ-law (Telephony).
+- **Turn Logging**: Automatically captures and records user speech and agent responses to `call_turns`.
+- **End-of-Call Detection** (`orchestration/pipeline/end_detector.py`): Detects goodbye phrases, silence timeouts, and maximum duration, triggering graceful hangup.
+
+### 15.6 React 18 Lean Studio UI
+- Accessible at `http://localhost:8000/` and `http://localhost:8000/studio`.
+- Features dark glassmorphism, 18-voice catalog with audio preview players, live SentencePiece token meter, real-time voice linter alerts, and an interactive voice call overlay with microphone capture and a Siri-inspired glowing audio orb.
+- Legacy developer console preserved at `/console/legacy`.
+

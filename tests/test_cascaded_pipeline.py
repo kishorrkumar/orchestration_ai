@@ -211,6 +211,9 @@ def test_cleaner_snr_improvement_and_latency():
     noise = np.random.normal(0, 0.15, size=len(speech_signal)).astype(np.float32)
     noisy_fixture = speech_signal + noise
 
+    # Warm up filters to measure steady-state latency
+    cleaner.process_chunk(np.zeros(FRAME_SIZE, dtype=np.float32))
+
     # Process through cleaner
     t0 = time.perf_counter()
     cleaned_frames = cleaner.process_chunk(noisy_fixture)

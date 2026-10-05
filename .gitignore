@@ -33,3 +33,6 @@ models/
 data/
 eval_out/
 node_modules/
+.agents/
+skills-lock.json
+package-lock.json
