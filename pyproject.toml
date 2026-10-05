@@ -63,6 +63,9 @@ ignore = ["E501", "UP007", "UP035", "UP006"]
 asyncio_mode = "auto"
 testpaths = ["tests"]
 addopts = "-v"
+markers = [
+    "gpu: marks tests as requiring an NVIDIA GPU worker",
+]
 
 [tool.mypy]
 python_version = "3.11"
