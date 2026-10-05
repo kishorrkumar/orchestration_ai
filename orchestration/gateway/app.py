@@ -123,22 +123,28 @@ def create_app(
             target_type = os.environ.get("PERSONAPLEX_WORKER_TYPE", worker_type if worker_type != "auto" else "mock").lower()
             if target_type == "cascaded":
                 from ..worker.cascaded_worker import CascadedLocalWorkerServer
-                cascaded_server = CascadedLocalWorkerServer(host="127.0.0.1", port=8998)
-                await cascaded_server.start()
-                server_to_stop = cascaded_server
-                resolved_server = cascaded_server
+                try:
+                    cascaded_server = CascadedLocalWorkerServer(host="127.0.0.1", port=8998)
+                    await cascaded_server.start()
+                    server_to_stop = cascaded_server
+                    resolved_server = cascaded_server
+                    logger.info("Cascaded local worker auto-started on ws://127.0.0.1:8998")
+                except OSError as e:
+                    logger.info("Cascaded worker port 8998 already active (%s); reusing running worker", e)
                 mock_cfg = WorkerNodeConfig(id="cascaded-worker-1", host="127.0.0.1", port=8998)
                 worker_pool.register_worker(mock_cfg)
-                logger.info("Cascaded local worker auto-started and registered on ws://127.0.0.1:8998")
             else:
                 from ..worker.mock_worker import PersonaPlexMockServer
-                mock_server = PersonaPlexMockServer(host="127.0.0.1", port=8998)
-                await mock_server.start()
-                server_to_stop = mock_server
-                resolved_server = mock_server
+                try:
+                    mock_server = PersonaPlexMockServer(host="127.0.0.1", port=8998)
+                    await mock_server.start()
+                    server_to_stop = mock_server
+                    resolved_server = mock_server
+                    logger.info("Mock worker auto-started on ws://127.0.0.1:8998")
+                except OSError as e:
+                    logger.info("Mock worker port 8998 already active (%s); reusing running worker", e)
                 mock_cfg = WorkerNodeConfig(id="mock-worker-1", host="127.0.0.1", port=8998)
                 worker_pool.register_worker(mock_cfg)
-                logger.info("Mock worker auto-started and registered on ws://127.0.0.1:8998")
 
         # Database initialization & seeding for Voice Agent Platform
         try:

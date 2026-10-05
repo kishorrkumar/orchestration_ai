@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react'
 import type { Agent, AgentVersion, CompilePromptResult, VoicePreset } from '../lib/types'
 import { api, ApiError } from '../lib/api'
+import { AGENT_TEMPLATES, type AgentTemplate } from '../lib/templates'
 import { Button } from '../components/ui/Button'
 import { Badge } from '../components/ui/Badge'
 import { Input } from '../components/ui/Input'
@@ -15,12 +16,17 @@ import {
   Info,
   Clock,
   Volume2,
+  Sparkles,
+  BookOpen,
+  X,
 } from 'lucide-react'
 
 export interface AgentEditorViewProps {
   agentId?: string // undefined if creating new
+  initialTemplate?: AgentTemplate | null
   onBack: () => void
   onStartCall: (agent: Agent) => void
+  onOpenGuide?: () => void
 }
 
 const COMMON_TIMEZONES = [
@@ -41,8 +47,10 @@ const COMMON_TIMEZONES = [
 
 export const AgentEditorView: React.FC<AgentEditorViewProps> = ({
   agentId,
+  initialTemplate,
   onBack,
   onStartCall,
+  onOpenGuide,
 }) => {
   const isNew = !agentId
 
@@ -62,6 +70,7 @@ export const AgentEditorView: React.FC<AgentEditorViewProps> = ({
   const [voices, setVoices] = useState<VoicePreset[]>([])
   const [versions, setVersions] = useState<AgentVersion[]>([])
   const [showVersions, setShowVersions] = useState(false)
+  const [showTemplatesModal, setShowTemplatesModal] = useState(false)
   const [compileResult, setCompileResult] = useState<CompilePromptResult | null>(null)
   const [isLoading, setIsLoading] = useState(false)
   const [isSaving, setIsSaving] = useState(false)
@@ -93,6 +102,15 @@ export const AgentEditorView: React.FC<AgentEditorViewProps> = ({
           setErrorMessage(err.message || 'Failed to load agent details')
         })
         .finally(() => setIsLoading(false))
+    } else if (initialTemplate) {
+      setName(initialTemplate.name)
+      setVoiceId(initialTemplate.voice_id)
+      setGreeting(initialTemplate.greeting)
+      setAgentSpeaksFirst(initialTemplate.agent_speaks_first)
+      setSystemPrompt(initialTemplate.system_prompt)
+      setEnding(initialTemplate.ending)
+      setTimezoneStr(initialTemplate.timezone_str)
+      setSuccessMessage(`Loaded "${initialTemplate.name}" template.`)
     } else {
       // Default template for new agent
       setName('New Voice Agent')
@@ -101,7 +119,19 @@ export const AgentEditorView: React.FC<AgentEditorViewProps> = ({
       setEnding('Thank you so much for your time. Have a wonderful day, goodbye!')
       setTimezoneStr('UTC')
     }
-  }, [agentId])
+  }, [agentId, initialTemplate])
+
+  const applyTemplate = (tmpl: AgentTemplate) => {
+    setName(tmpl.name)
+    setVoiceId(tmpl.voice_id)
+    setGreeting(tmpl.greeting)
+    setAgentSpeaksFirst(tmpl.agent_speaks_first)
+    setSystemPrompt(tmpl.system_prompt)
+    setEnding(tmpl.ending)
+    setTimezoneStr(tmpl.timezone_str)
+    setShowTemplatesModal(false)
+    setSuccessMessage(`Applied "${tmpl.name}" template.`)
+  }
 
   // 2. Debounced Prompt Compilation & Linter Check
   useEffect(() => {
@@ -366,6 +396,92 @@ export const AgentEditorView: React.FC<AgentEditorViewProps> = ({
         </div>
       )}
 
+      {/* Templates Quick Selector Modal */}
+      {showTemplatesModal && (
+        <div className="fixed inset-0 z-50 bg-black/40 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-[var(--color-bg-surface)] border border-[var(--color-hairline)] rounded-2xl max-w-xl w-full max-h-[85vh] flex flex-col shadow-xl overflow-hidden animate-fadeIn">
+            <div className="p-5 border-b border-[var(--color-hairline)] flex items-center justify-between">
+              <div>
+                <h3 className="text-[16px] font-semibold text-[var(--color-text-primary)] flex items-center gap-2">
+                  <Sparkles className="w-4 h-4 text-[#C2603F]" />
+                  Production Voice Agent Templates
+                </h3>
+                <p className="text-[12px] text-[var(--color-text-secondary)] mt-0.5">
+                  Select a template to prefill Name, Voice, Greeting, System Prompt, and Ending.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowTemplatesModal(false)}
+                className="p-1 text-[var(--color-text-tertiary)] hover:text-[var(--color-text-primary)] rounded-lg cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="p-4 space-y-3 overflow-y-auto divide-y divide-[var(--color-hairline)]">
+              {AGENT_TEMPLATES.map((t) => (
+                <div key={t.id} className="pt-3 first:pt-0 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <span className="font-semibold text-[14px] text-[var(--color-text-primary)]">
+                          {t.name}
+                        </span>
+                        <Badge variant="published" className="text-[10px] py-0 px-1.5">
+                          ~{t.approx_tokens} tokens
+                        </Badge>
+                        <Badge variant="neutral" className="text-[10px] py-0 px-1.5">
+                          {t.voice_id}
+                        </Badge>
+                      </div>
+                      <span className="text-[12px] text-[#C2603F] font-medium block mt-0.5">
+                        {t.role}
+                      </span>
+                    </div>
+                    <Button
+                      variant="primary"
+                      size="compact"
+                      onClick={() => applyTemplate(t)}
+                    >
+                      Apply
+                    </Button>
+                  </div>
+                  <p className="text-[12px] text-[var(--color-text-secondary)] italic">
+                    "{t.system_prompt}"
+                  </p>
+                </div>
+              ))}
+            </div>
+
+            <div className="p-4 border-t border-[var(--color-hairline)] bg-[var(--color-bg-sunken)]/50 flex items-center justify-between">
+              {onOpenGuide ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowTemplatesModal(false)
+                    onOpenGuide()
+                  }}
+                  className="text-[12px] text-[#C2603F] hover:underline flex items-center gap-1 font-medium cursor-pointer"
+                >
+                  <BookOpen className="w-3.5 h-3.5" />
+                  View Full Prompting Guide
+                </button>
+              ) : (
+                <div />
+              )}
+              <Button
+                variant="secondary"
+                size="compact"
+                onClick={() => setShowTemplatesModal(false)}
+              >
+                Cancel
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Main Form: The 6 Lean Agent Fields */}
       <div className="bg-[#FFFFFF] border border-[rgba(31,30,29,0.08)] rounded-2xl p-6 sm:p-8 space-y-8 shadow-xs">
         {/* Field 1: Name */}
@@ -443,13 +559,35 @@ export const AgentEditorView: React.FC<AgentEditorViewProps> = ({
 
         {/* Field 4: System Prompt */}
         <div className="space-y-3">
-          <div className="flex items-center justify-between">
-            <label className="text-[13px] font-medium text-[#1F1E1D]">
-              System Prompt (Spoken Persona Instructions)
-            </label>
-            <span className="text-[12px] text-[#9E9B93]">
-              Wrapped as <span className="font-mono text-[11px]">&lt;system&gt; &#123;prompt&#125; &lt;system&gt;</span>
-            </span>
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+            <div>
+              <label className="text-[13px] font-medium text-[#1F1E1D] block">
+                System Prompt (Spoken Persona Instructions)
+              </label>
+              <span className="text-[12px] text-[#9E9B93]">
+                Wrapped as <span className="font-mono text-[11px]">&lt;system&gt; &#123;prompt&#125; &lt;system&gt;</span>
+              </span>
+            </div>
+            <div className="flex items-center gap-2">
+              {onOpenGuide && (
+                <button
+                  type="button"
+                  onClick={onOpenGuide}
+                  className="text-[12px] text-[#C2603F] hover:underline flex items-center gap-1 font-medium"
+                >
+                  <BookOpen className="w-3.5 h-3.5" />
+                  Prompting Guide
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() => setShowTemplatesModal(true)}
+                className="text-[12px] bg-[#FAF0EC] text-[#C2603F] border border-[rgba(194,96,63,0.2)] px-2.5 py-1 rounded-lg hover:bg-[#F5E6E0] flex items-center gap-1.5 font-medium transition-colors shadow-2xs cursor-pointer"
+              >
+                <Sparkles className="w-3.5 h-3.5" />
+                Templates ({AGENT_TEMPLATES.length})
+              </button>
+            </div>
           </div>
 
           <TextArea

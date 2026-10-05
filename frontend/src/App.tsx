@@ -1,17 +1,20 @@
 import { useState, useEffect } from 'react'
 import type { Agent } from './lib/types'
+import type { AgentTemplate } from './lib/templates'
 import { AgentsListView } from './views/AgentsListView'
 import { AgentEditorView } from './views/AgentEditorView'
 import { CallsHistoryView } from './views/CallsHistoryView'
 import { DesignSystemView } from './views/DesignSystemView'
+import { PromptingGuideView } from './views/PromptingGuideView'
 import { TestCallModal } from './views/TestCallModal'
-import { Moon, Sun, Layers, PhoneCall, Bot } from 'lucide-react'
+import { Moon, Sun, Layers, PhoneCall, Bot, BookOpen } from 'lucide-react'
 
-type ViewMode = 'agents' | 'editor' | 'calls' | 'design-system'
+type ViewMode = 'agents' | 'editor' | 'calls' | 'design-system' | 'prompting-guide'
 
 export function App() {
   const [view, setView] = useState<ViewMode>('agents')
   const [editingAgentId, setEditingAgentId] = useState<string | undefined>(undefined)
+  const [selectedTemplate, setSelectedTemplate] = useState<AgentTemplate | null>(null)
   const [activeCallAgent, setActiveCallAgent] = useState<Agent | null>(null)
   const [isDarkMode, setIsDarkMode] = useState(false)
 
@@ -26,12 +29,20 @@ export function App() {
 
   const navigateToEditor = (agentId?: string) => {
     setEditingAgentId(agentId)
+    setSelectedTemplate(null)
     setView('editor')
   }
 
   const navigateToAgents = () => {
     setEditingAgentId(undefined)
+    setSelectedTemplate(null)
     setView('agents')
+  }
+
+  const handleUseTemplate = (tmpl: AgentTemplate) => {
+    setSelectedTemplate(tmpl)
+    setEditingAgentId(undefined)
+    setView('editor')
   }
 
   return (
@@ -62,6 +73,7 @@ export function App() {
             <button
               onClick={() => {
                 setEditingAgentId(undefined)
+                setSelectedTemplate(null)
                 setView('agents')
               }}
               className={`px-3 py-1.5 rounded-lg text-[13px] font-medium flex items-center gap-1.5 transition-colors ${
@@ -72,6 +84,18 @@ export function App() {
             >
               <Bot className="w-4 h-4" />
               Agents
+            </button>
+
+            <button
+              onClick={() => setView('prompting-guide')}
+              className={`px-3 py-1.5 rounded-lg text-[13px] font-medium flex items-center gap-1.5 transition-colors ${
+                view === 'prompting-guide'
+                  ? 'bg-[var(--color-bg-sunken)] text-[var(--color-text-primary)] font-semibold'
+                  : 'text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]'
+              }`}
+            >
+              <BookOpen className="w-4 h-4" />
+              Prompting Guide
             </button>
 
             <button
@@ -124,8 +148,17 @@ export function App() {
         {view === 'editor' && (
           <AgentEditorView
             agentId={editingAgentId}
+            initialTemplate={selectedTemplate}
             onBack={navigateToAgents}
             onStartCall={(agent) => setActiveCallAgent(agent)}
+            onOpenGuide={() => setView('prompting-guide')}
+          />
+        )}
+
+        {view === 'prompting-guide' && (
+          <PromptingGuideView
+            onBack={navigateToAgents}
+            onUseTemplate={handleUseTemplate}
           />
         )}
 
