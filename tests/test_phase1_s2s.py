@@ -9,17 +9,15 @@ Tests:
 """
 
 import datetime
-import pytest
-import zoneinfo
+
 import httpx
+import pytest
 
 from orchestration.gateway.app import create_app
 from orchestration.pipeline.end_detector import EndOfCallDetector
 from orchestration.prompts.compiler import (
-    IDEAL_SYSTEM_PROMPT_TOKENS,
     MAX_SYSTEM_PROMPT_TOKENS,
     compile_prompt,
-    count_tokens,
     get_local_time_context,
 )
 from orchestration.protocol.prompt import (
@@ -42,7 +40,7 @@ def test_local_time_context():
     """Verify time context computation across standard and half-hour timezones."""
     # Test fixed timestamp in Asia/Kolkata (UTC +05:30)
     # 2026-10-05 15:30 UTC = 2026-10-05 21:00 IST (night)
-    fixed_dt = datetime.datetime(2026, 10, 5, 15, 30, tzinfo=datetime.timezone.utc)
+    fixed_dt = datetime.datetime(2026, 10, 5, 15, 30, tzinfo=datetime.UTC)
     ctx = get_local_time_context("Asia/Kolkata", dt=fixed_dt)
     assert ctx["weekday"] == "Monday"
     assert "9:00 PM" in ctx["current_time"]
@@ -50,7 +48,7 @@ def test_local_time_context():
     assert "Monday" in ctx["time_line"]
 
     # 2026-10-05 04:30 UTC = 2026-10-05 10:00 IST (morning)
-    fixed_morning = datetime.datetime(2026, 10, 5, 4, 30, tzinfo=datetime.timezone.utc)
+    fixed_morning = datetime.datetime(2026, 10, 5, 4, 30, tzinfo=datetime.UTC)
     ctx_m = get_local_time_context("Asia/Kolkata", dt=fixed_morning)
     assert ctx_m["day_part"] == "morning"
     assert "10:00 AM" in ctx_m["current_time"]

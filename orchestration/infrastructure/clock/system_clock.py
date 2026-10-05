@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
+
 from orchestration.domain.protocols import Clock
 
 
@@ -10,14 +11,14 @@ class SystemClock(Clock):
     """Standard system clock providing current UTC time."""
 
     def now_utc(self) -> datetime:
-        return datetime.now(timezone.utc)
+        return datetime.now(UTC)
 
 
 class FrozenClock(Clock):
     """Deterministic frozen clock for unit and integration testing."""
 
     def __init__(self, frozen_time: datetime | None = None) -> None:
-        self._current = frozen_time or datetime(2026, 10, 5, 14, 30, 0, tzinfo=timezone.utc)
+        self._current = frozen_time or datetime(2026, 10, 5, 14, 30, 0, tzinfo=UTC)
 
     def now_utc(self) -> datetime:
         return self._current

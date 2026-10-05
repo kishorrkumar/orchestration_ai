@@ -4,7 +4,8 @@ SQLAlchemy 2.0 repository implementing domain CallSessionRepository protocol.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
+
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -55,7 +56,7 @@ class SqlAlchemySessionRepository(CallSessionRepository):
             started_at_sec=rec.started_ms / 1000.0,
             ended_at_sec=rec.started_ms / 1000.0,
             latency_ms=None,
-            created_at=datetime.now(timezone.utc),
+            created_at=datetime.now(UTC),
         )
 
     async def get_by_id(self, session_id: str) -> CallSession | None:

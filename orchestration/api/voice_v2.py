@@ -9,7 +9,6 @@ import asyncio
 import json
 import logging
 import time
-from typing import Any, Optional
 
 import numpy as np
 from fastapi import APIRouter, Query, WebSocket, WebSocketDisconnect, status
@@ -17,18 +16,15 @@ from fastapi import APIRouter, Query, WebSocket, WebSocketDisconnect, status
 from ..audio.codecs import decode_ulaw, encode_ulaw
 from ..audio.dsp import compute_rms, float32_to_int16, int16_to_float32, soft_clip
 from ..audio.resample import AudioResampler, StreamingResampleBuffer
-from ..db.models import Agent, AgentVersion
+from ..db.models import AgentVersion
 from ..db.service import AgentService, CallSessionService
 from ..db.session import get_session_factory
 from ..persona.registry import PersonaConfig
 from ..pipeline.end_detector import EndOfCallDetector
 from ..prompts.compiler import compile_prompt
 from ..protocol.audio import (
-    CLIENT_FRAME_BYTES_PCM16,
     CLIENT_SAMPLE_RATE,
     MODEL_SAMPLE_RATE,
-    TELEPHONY_FRAME_BYTES,
-    TELEPHONY_SAMPLE_RATE,
 )
 from ..protocol.messages import AudioMessage, ControlAction, TextMessage
 from ..worker.client import PersonaPlexWorkerClient
@@ -43,12 +39,12 @@ router = APIRouter(tags=["Voice V2"])
 async def voice_v2_endpoint(
     websocket: WebSocket,
     agent_id: str = Query(..., description="ID of the voice agent to talk with"),
-    version: Optional[int] = Query(None, description="Specific version number (defaults to published version)"),
+    version: int | None = Query(None, description="Specific version number (defaults to published version)"),
     sample_rate: int = Query(CLIENT_SAMPLE_RATE, description="Client audio sample rate (16000 or 8000)"),
     codec: str = Query("pcm16", description="Client audio codec ('pcm16' or 'g711_ulaw')"),
-    caller_name: Optional[str] = Query(None, description="Optional caller name for template interpolation"),
-    customer_name: Optional[str] = Query(None, description="Optional customer name for template interpolation"),
-    phone_number: Optional[str] = Query(None, description="Optional phone number for template interpolation"),
+    caller_name: str | None = Query(None, description="Optional caller name for template interpolation"),
+    customer_name: str | None = Query(None, description="Optional customer name for template interpolation"),
+    phone_number: str | None = Query(None, description="Optional phone number for template interpolation"),
 ):
     """
     Production S2S WebSocket endpoint.
@@ -73,7 +69,7 @@ async def voice_v2_endpoint(
             return
 
         # Resolve version snapshot
-        target_ver: Optional[AgentVersion] = None
+        target_ver: AgentVersion | None = None
         if version is not None:
             target_ver = await agent_svc.get_version(agent_id, version)
         elif agent.published_version_id and agent.versions:
@@ -137,7 +133,7 @@ async def voice_v2_endpoint(
     out_resampler = AudioResampler(in_rate=MODEL_SAMPLE_RATE, out_rate=sample_rate, quality="QQ")
 
     # 6. Acquire Worker from Pool
-    worker_client: Optional[PersonaPlexWorkerClient] = None
+    worker_client: PersonaPlexWorkerClient | None = None
     try:
         worker_client = await worker_pool.acquire_worker(session_id=call_session_id, timeout=10.0)
     except Exception as e:

@@ -9,10 +9,10 @@ from __future__ import annotations
 import difflib
 import re
 from dataclasses import dataclass
-from enum import Enum
+from enum import StrEnum
 
 
-class DetectionAction(str, Enum):
+class DetectionAction(StrEnum):
     CONTINUE = "continue"
     HANG_UP = "hang_up"
 
@@ -27,7 +27,7 @@ class DetectionResult:
 class EndOfCallDetector:
     """
     Pure domain state machine detecting call completion.
-    
+
     Rules:
     1. Agent phrase matching: Fuzzy match against target goodbye phrase (similarity >= 0.75).
     2. Quiet window: Once matched, waits for quiet_window_sec (default 1.5s) to allow audio drain.

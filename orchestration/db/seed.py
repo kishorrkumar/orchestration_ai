@@ -11,10 +11,11 @@ Populates:
 from __future__ import annotations
 
 import logging
+
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from .models import Agent, AgentVersion, Workspace
+from .models import Agent
 from .service import AgentService
 
 logger = logging.getLogger("orchestration.db.seed")
@@ -81,7 +82,7 @@ STARTER_AGENTS = [
 async def seed_database(db: AsyncSession) -> None:
     """Seeds default workspace and the 3 starter agents."""
     service = AgentService(db)
-    wks = await service.get_or_create_default_workspace()
+    await service.get_or_create_default_workspace()
 
     for starter in STARTER_AGENTS:
         stmt = select(Agent).where(Agent.name == starter["name"])

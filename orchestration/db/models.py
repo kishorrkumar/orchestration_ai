@@ -6,7 +6,7 @@ Designed for SQLAlchemy 2.0 with full support for SQLite and Neon PostgreSQL.
 from __future__ import annotations
 
 import datetime
-from typing import List, Optional
+from typing import List
 
 from sqlalchemy import (
     DateTime,
@@ -51,7 +51,7 @@ class Agent(Base, TimestampMixin):
     )
     name: Mapped[str] = mapped_column(String(128), nullable=False)  # Also used as {{agent_name}}
     status: Mapped[str] = mapped_column(String(32), default="draft", index=True, nullable=False)  # draft | published | archived
-    published_version_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    published_version_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     current_version_no: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
 
     # Draft working configuration (autosaved)
@@ -104,7 +104,7 @@ class AgentVersion(Base):
     change_note: Mapped[str] = mapped_column(String(255), default="", nullable=False)
     created_at: Mapped[datetime.datetime] = mapped_column(
         DateTime(timezone=True),
-        default=lambda: datetime.datetime.now(datetime.timezone.utc),
+        default=lambda: datetime.datetime.now(datetime.UTC),
         server_default=func.now(),
         nullable=False,
     )
@@ -126,22 +126,22 @@ class CallSession(Base):
         String(64), primary_key=True, default=lambda: generate_prefixed_id("ses")
     )
     agent_id: Mapped[str] = mapped_column(ForeignKey("agents.id", ondelete="CASCADE"), index=True, nullable=False)
-    agent_version_id: Mapped[Optional[str]] = mapped_column(ForeignKey("agent_versions.id", ondelete="SET NULL"), nullable=True)
+    agent_version_id: Mapped[str | None] = mapped_column(ForeignKey("agent_versions.id", ondelete="SET NULL"), nullable=True)
 
     started_at: Mapped[datetime.datetime] = mapped_column(
         DateTime(timezone=True),
-        default=lambda: datetime.datetime.now(datetime.timezone.utc),
+        default=lambda: datetime.datetime.now(datetime.UTC),
         server_default=func.now(),
         nullable=False,
     )
-    ended_at: Mapped[Optional[datetime.datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    ended_at: Mapped[datetime.datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     duration_sec: Mapped[float] = mapped_column(Float, default=0.0, nullable=False)
     end_reason: Mapped[str] = mapped_column(String(64), default="", nullable=False)  # agent_closed | silence_timeout | max_duration | user_hangup | error
     ttfa_ms: Mapped[float] = mapped_column(Float, default=0.0, nullable=False)
     handshake_ms: Mapped[float] = mapped_column(Float, default=0.0, nullable=False)
 
     agent: Mapped[Agent] = relationship("Agent", back_populates="sessions")
-    version: Mapped[Optional[AgentVersion]] = relationship("AgentVersion", back_populates="sessions")
+    version: Mapped[AgentVersion | None] = relationship("AgentVersion", back_populates="sessions")
     turns: Mapped[List[CallTurn]] = relationship(
         "CallTurn", back_populates="session", cascade="all, delete-orphan", order_by="CallTurn.idx"
     )

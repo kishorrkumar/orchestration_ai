@@ -4,14 +4,14 @@ Agent and Immutable Versioning Service for Lean S2S Voice Agent Platform.
 
 from __future__ import annotations
 
-from typing import Any, List, Optional, Tuple
+from typing import List, Tuple
 
 from sqlalchemy import delete, desc, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from ..prompts.compiler import compile_prompt
-from .models import Agent, AgentVersion, Workspace, generate_prefixed_id
+from .models import Agent, AgentVersion, CallSession, CallTurn, Workspace, generate_prefixed_id
 
 
 class AgentService:
@@ -34,7 +34,7 @@ class AgentService:
     async def create_agent(
         self,
         name: str,
-        id: Optional[str] = None,
+        id: str | None = None,
         voice_id: str = "NATF0.pt",
         greeting_text: str = "",
         greeting_mode: str = "agent_first",
@@ -126,7 +126,7 @@ class AgentService:
         await self.db.refresh(agent)
         return agent
 
-    async def get_agent(self, agent_id: str) -> Optional[Agent]:
+    async def get_agent(self, agent_id: str) -> Agent | None:
         """Fetches an agent with versions loaded."""
         stmt = (
             select(Agent)
@@ -138,8 +138,8 @@ class AgentService:
 
     async def list_agents(
         self,
-        status: Optional[str] = None,
-        search: Optional[str] = None,
+        status: str | None = None,
+        search: str | None = None,
         limit: int = 50,
         offset: int = 0,
     ) -> Tuple[List[Agent], int]:
@@ -166,16 +166,16 @@ class AgentService:
     async def update_agent_draft(
         self,
         agent_id: str,
-        name: Optional[str] = None,
-        voice_id: Optional[str] = None,
-        greeting_text: Optional[str] = None,
-        greeting_mode: Optional[str] = None,
-        system_prompt: Optional[str] = None,
-        ending_text: Optional[str] = None,
-        end_silence_sec: Optional[int] = None,
-        max_duration_sec: Optional[int] = None,
-        timezone: Optional[str] = None,
-    ) -> Optional[Agent]:
+        name: str | None = None,
+        voice_id: str | None = None,
+        greeting_text: str | None = None,
+        greeting_mode: str | None = None,
+        system_prompt: str | None = None,
+        ending_text: str | None = None,
+        end_silence_sec: int | None = None,
+        max_duration_sec: int | None = None,
+        timezone: str | None = None,
+    ) -> Agent | None:
         """Updates draft fields in place."""
         agent = await self.get_agent(agent_id)
         if not agent:
@@ -212,7 +212,7 @@ class AgentService:
         self,
         agent_id: str,
         change_note: str = "",
-    ) -> Optional[AgentVersion]:
+    ) -> AgentVersion | None:
         """
         Creates a new immutable AgentVersion from the current draft state,
         validates SentencePiece token limits, bumps version_no, and sets published_version_id.
@@ -262,7 +262,7 @@ class AgentService:
         await self.db.refresh(agent)
         return new_version
 
-    async def get_version(self, agent_id: str, version_no: int) -> Optional[AgentVersion]:
+    async def get_version(self, agent_id: str, version_no: int) -> AgentVersion | None:
         """Fetches a specific immutable version of an agent."""
         stmt = select(AgentVersion).where(
             AgentVersion.agent_id == agent_id,
@@ -271,7 +271,7 @@ class AgentService:
         res = await self.db.execute(stmt)
         return res.scalar_one_or_none()
 
-    async def restore_agent(self, agent_id: str, version_no: int) -> Optional[Agent]:
+    async def restore_agent(self, agent_id: str, version_no: int) -> Agent | None:
         """Restores the working draft to the exact configuration of version_no."""
         agent = await self.get_agent(agent_id)
         if not agent:
@@ -296,7 +296,7 @@ class AgentService:
         await self.db.refresh(agent)
         return agent
 
-    async def duplicate_agent(self, agent_id: str, new_name: Optional[str] = None) -> Optional[Agent]:
+    async def duplicate_agent(self, agent_id: str, new_name: str | None = None) -> Agent | None:
         """Duplicates an existing agent and its draft state into a new agent."""
         orig = await self.get_agent(agent_id)
         if not orig:
@@ -339,8 +339,8 @@ class CallSessionService:
     async def create_session(
         self,
         agent_id: str,
-        agent_version_id: Optional[str] = None,
-        session_id: Optional[str] = None,
+        agent_version_id: str | None = None,
+        session_id: str | None = None,
     ) -> CallSession:
         from .models import CallSession
         sid = session_id or generate_prefixed_id("ses")
@@ -385,8 +385,9 @@ class CallSessionService:
         duration_sec: float = 0.0,
         ttfa_ms: float = 0.0,
         handshake_ms: float = 0.0,
-    ) -> Optional[CallSession]:
+    ) -> CallSession | None:
         import datetime
+
         from .models import CallSession
         stmt = select(CallSession).where(CallSession.id == session_id)
         res = await self.db.execute(stmt)
@@ -394,7 +395,7 @@ class CallSessionService:
         if not session:
             return None
 
-        session.ended_at = datetime.datetime.now(datetime.timezone.utc)
+        session.ended_at = datetime.datetime.now(datetime.UTC)
         session.end_reason = end_reason
         session.duration_sec = duration_sec
         if ttfa_ms > 0:
@@ -405,7 +406,7 @@ class CallSessionService:
         await self.db.flush()
         return session
 
-    async def get_session(self, session_id: str) -> Optional[CallSession]:
+    async def get_session(self, session_id: str) -> CallSession | None:
         from .models import CallSession
         stmt = (
             select(CallSession)

@@ -6,12 +6,11 @@ Computes local time via zoneinfo, renders {{variables}}, and counts tokens with 
 from __future__ import annotations
 
 import datetime
-import os
 import re
+import zoneinfo
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Optional
-import zoneinfo
+from typing import Any
 
 import sentencepiece
 
@@ -22,7 +21,7 @@ from ..protocol.prompt import (
 )
 
 # Lazy-loaded SentencePiece singleton
-_SP_TOKENIZER: Optional[sentencepiece.SentencePieceProcessor] = None
+_SP_TOKENIZER: sentencepiece.SentencePieceProcessor | None = None
 TOKENIZER_MODEL_PATH = Path("models/tokenizer_spm_32k_3.model")
 
 
@@ -41,7 +40,7 @@ def get_tokenizer() -> sentencepiece.SentencePieceProcessor:
     return _SP_TOKENIZER
 
 
-def get_local_time_context(tz_name: str = "Asia/Kolkata", dt: Optional[datetime.datetime] = None) -> dict[str, str]:
+def get_local_time_context(tz_name: str = "Asia/Kolkata", dt: datetime.datetime | None = None) -> dict[str, str]:
     """
     Computes local weekday, time, and day-part for a given IANA timezone.
     Day-part boundaries:
@@ -180,11 +179,11 @@ def compile_prompt(
     ending_text: str = "",
     agent_name: str = "Assistant",
     timezone: str = "Asia/Kolkata",
-    variables: Optional[dict[str, Any]] = None,
-    caller_name: Optional[str] = None,
-    customer_name: Optional[str] = None,
-    phone_number: Optional[str] = None,
-    dt: Optional[datetime.datetime] = None,
+    variables: dict[str, Any] | None = None,
+    caller_name: str | None = None,
+    customer_name: str | None = None,
+    phone_number: str | None = None,
+    dt: datetime.datetime | None = None,
     **kwargs: Any,
 ) -> CompiledPrompt:
     """

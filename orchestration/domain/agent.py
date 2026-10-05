@@ -6,12 +6,12 @@ Adheres strictly to the 6-field Lean Agent architecture.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
-from enum import Enum
+from datetime import UTC, datetime
+from enum import StrEnum
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 
-class AgentStatus(str, Enum):
+class AgentStatus(StrEnum):
     DRAFT = "draft"
     PUBLISHED = "published"
     ARCHIVED = "archived"
@@ -69,7 +69,7 @@ class AgentVersion:
     timezone_str: str
     compiled_prompt: str
     token_count: int
-    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     change_note: str | None = None
 
 
@@ -90,8 +90,8 @@ class Agent:
     status: AgentStatus = AgentStatus.DRAFT
     current_version: int = 1
     published_version: int | None = None
-    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
-    updated_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
+    updated_at: datetime = field(default_factory=lambda: datetime.now(UTC))
 
     def validate_timezone(self) -> ZoneInfo:
         """Validate that the configured timezone string is a valid IANA timezone."""

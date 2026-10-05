@@ -10,12 +10,12 @@ LEAN_STUDIO_HTML = r"""<!DOCTYPE html>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>PersonaPlex Voice Agent Studio • Lean S2S</title>
-  
+
   <!-- Modern Typography -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
-  
+
   <!-- React 18 + Babel Standalone -->
   <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
   <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
@@ -29,22 +29,22 @@ LEAN_STUDIO_HTML = r"""<!DOCTYPE html>
       --bg-surface-hover: #222638;
       --border-subtle: rgba(255, 255, 255, 0.07);
       --border-focus: rgba(99, 102, 241, 0.5);
-      
+
       --accent-indigo: #6366f1;
       --accent-cyan: #06b6d4;
       --accent-emerald: #10b981;
       --accent-amber: #f59e0b;
       --accent-rose: #f43f5e;
-      
+
       --text-primary: #f8fafc;
       --text-secondary: #94a3b8;
       --text-muted: #64748b;
-      
+
       --radius-sm: 6px;
       --radius-md: 10px;
       --radius-lg: 16px;
       --radius-full: 9999px;
-      
+
       --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
       --font-mono: 'JetBrains Mono', monospace;
     }
@@ -608,7 +608,7 @@ LEAN_STUDIO_HTML = r"""<!DOCTYPE html>
       const [saving, setSaving] = useState(false);
       const [publishing, setPublishing] = useState(false);
       const [callActive, setCallActive] = useState(false);
-      
+
       // Live compiled token metrics & warnings
       const [compiledMetrics, setCompiledMetrics] = useState({
         tokenCount: 0,
@@ -800,9 +800,9 @@ LEAN_STUDIO_HTML = r"""<!DOCTYPE html>
               <button className="btn btn-secondary" onClick={saveDraft} disabled={saving}>
                 {saving ? "Saving..." : "Save Draft"}
               </button>
-              <button 
-                className="btn btn-primary" 
-                onClick={publishVersion} 
+              <button
+                className="btn btn-primary"
+                onClick={publishVersion}
                 disabled={publishing || !compiledMetrics.canPublish}
                 title={!compiledMetrics.canPublish ? "Exceeds 350 tokens" : "Create immutable version"}
               >
@@ -829,8 +829,8 @@ LEAN_STUDIO_HTML = r"""<!DOCTYPE html>
               </div>
               <div style={{ flex: 1 }}>
                 {agents.map(a => (
-                  <div 
-                    key={a.id} 
+                  <div
+                    key={a.id}
                     className={`agent-item ${selectedAgent?.id === a.id ? 'active' : ''}`}
                     onClick={() => loadAgentDetails(a.id)}
                   >
@@ -855,20 +855,20 @@ LEAN_STUDIO_HTML = r"""<!DOCTYPE html>
                   <div className="form-section">
                     <div className="section-title">General & Voice Persona</div>
                     <div className="section-desc">Select the PersonaPlex voice preset and configure agent identity.</div>
-                    
+
                     <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 16 }}>
                       <div className="form-group">
                         <label className="form-label">Agent Name</label>
-                        <input 
-                          type="text" 
-                          value={selectedAgent.name || ""} 
-                          onChange={e => updateField("name", e.target.value)} 
+                        <input
+                          type="text"
+                          value={selectedAgent.name || ""}
+                          onChange={e => updateField("name", e.target.value)}
                           placeholder="e.g. Clinic Receptionist"
                         />
                       </div>
                       <div className="form-group">
                         <label className="form-label">Timezone (IANA)</label>
-                        <select 
+                        <select
                           value={selectedAgent.draft_timezone || "Asia/Kolkata"}
                           onChange={e => updateField("draft_timezone", e.target.value)}
                         >
@@ -883,8 +883,8 @@ LEAN_STUDIO_HTML = r"""<!DOCTYPE html>
                       <label className="form-label">Select Voice (18 Official PersonaPlex Presets)</label>
                       <div className="voice-grid">
                         {OFFICIAL_VOICES.map(v => (
-                          <div 
-                            key={v.id} 
+                          <div
+                            key={v.id}
                             className={`voice-card ${selectedAgent.draft_voice_id === v.id ? 'selected' : ''}`}
                             onClick={() => updateField("draft_voice_id", v.id)}
                           >
@@ -892,8 +892,8 @@ LEAN_STUDIO_HTML = r"""<!DOCTYPE html>
                               <span className="voice-id">{v.name} ({v.gender[0]})</span>
                               <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                                 <span className="voice-tag">{v.cat}</span>
-                                <button 
-                                  className="voice-preview-btn" 
+                                <button
+                                  className="voice-preview-btn"
                                   onClick={(e) => playVoicePreview(v.id, e)}
                                   title="Listen to preview"
                                 >
@@ -916,18 +916,18 @@ LEAN_STUDIO_HTML = r"""<!DOCTYPE html>
 
                     <div style={{ display: 'flex', gap: 20, marginBottom: 16 }}>
                       <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontSize: 13 }}>
-                        <input 
-                          type="radio" 
-                          name="greeting_mode" 
+                        <input
+                          type="radio"
+                          name="greeting_mode"
                           checked={selectedAgent.draft_greeting_mode !== "user_first"}
                           onChange={() => updateField("draft_greeting_mode", "agent_first")}
                         />
                         <span>Agent speaks first (Default)</span>
                       </label>
                       <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontSize: 13 }}>
-                        <input 
-                          type="radio" 
-                          name="greeting_mode" 
+                        <input
+                          type="radio"
+                          name="greeting_mode"
                           checked={selectedAgent.draft_greeting_mode === "user_first"}
                           onChange={() => updateField("draft_greeting_mode", "user_first")}
                         />
@@ -938,9 +938,9 @@ LEAN_STUDIO_HTML = r"""<!DOCTYPE html>
                     {selectedAgent.draft_greeting_mode !== "user_first" && (
                       <div className="form-group">
                         <label className="form-label">Greeting Line</label>
-                        <input 
-                          type="text" 
-                          value={selectedAgent.draft_greeting_text || ""} 
+                        <input
+                          type="text"
+                          value={selectedAgent.draft_greeting_text || ""}
                           onChange={e => updateField("draft_greeting_text", e.target.value)}
                           placeholder="e.g. Hello, thank you for calling Metro Health. How can I help you today?"
                         />
@@ -956,7 +956,7 @@ LEAN_STUDIO_HTML = r"""<!DOCTYPE html>
                     </div>
 
                     <div className="form-group">
-                      <textarea 
+                      <textarea
                         rows={6}
                         value={selectedAgent.draft_system_prompt || ""}
                         onChange={e => updateField("draft_system_prompt", e.target.value)}
@@ -969,22 +969,22 @@ LEAN_STUDIO_HTML = r"""<!DOCTYPE html>
                           <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
                             SentencePiece Token Budget (Official 32k Vocab):
                           </span>
-                          <span 
+                          <span
                             className="token-count-text"
-                            style={{ 
-                              color: compiledMetrics.tokenCount > 350 ? 'var(--accent-rose)' : 
-                                     compiledMetrics.tokenCount > 150 ? 'var(--accent-amber)' : 'var(--accent-emerald)' 
+                            style={{
+                              color: compiledMetrics.tokenCount > 350 ? 'var(--accent-rose)' :
+                                     compiledMetrics.tokenCount > 150 ? 'var(--accent-amber)' : 'var(--accent-emerald)'
                             }}
                           >
                             {compiledMetrics.tokenCount} / 350 tokens {compiledMetrics.tokenCount <= 150 ? '(Ideal)' : ''}
                           </span>
                         </div>
                         <div className="token-progress-bg">
-                          <div 
-                            className="token-progress-fill" 
-                            style={{ 
+                          <div
+                            className="token-progress-fill"
+                            style={{
                               width: `${Math.min(100, (compiledMetrics.tokenCount / 350) * 100)}%`,
-                              background: compiledMetrics.tokenCount > 350 ? 'var(--accent-rose)' : 
+                              background: compiledMetrics.tokenCount > 350 ? 'var(--accent-rose)' :
                                           compiledMetrics.tokenCount > 150 ? 'var(--accent-amber)' : 'var(--accent-emerald)'
                             }}
                           />
@@ -994,8 +994,8 @@ LEAN_STUDIO_HTML = r"""<!DOCTYPE html>
                         <div className="token-chips">
                           <span style={{ fontSize: 11, color: 'var(--text-muted)', alignSelf: 'center' }}>Insert variable:</span>
                           {["{{agent_name}}", "{{current_time}}", "{{weekday}}", "{{day_part}}", "{{caller_name}}"].map(tag => (
-                            <span 
-                              key={tag} 
+                            <span
+                              key={tag}
                               className="token-chip"
                               onClick={() => {
                                 const cur = selectedAgent.draft_system_prompt || "";
@@ -1025,9 +1025,9 @@ LEAN_STUDIO_HTML = r"""<!DOCTYPE html>
 
                     <div className="form-group">
                       <label className="form-label">Goodbye Line (Natural Hangup Trigger)</label>
-                      <input 
-                        type="text" 
-                        value={selectedAgent.draft_ending_text || ""} 
+                      <input
+                        type="text"
+                        value={selectedAgent.draft_ending_text || ""}
                         onChange={e => updateField("draft_ending_text", e.target.value)}
                         placeholder="e.g. Thank you for calling. Have a wonderful day, goodbye!"
                       />
@@ -1038,10 +1038,10 @@ LEAN_STUDIO_HTML = r"""<!DOCTYPE html>
                         <label className="form-label">
                           Silence Timeout: {selectedAgent.draft_end_silence_sec || 20}s
                         </label>
-                        <input 
-                          type="range" 
-                          min="5" 
-                          max="60" 
+                        <input
+                          type="range"
+                          min="5"
+                          max="60"
                           value={selectedAgent.draft_end_silence_sec || 20}
                           onChange={e => updateField("draft_end_silence_sec", parseInt(e.target.value))}
                         />
@@ -1050,10 +1050,10 @@ LEAN_STUDIO_HTML = r"""<!DOCTYPE html>
                         <label className="form-label">
                           Max Call Duration: {Math.round((selectedAgent.draft_max_duration_sec || 600) / 60)} min
                         </label>
-                        <input 
-                          type="range" 
-                          min="60" 
-                          max="1800" 
+                        <input
+                          type="range"
+                          min="60"
+                          max="1800"
                           step="60"
                           value={selectedAgent.draft_max_duration_sec || 600}
                           onChange={e => updateField("draft_max_duration_sec", parseInt(e.target.value))}
@@ -1072,9 +1072,9 @@ LEAN_STUDIO_HTML = r"""<!DOCTYPE html>
 
           {/* Voice Call Modal */}
           {callActive && (
-            <VoiceCallModal 
-              agent={selectedAgent} 
-              onClose={() => setCallActive(false)} 
+            <VoiceCallModal
+              agent={selectedAgent}
+              onClose={() => setCallActive(false)}
             />
           )}
         </div>
@@ -1188,12 +1188,12 @@ LEAN_STUDIO_HTML = r"""<!DOCTYPE html>
         // Process in 20ms frames = 320 samples at 16kHz
         const bufferSize = 512;
         const processor = audioCtx.createScriptProcessor(bufferSize, 1, 1);
-        
+
         let accumulator = [];
         processor.onaudioprocess = (e) => {
           if (ws.readyState !== WebSocket.OPEN) return;
           const inputData = e.inputBuffer.getChannelData(0);
-          
+
           // Check user speaking energy
           let sumSq = 0;
           for (let i = 0; i < inputData.length; i++) sumSq += inputData[i] * inputData[i];
@@ -1205,7 +1205,7 @@ LEAN_STUDIO_HTML = r"""<!DOCTYPE html>
           while (accumulator.length >= 320) {
             const frame = accumulator.slice(0, 320);
             accumulator = accumulator.slice(320);
-            
+
             // Convert to int16 PCM
             const pcm16 = new Int16Array(320);
             for (let i = 0; i < 320; i++) {

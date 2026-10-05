@@ -71,73 +71,66 @@ flowchart TD
 ```
 orchestration_ai/
 ├── config.yaml                    # System configuration (gateway, personaplex, audio, fallback)
-├── pyproject.toml / requirements.txt # Python dependencies
-├── deploy_krutrim.sh              # Ubuntu A100 automated VM provisioning script
-├── start_services.sh              # Production startup script for Krutrim/Ubuntu GPU VM
-├── frontend.html                  # Standalone exported Apple Design Developer Console
+├── pyproject.toml                 # Single source of truth for build, tools, ruff, mypy, pytest
+├── Dockerfile                     # Multi-stage production container build
+├── docker-compose.yml             # Local orchestrated stack (Gateway + Mock Worker)
+├── scripts/
+│   ├── run.ps1                    # Universal PowerShell task runner (setup, dev, test, check, seed)
+│   └── fetch_upstream.py          # Pinned upstream checkout (commit 3428dfd95309a7f3c84fd93259ded0f810d1ff91)
 │
-├── orchestration/                 # Core Python Package
-│   ├── audio/                     # Audio capture, filtering, VAD, voice isolation
-│   │   ├── cleaner.py             # 80Hz HPF + RNNoise recurrent neural denoiser + Silero VAD v6
-│   │   ├── silero_vad.py          # Silero VAD neural speech probability estimator
-│   │   ├── turn_detector.py       # Turn boundary and barge-in detector (<200ms latency)
-│   │   ├── caller_transcriber.py  # Caller audio real-time transcription
-│   │   └── similarity.py          # Speaker embedding cosine similarity evaluation
-│   │
-│   ├── chunker/                   # 1,920-sample PCM chunking & framing
-│   │   ├── bridge.py              # Frame bridge between WebSocket packets and engine
-│   │   └── normalizer.py          # LUFS normalization (-24.0 LUFS) & float32/int16 conversion
-│   │
-│   ├── gateway/                   # FastAPI Web & WebSocket Gateway
-│   │   ├── app.py                 # FastAPI application, REST endpoints, /v1/realtime WS
-│   │   ├── security.py            # API key validation & token bucket rate limiter
-│   │   └── studio_ui.py           # Embedded Apple Design System console (STUDIO_HTML)
-│   │
-│   ├── persona/                   # Agent Personas & Dialogue Prompts
-│   │   ├── registry.py            # Built-in personas (Alex, Elena, Marcus, Sam, Aarav, Priya)
-│   │   ├── prompts.py             # Delimiter formatting (<system> {prompt} <system>)
-│   │   └── dialogue.py            # Dialogue state tracking & backchannel generation
-│   │
-│   ├── protocol/                  # Binary Wire Protocol & Constants
-│   │   ├── audio.py               # Audio constants (24kHz, 1920 frame size, int16/float32)
-│   │   └── messages.py            # Opcode definitions (0x00 to 0x06) & packet encoders/decoders
-│   │
-│   ├── rag/                       # Retrieval-Augmented Generation
-│   │   └── engine.py              # Document ingestion (PDF, TXT, MD, CSV) & prompt injection
-│   │
-│   ├── session/                   # Session Lifecycle & State Machine
-│   │   └── manager.py             # Session state machine, metrics tracker, transcript exporter
-│   │
-│   ├── telemetry/                 # Latency & Hardware Monitoring
-│   │   ├── latency.py             # TTFA (Time-To-First-Audio), frame processing latency tracker
-│   │   └── gpu.py                 # NVML / nvidia-smi VRAM & GPU temperature monitoring
-│   │
-│   ├── tts/                       # Text-to-Speech & Voice Cloning
-│   │   ├── engine.py              # Fallback TTS engines (Kokoro, EdgeTTS, System TTS)
-│   │   ├── voice_clone.py         # Zero-shot voice cloner, duration validator, consent gate
-│   │   └── text_norm.py           # Text normalization for spoken delivery
-│   │
-│   └── worker/                    # Backend Inference Connectors
-│       ├── pool.py                # Multi-worker health checker, lease distributor, load balancer
-│       ├── client.py              # Upstream PersonaPlex/Moshi WebSocket client
-│       ├── mock_worker.py         # Standalone zero-GPU PersonaPlex mock server
-│       └── local_cascade.py       # Indic/multilingual fallback (Whisper + Ollama + TTS)
+├── frontend/                      # Modern React 18 + Vite + Tailwind v4 Web Application
+│   ├── src/
+│   │   ├── components/ui/         # Apple HIG / Claude UI primitives (Button, Badge, AudioIndicator, etc.)
+│   │   ├── views/                 # AgentsListView, AgentEditorView, CallsHistoryView, DesignSystemView, TestCallModal
+│   │   ├── lib/                   # API client, types, classname utilities
+│   │   └── index.css              # Design tokens (--color-bg-base, terracotta, tabular numbers)
+│   └── dist/                      # Pre-compiled static assets served by FastAPI gateway
 │
-├── _personaplex_upstream/         # Upstream NVIDIA PersonaPlex & Kyutai Moshi Codebase
-│   ├── moshi/                     # Upstream Python server & PyTorch models (LMGen, Mimi)
-│   └── client/                    # Upstream React / Vite / Tailwind Web Application
+├── orchestration/                 # Layered Core Python Architecture
+│   ├── domain/                    # Pure Domain Layer (Agent, Version, Session, Delimiter, Protocols)
+│   │   ├── agent.py               # 6-field lean agent aggregate & 18 presets validation
+│   │   ├── session.py             # CallSession and CallTurn entities
+│   │   ├── prompt.py              # <system> {prompt} <system> compiler & voice linter
+│   │   ├── detector.py            # EndOfCallDetector state machine & quiet-window drain
+│   │   └── protocols.py           # Abstract structural contracts
+│   │
+│   ├── application/               # Use Cases & Application Orchestration
+│   │   ├── agents/                # CreateAgent, UpdateAgent, PublishVersion, RevertVersion
+│   │   ├── calls/                 # StartSession, RecordTurn, EndSession
+│   │   └── prompts/               # PromptCompilerUseCase with token limit enforcement
+│   │
+│   ├── infrastructure/            # Adapters & Persistence
+│   │   ├── db/repositories/       # SQLAlchemy 2.0 async repositories (SQLite & Neon Postgres)
+│   │   ├── clock/                 # SystemClock & FrozenClock for deterministic testing
+│   │   └── tokenizer/             # SentencePieceTokenizerAdapter
+│   │
+│   ├── interfaces/                # HTTP Controllers & Wire Handlers
+│   │   └── http/                  # REST routers (/v2/agents, /v2/calls, /v2/prompts, /healthz, /readyz)
+│   │                              # RFC 9457 Problem Details error handlers
+│   │
+│   ├── shared/                    # Cross-Cutting Shared Modules
+│   │   ├── errors.py              # DomainError hierarchy + ProblemDetail RFC 9457 model
+│   │   ├── logging.py             # Structlog with correlation IDs & credential redaction
+│   │   ├── settings.py            # Pydantic-settings 12-factor configuration
+│   │   └── ids.py                 # Prefixed ID generators (agt_, ses_, ver_, trn_, err_)
+│   │
+│   ├── audio/                     # 16 kHz Linear PCM, 24 kHz polyphase resampling, G.711 μ-law
+│   ├── db/                        # Models, session engine, seeding
+│   ├── gateway/                   # FastAPI application & server assembly
+│   ├── worker/                    # WorkerPool, MockWorker, Upstream Client
+│   └── dormant/                   # Preserved dormant modules (RAG, Voice Cloning, Cascaded Fallback)
 │
-├── deploy/                        # Production Deployment Artifacts
-│   ├── proxy/Caddyfile            # Caddy reverse proxy with automatic Let's Encrypt TLS
-│   ├── proxy/nginx.conf           # Nginx reverse proxy configuration
-│   └── systemd/                   # Systemd service units (gateway & worker)
+├── deploy/                        # Deployment Artifacts
+│   ├── cloud/                     # Automated VM provisioning scripts (deploy_krutrim.sh, start_services.sh)
+│   ├── proxy/                     # Caddyfile and Nginx reverse proxy configurations
+│   └── systemd/                   # Systemd service units
 │
-├── docs/                          # Architecture & Audit Documentation
-│   ├── verified_facts.md          # Upstream empirical ground truths
-│   ├── PERF.md                    # Latency, denoise, and audio optimizations
-│   ├── UPSTREAM_CONTRACT.md       # Upstream protocol contract
-│   ├── decisions.md               # Architecture Decision Records (ADRs)
-│   └── audit.md                   # Complete code audit
+└── docs/                          # Architecture Documentation & Specifications
+    ├── ARCHITECTURE.md            # System design and audio DSP specifications
+    ├── HOW_THE_MODEL_WORKS.md     # PersonaPlex 7B dual-decoder architecture
+    ├── VOICE_PRESETS.md           # 18 official upstream voice conditioning embeddings
+    ├── adr/                       # Architecture Decision Records (0001 - 0005)
+    └── verified_facts.md          # Upstream empirical ground truths
 │
 └── tests/                         # Comprehensive Automated Test Suite (75+ tests)
     ├── test_gateway.py            # Gateway REST API & WebSocket tests

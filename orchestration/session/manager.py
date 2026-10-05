@@ -41,7 +41,7 @@ from ..protocol.messages import (
     encode_message,
 )
 from ..worker.client import PersonaPlexWorkerClient
-from ..worker.pool import WorkerPool
+from ..worker.pool import WorkerPool, WorkerStatus
 
 logger = logging.getLogger(__name__)
 
@@ -216,8 +216,8 @@ class VoiceSession:
         self.metrics = SessionMetrics(session_id, persona.id, worker.worker_id)
         self.inbound_buffer = AudioFrameBuffer(dtype=np.float32)
         self.noise_canceller = AdaptiveNoiseCanceller()
-        from ..audio.cleaner import CallerAudioCleaner
         from ..audio.caller_transcriber import CallerTranscriber
+        from ..audio.cleaner import CallerAudioCleaner
         from ..audio.turn_detector import TurnDetector
 
         self.cleaner = CallerAudioCleaner(sample_rate=SAMPLE_RATE, frame_size=FRAME_SIZE)
@@ -280,7 +280,7 @@ class VoiceSession:
             t_handshake = time.time() - t_start
             self.metrics.handshake_time_sec = round(t_handshake, 3)
             logger.info(f"Session {self.session_id} worker handshake complete in {t_handshake:.2f}s")
-            
+
             # Drop any audio frames accumulated during the priming wait (prevents burst to model)
             self.inbound_buffer.clear()
 

@@ -49,11 +49,11 @@ from ..protocol.messages import (
     encode_message,
 )
 from ..rag.engine import default_rag_engine
-from ..session.manager import SessionManager
+from ..session.manager import SessionManager, SessionState
 from ..tts.voice_clone import default_voice_cloner
 from ..worker.pool import PoolCapacityExceededError, WorkerNodeConfig, WorkerPool
-from .security import default_rate_limiter
 from .lean_studio_ui import LEAN_STUDIO_HTML
+from .security import default_rate_limiter
 from .studio_ui import STUDIO_HTML
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
@@ -142,8 +142,8 @@ def create_app(
 
         # Database initialization & seeding for Voice Agent Platform
         try:
-            from ..db.session import init_db, get_session_factory
             from ..db.seed import seed_database
+            from ..db.session import get_session_factory, init_db
             await init_db()
             session_factory = get_session_factory()
             async with session_factory() as session:
@@ -833,8 +833,9 @@ def create_app(
     # Interactive Lean Voice Agent Studio & Modern React SPA
     # ==========================================================
     from pathlib import Path
-    from fastapi.staticfiles import StaticFiles
+
     from fastapi.responses import FileResponse
+    from fastapi.staticfiles import StaticFiles
 
     frontend_dist = Path(__file__).resolve().parent.parent.parent / "frontend" / "dist"
     if (frontend_dist / "index.html").exists():

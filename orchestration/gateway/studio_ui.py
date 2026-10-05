@@ -1038,7 +1038,7 @@ STUDIO_HTML = r"""<!DOCTYPE html>
         <div class="visualizer-overlay">
           <span class="speaker-label" id="speaker-status">Ready to Speak</span>
           <span class="cadence-badge" id="cadence-indicator">24 kHz • 12.5 Hz • Full-Duplex</span>
-          
+
           <!-- Dual Live Audio Meters: Mic Input & Agent Output -->
           <div style="display:flex; gap:16px; align-items:center; margin-top: 6px;">
             <div style="display:flex; flex-direction:column; align-items:center; gap:2px;">

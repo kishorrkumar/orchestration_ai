@@ -3,8 +3,8 @@ Unit and integration tests for Strongest Noise Cancellation, Silero VAD, and Voi
 """
 
 import time
+
 import numpy as np
-import pytest
 
 from orchestration.audio.cleaner import CallerAudioCleaner
 from orchestration.protocol.audio import FRAME_SIZE, SAMPLE_RATE, compute_rms

@@ -7,7 +7,7 @@ and 8 kHz (Telephony PSTN / G.711).
 from __future__ import annotations
 
 import math
-from typing import Generator, List, Optional, Union
+from typing import List, Union
 
 import numpy as np
 

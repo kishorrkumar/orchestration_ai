@@ -9,9 +9,10 @@ from __future__ import annotations
 import asyncio
 import json
 import uuid
+
+import numpy as np
 import pytest
 import uvicorn
-import numpy as np
 import websockets
 from websockets.asyncio.client import connect as ws_connect
 
@@ -19,12 +20,6 @@ from orchestration.db.service import AgentService, CallSessionService
 from orchestration.db.session import get_session_factory
 from orchestration.gateway.app import create_app
 from orchestration.persona.registry import PersonaRegistry
-from orchestration.protocol.audio import (
-    CLIENT_FRAME_BYTES_PCM16,
-    CLIENT_SAMPLE_RATE,
-    TELEPHONY_FRAME_BYTES,
-    TELEPHONY_SAMPLE_RATE,
-)
 from orchestration.session.manager import SessionManager
 from orchestration.worker.mock_worker import PersonaPlexMockServer
 from orchestration.worker.pool import WorkerNodeConfig, WorkerPool
@@ -142,7 +137,7 @@ async def test_v2_voice_full_web_lifecycle():
                         if data.get("type") in ("transcript", "call_ended"):
                             got_audio_or_transcript = True
                             break
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     break
 
             assert got_audio_or_transcript, "Client received neither audio nor transcript from server"
@@ -299,7 +294,9 @@ async def test_v2_voice_end_of_call_detector():
                             call_ended_received = True
                             assert data["reason"] in ("max_duration", "max_duration_exceeded", "silence_timeout", "agent_closed", "goodbye")
                             break
-                except (asyncio.TimeoutError, websockets.exceptions.ConnectionClosed):
+                except TimeoutError:
+                    continue
+                except websockets.exceptions.ConnectionClosed:
                     break
 
             assert call_ended_received, "Failed to receive automatic call_ended from EndOfCallDetector"

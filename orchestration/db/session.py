@@ -17,8 +17,8 @@ from sqlalchemy.ext.asyncio import (
     create_async_engine,
 )
 
+from . import models  # noqa: F401 - Ensure all models are registered on Base.metadata
 from .base import Base
-from .models import *  # Ensure all models are registered on Base.metadata
 
 # Default to SQLite local database if DATABASE_URL is not set
 DEFAULT_SQLITE_PATH = Path("data/platform.db")

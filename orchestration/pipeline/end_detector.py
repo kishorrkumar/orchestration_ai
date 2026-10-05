@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import difflib
 import re
-from typing import List, Optional
+from typing import List
 
 
 def normalize_text(text: str) -> str:
@@ -62,7 +62,7 @@ class EndOfCallDetector:
         self.agent_rolling_text = ""
         self.matched_in_current_turn = False
         self.pending_hangup = False
-        self.hangup_target_time: Optional[float] = None
+        self.hangup_target_time: float | None = None
         self.last_speech_time = 0.0
         self.session_start_time = 0.0
         self.is_active = False
@@ -158,7 +158,7 @@ class EndOfCallDetector:
 
         return canceled
 
-    def check_termination(self, now: float) -> Optional[str]:
+    def check_termination(self, now: float) -> str | None:
         """
         Polls termination status.
         Returns end reason string if call should terminate, else None.

@@ -1,7 +1,8 @@
 import asyncio
+from urllib.parse import parse_qs, urlparse
+
 import numpy as np
 import pytest
-from urllib.parse import parse_qs, urlparse
 
 from orchestration.persona.registry import PersonaConfig, default_registry
 from orchestration.protocol.audio import FRAME_SIZE

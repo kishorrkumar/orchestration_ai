@@ -5,10 +5,9 @@ Dual-compatible with both Lean S2S Platform and legacy PersonaPlex client contra
 
 from __future__ import annotations
 
-from typing import Any, List, Optional
+from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
-from pydantic import BaseModel, Field
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..db.models import Agent, AgentVersion
@@ -16,11 +15,7 @@ from ..db.service import AgentService
 from ..db.session import get_db
 from ..persona.registry import OFFICIAL_VOICE_PRESETS
 from .schemas import (
-    AgentCreateRequest,
     AgentPublishRequest,
-    AgentResponse,
-    AgentUpdateRequest,
-    VersionResponse,
 )
 
 router = APIRouter(prefix="/v1/agents", tags=["Agents"])
@@ -72,8 +67,8 @@ def _version_to_dict(ver: AgentVersion) -> dict[str, Any]:
 
 @router.get("")
 async def list_agents(
-    status: Optional[str] = Query(None, description="Filter by status (draft/published/archived)"),
-    search: Optional[str] = Query(None, description="Search by agent name"),
+    status: str | None = Query(None, description="Filter by status (draft/published/archived)"),
+    search: str | None = Query(None, description="Search by agent name"),
     limit: int = Query(50, ge=1, le=100),
     offset: int = Query(0, ge=0),
     db: AsyncSession = Depends(get_db),

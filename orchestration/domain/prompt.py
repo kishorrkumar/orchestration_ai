@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 SYSTEM_TAG_OPEN = "<system>"
@@ -123,7 +123,7 @@ def compute_local_time_context(
     except (ZoneInfoNotFoundError, ValueError):
         tz = ZoneInfo("UTC")
 
-    now = reference_dt or datetime.now(timezone.utc)
+    now = reference_dt or datetime.now(UTC)
     local_dt = now.astimezone(tz)
 
     hour = local_dt.hour

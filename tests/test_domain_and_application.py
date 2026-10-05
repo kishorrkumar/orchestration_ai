@@ -10,7 +10,8 @@ Validates:
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
+
 import pytest
 from httpx import ASGITransport, AsyncClient
 
@@ -21,13 +22,12 @@ from orchestration.application.agents.commands import (
 )
 from orchestration.application.agents.service import AgentApplicationService
 from orchestration.application.prompts.service import PromptCompilerUseCase
-from orchestration.domain.agent import OFFICIAL_PRESETS, Agent, AgentStatus
+from orchestration.domain.agent import AgentStatus
 from orchestration.domain.detector import DetectionAction, EndOfCallDetector
 from orchestration.domain.prompt import (
-    HARD_TOKEN_LIMIT,
-    PromptLinter,
     SYSTEM_TAG_CLOSE,
     SYSTEM_TAG_OPEN,
+    PromptLinter,
     compute_local_time_context,
     wrap_system_prompt,
 )
@@ -35,7 +35,7 @@ from orchestration.gateway.app import create_app
 from orchestration.infrastructure.clock.system_clock import FrozenClock
 from orchestration.infrastructure.db.repositories.agent_repository import SqlAlchemyAgentRepository
 from orchestration.infrastructure.tokenizer.sentencepiece_adapter import SentencePieceTokenizerAdapter
-from orchestration.shared.errors import PromptTooLongError, ValidationError
+from orchestration.shared.errors import PromptTooLongError
 
 
 @pytest.fixture(autouse=True)
@@ -62,7 +62,7 @@ def test_system_tag_delimiter_exact():
 
 def test_time_context_half_hour_timezones():
     """Verify half-hour timezones (Asia/Kolkata +5:30, Asia/Kathmandu +5:45)."""
-    ref_utc = datetime(2026, 10, 5, 12, 0, 0, tzinfo=timezone.utc)
+    ref_utc = datetime(2026, 10, 5, 12, 0, 0, tzinfo=UTC)
 
     # Asia/Kolkata is UTC+5:30 -> 17:30 (5:30 PM, evening)
     line_kolkata, part_kolkata = compute_local_time_context("Asia/Kolkata", ref_utc)
@@ -132,7 +132,7 @@ async def test_agent_application_service_full_lifecycle():
     """Verify agent create -> versioning -> publish enforcement -> revert."""
     from orchestration.db.session import async_session_factory
 
-    clock = FrozenClock(datetime(2026, 10, 5, 10, 0, 0, tzinfo=timezone.utc))
+    clock = FrozenClock(datetime(2026, 10, 5, 10, 0, 0, tzinfo=UTC))
     tokenizer = SentencePieceTokenizerAdapter()
     compiler = PromptCompilerUseCase(tokenizer=tokenizer, clock=clock)
 

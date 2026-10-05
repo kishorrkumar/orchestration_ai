@@ -5,11 +5,11 @@ Domain entities for real-time speech-to-speech call sessions and turn tracking.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
-from enum import Enum
+from datetime import UTC, datetime
+from enum import StrEnum
 
 
-class CallStatus(str, Enum):
+class CallStatus(StrEnum):
     INITIATING = "initiating"
     CONNECTED = "connected"
     COMPLETED = "completed"
@@ -17,13 +17,13 @@ class CallStatus(str, Enum):
     BUSY = "busy"
 
 
-class TurnSpeaker(str, Enum):
+class TurnSpeaker(StrEnum):
     CALLER = "caller"
     AGENT = "agent"
     SYSTEM = "system"
 
 
-class EndReason(str, Enum):
+class EndReason(StrEnum):
     AGENT_CLOSED = "agent_closed"
     CALLER_HUNG_UP = "caller_hung_up"
     SILENCE_TIMEOUT = "silence_timeout"
@@ -43,7 +43,7 @@ class CallTurn:
     started_at_sec: float
     ended_at_sec: float
     latency_ms: float | None = None
-    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
 
 
 @dataclass
@@ -57,5 +57,5 @@ class CallSession:
     duration_sec: float = 0.0
     end_reason: EndReason | None = None
     total_turns: int = 0
-    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     ended_at: datetime | None = None

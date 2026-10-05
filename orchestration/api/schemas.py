@@ -5,7 +5,7 @@ Pydantic v2 Request/Response Schemas for Lean S2S Voice Agent Platform.
 from __future__ import annotations
 
 import datetime
-from typing import Any, List, Optional
+from typing import Any, List
 
 from pydantic import BaseModel, Field
 
@@ -24,15 +24,15 @@ class AgentCreateRequest(BaseModel):
 
 
 class AgentUpdateRequest(BaseModel):
-    name: Optional[str] = Field(None, min_length=1, max_length=128)
-    voice_id: Optional[str] = None
-    greeting_text: Optional[str] = None
-    greeting_mode: Optional[str] = None
-    system_prompt: Optional[str] = None
-    ending_text: Optional[str] = None
-    end_silence_sec: Optional[int] = Field(None, ge=5, le=120)
-    max_duration_sec: Optional[int] = Field(None, ge=30, le=3600)
-    timezone: Optional[str] = None
+    name: str | None = Field(None, min_length=1, max_length=128)
+    voice_id: str | None = None
+    greeting_text: str | None = None
+    greeting_mode: str | None = None
+    system_prompt: str | None = None
+    ending_text: str | None = None
+    end_silence_sec: int | None = Field(None, ge=5, le=120)
+    max_duration_sec: int | None = Field(None, ge=30, le=3600)
+    timezone: str | None = None
 
 
 class AgentPublishRequest(BaseModel):
@@ -60,7 +60,7 @@ class AgentResponse(BaseModel):
     id: str
     name: str
     status: str
-    published_version_id: Optional[str]
+    published_version_id: str | None
     current_version_no: int
     draft_voice_id: str
     draft_greeting_text: str
@@ -82,7 +82,7 @@ class CompilePromptRequest(BaseModel):
     ending_text: str = ""
     agent_name: str = "Assistant"
     timezone: str = "Asia/Kolkata"
-    variables: Optional[dict[str, Any]] = None
+    variables: dict[str, Any] | None = None
 
 
 class CompilePromptResponse(BaseModel):

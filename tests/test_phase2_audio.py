@@ -4,7 +4,6 @@ Unit tests for Phase 2: 16 kHz Audio Core (DSP, Resamplers, Codecs).
 
 from __future__ import annotations
 
-import math
 import numpy as np
 import pytest
 
@@ -17,8 +16,6 @@ from orchestration.audio.codecs import (
 from orchestration.audio.dsp import (
     calculate_snr_db,
     compute_rms,
-    float32_to_int16,
-    int16_to_float32,
     soft_clip,
 )
 from orchestration.audio.resample import (

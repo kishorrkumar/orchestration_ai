@@ -9,13 +9,11 @@ Validates:
 """
 
 import asyncio
-import pytest
-import numpy as np
 
-from orchestration.persona.registry import PersonaConfig, PersonaRegistry
-from orchestration.protocol.messages import AudioMessage, HandshakeMessage, MessageType, decode_message, encode_message
+import pytest
+
+from orchestration.persona.registry import PersonaConfig
 from orchestration.session.manager import SessionManager, SessionState
-from orchestration.worker.client import PersonaPlexWorkerClient
 from orchestration.worker.mock_worker import PersonaPlexMockServer
 from orchestration.worker.pool import WorkerNodeConfig, WorkerPool
 

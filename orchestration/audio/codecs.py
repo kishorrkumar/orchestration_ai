@@ -11,6 +11,7 @@ from typing import Union
 
 import numpy as np
 
+
 # ITU-T G.711 mu-law decode lookup table (256 entries mapping 8-bit mu-law -> int16 PCM)
 def _generate_decode_table() -> np.ndarray:
     table = np.empty(256, dtype=np.int16)
