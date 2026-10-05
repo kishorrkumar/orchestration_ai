@@ -32,3 +32,4 @@ models/
 # Local data and eval artifacts
 data/
 eval_out/
+node_modules/

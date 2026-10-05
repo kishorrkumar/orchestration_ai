@@ -139,6 +139,18 @@ def create_app(
                 worker_pool.register_worker(mock_cfg)
                 logger.info("Mock worker auto-started and registered on ws://127.0.0.1:8998")
 
+        # Database initialization & seeding for Voice Agent Platform
+        try:
+            from ..db.session import init_db, get_session_factory
+            from ..db.seed import seed_database
+            await init_db()
+            session_factory = get_session_factory()
+            async with session_factory() as session:
+                await seed_database(session)
+            logger.info("Database initialized and seeded successfully")
+        except Exception as e:
+            logger.warning("Database init notice: %s", e)
+
         yield
         logger.info("PersonaPlex Orchestration Gateway shutting down")
         if server_to_stop:
@@ -160,6 +172,12 @@ def create_app(
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
+    # Mount S2S Voice Agent Platform API routers
+    from ..api.agents import router as agents_router
+    from ..api.prompts import router as prompts_router
+    app.include_router(agents_router)
+    app.include_router(prompts_router)
 
     # Attach instances to app state for test inspection
     app.state.pool = worker_pool
@@ -331,53 +349,38 @@ def create_app(
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
 
     @app.get("/v1/personas", tags=["Personas"])
-    @app.get("/v1/agents", tags=["Agents"])
-    async def list_agents():
+    async def list_personas():
         return {
             "personas": [p.model_dump() for p in persona_registry.list_all()],
-            "agents": [p.model_dump() for p in persona_registry.list_all()],
             "voice_presets": OFFICIAL_VOICE_PRESETS,
         }
 
     @app.get("/v1/personas/{persona_id}", tags=["Personas"])
-    @app.get("/v1/agents/{agent_id}", tags=["Agents"])
-    async def get_agent(persona_id: str | None = None, agent_id: str | None = None):
-        target_id = persona_id or agent_id
-        if not target_id:
-            raise HTTPException(status_code=400, detail="Missing persona_id or agent_id")
-        agent = persona_registry.get(target_id)
+    async def get_persona(persona_id: str):
+        agent = persona_registry.get(persona_id)
         if not agent:
-            raise HTTPException(status_code=404, detail=f"Persona '{target_id}' not found")
+            raise HTTPException(status_code=404, detail=f"Persona '{persona_id}' not found")
         return agent.model_dump()
 
     @app.post("/v1/personas", tags=["Personas"], status_code=status.HTTP_201_CREATED)
-    @app.post("/v1/agents", tags=["Agents"], status_code=status.HTTP_201_CREATED)
-    async def register_agent(persona: PersonaConfig):
+    async def register_persona(persona: PersonaConfig):
         _validate_persona(persona)
         persona_registry.register(persona)
-        return {"status": "created", "persona": persona.model_dump(), "agent": persona.model_dump()}
+        return {"status": "created", "persona": persona.model_dump()}
 
     @app.put("/v1/personas/{persona_id}", tags=["Personas"])
-    @app.put("/v1/agents/{agent_id}", tags=["Agents"])
-    async def update_agent(persona: PersonaConfig, persona_id: str | None = None, agent_id: str | None = None):
-        target_id = persona_id or agent_id
-        if not target_id:
-            raise HTTPException(status_code=400, detail="Missing persona_id or agent_id")
-        persona.id = target_id
+    async def update_persona(persona: PersonaConfig, persona_id: str):
+        persona.id = persona_id
         _validate_persona(persona)
         persona_registry.register(persona)
-        return {"status": "updated", "persona": persona.model_dump(), "agent": persona.model_dump()}
+        return {"status": "updated", "persona": persona.model_dump()}
 
     @app.delete("/v1/personas/{persona_id}", tags=["Personas"])
-    @app.delete("/v1/agents/{agent_id}", tags=["Agents"])
-    async def delete_agent(persona_id: str | None = None, agent_id: str | None = None):
-        target_id = persona_id or agent_id
-        if not target_id:
-            raise HTTPException(status_code=400, detail="Missing persona_id or agent_id")
-        deleted = persona_registry.delete(target_id)
+    async def delete_persona(persona_id: str):
+        deleted = persona_registry.delete(persona_id)
         if not deleted:
-            raise HTTPException(status_code=404, detail=f"Persona '{target_id}' not found")
-        return {"status": "deleted", "persona_id": target_id, "agent_id": target_id}
+            raise HTTPException(status_code=404, detail=f"Persona '{persona_id}' not found")
+        return {"status": "deleted", "persona_id": persona_id}
 
     # ==========================================================
     # Worker Pool Management
