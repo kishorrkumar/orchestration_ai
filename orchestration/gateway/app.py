@@ -182,6 +182,19 @@ def create_app(
     app.include_router(prompts_router)
     app.include_router(voice_v2_router)
 
+    # Mount V2 Clean Architecture routers & RFC 9457 Problem Details error handlers
+    from ..interfaces.http.error_handlers import register_error_handlers
+    from ..interfaces.http.routers.agents import router as agents_v2_router
+    from ..interfaces.http.routers.calls import router as calls_v2_router
+    from ..interfaces.http.routers.health import router as health_v2_router
+    from ..interfaces.http.routers.prompts import router as prompts_v2_router
+
+    register_error_handlers(app)
+    app.include_router(agents_v2_router)
+    app.include_router(calls_v2_router)
+    app.include_router(prompts_v2_router)
+    app.include_router(health_v2_router)
+
     # Attach instances to app state for test inspection
     app.state.pool = worker_pool
     app.state.registry = persona_registry

@@ -109,6 +109,11 @@ def get_session_factory() -> async_sessionmaker[AsyncSession]:
     return _async_session_factory
 
 
+def async_session_factory() -> AsyncSession:
+    """Return a new AsyncSession instance from the active session factory."""
+    return get_session_factory()()
+
+
 async def get_db() -> AsyncGenerator[AsyncSession, None]:
     """FastAPI Dependency for obtaining an async database session."""
     session_factory = get_session_factory()
@@ -126,6 +131,13 @@ async def init_db() -> None:
     engine = get_engine()
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+        if engine.url.drivername.startswith("sqlite"):
+            from sqlalchemy import text
+            for col, col_type in [("name", "VARCHAR(128) DEFAULT ''"), ("compiled_prompt", "TEXT DEFAULT ''")]:
+                try:
+                    await conn.execute(text(f"ALTER TABLE agent_versions ADD COLUMN {col} {col_type}"))
+                except Exception:
+                    pass
 
 
 async def close_db() -> None:

@@ -88,6 +88,7 @@ class AgentVersion(Base):
     )
     agent_id: Mapped[str] = mapped_column(ForeignKey("agents.id", ondelete="CASCADE"), index=True, nullable=False)
     version_no: Mapped[int] = mapped_column(Integer, nullable=False)
+    name: Mapped[str] = mapped_column(String(128), default="", nullable=False)
 
     voice_id: Mapped[str] = mapped_column(String(64), nullable=False)
     greeting_text: Mapped[str] = mapped_column(Text, nullable=False)
@@ -98,6 +99,7 @@ class AgentVersion(Base):
     max_duration_sec: Mapped[int] = mapped_column(Integer, default=600, nullable=False)
     timezone: Mapped[str] = mapped_column(String(64), default="Asia/Kolkata", nullable=False)
 
+    compiled_prompt: Mapped[str] = mapped_column(Text, default="", nullable=False)
     compiled_token_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     change_note: Mapped[str] = mapped_column(String(255), default="", nullable=False)
     created_at: Mapped[datetime.datetime] = mapped_column(
