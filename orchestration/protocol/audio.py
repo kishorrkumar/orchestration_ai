@@ -14,9 +14,33 @@ import math
 
 import numpy as np
 
-SAMPLE_RATE: int = 24000
-FRAME_RATE: float = 12.5
-FRAME_SIZE: int = 1920  # 24000 / 12.5
+# ---------------------------------------------------------
+# Canonical Voice Platform Audio Specifications
+# ---------------------------------------------------------
+
+# Client Standard Audio (WebRTC, WebSocket streaming, Browser audio)
+CLIENT_SAMPLE_RATE: int = 16000      # 16 kHz
+CLIENT_FRAME_MS: int = 20            # 20 ms framing
+CLIENT_FRAME_SAMPLES: int = 320      # 16000 * 0.02
+CLIENT_FRAME_BYTES_PCM16: int = 640  # 320 * 2 bytes
+
+# Telephony Narrowband Audio (PSTN / Twilio / G.711 mu-law)
+TELEPHONY_SAMPLE_RATE: int = 8000    # 8 kHz
+TELEPHONY_FRAME_MS: int = 20         # 20 ms framing
+TELEPHONY_FRAME_SAMPLES: int = 160   # 8000 * 0.02
+TELEPHONY_FRAME_BYTES: int = 160     # 160 * 1 byte (mu-law)
+
+# Internal PersonaPlex 7B Model Audio
+MODEL_SAMPLE_RATE: int = 24000       # 24 kHz native
+MODEL_FRAME_MS: int = 80             # 80 ms native inference chunk
+MODEL_FRAME_SIZE: int = 1920         # 24000 * 0.08
+MODEL_20MS_SAMPLES: int = 480        # 24000 * 0.02 (for 20ms pipeline alignment)
+MODEL_FRAME_RATE: float = 12.5       # 1000 / 80 ms
+
+# Backward compatibility aliases
+SAMPLE_RATE: int = MODEL_SAMPLE_RATE
+FRAME_RATE: float = MODEL_FRAME_RATE
+FRAME_SIZE: int = MODEL_FRAME_SIZE
 CHANNELS: int = 1
 
 BYTES_PER_SAMPLE_INT16: int = 2
