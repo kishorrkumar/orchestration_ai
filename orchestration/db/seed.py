@@ -105,3 +105,16 @@ async def seed_database(db: AsyncSession) -> None:
 
     await db.commit()
     logger.info("Database seeding completed.")
+
+
+async def main() -> None:
+    from .session import async_session_factory, init_db
+    await init_db()
+    async with async_session_factory() as db:
+        await seed_database(db)
+    print("Database seeding completed successfully.")
+
+
+if __name__ == "__main__":
+    import asyncio
+    asyncio.run(main())

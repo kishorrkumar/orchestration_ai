@@ -830,15 +830,32 @@ def create_app(
             await mgr.end_session(session.session_id)
 
     # ==========================================================
-    # Interactive Lean Voice Agent Studio & Legacy Console
+    # Interactive Lean Voice Agent Studio & Modern React SPA
     # ==========================================================
+    from pathlib import Path
+    from fastapi.staticfiles import StaticFiles
+    from fastapi.responses import FileResponse
+
+    frontend_dist = Path(__file__).resolve().parent.parent.parent / "frontend" / "dist"
+    if (frontend_dist / "index.html").exists():
+        assets_dir = frontend_dist / "assets"
+        if assets_dir.exists():
+            app.mount("/assets", StaticFiles(directory=str(assets_dir)), name="assets")
+
+        @app.get("/", response_class=FileResponse, tags=["UI"])
+        @app.get("/app", response_class=FileResponse, tags=["UI"])
+        @app.get("/agents", response_class=FileResponse, tags=["UI"])
+        @app.get("/calls", response_class=FileResponse, tags=["UI"])
+        @app.get("/design-system", response_class=FileResponse, tags=["UI"])
+        async def react_app():
+            return FileResponse(str(frontend_dist / "index.html"))
+    else:
+        @app.get("/", response_class=HTMLResponse, tags=["UI"])
+        async def root_redirect():
+            return HTMLResponse(content=LEAN_STUDIO_HTML)
 
     @app.get("/studio", response_class=HTMLResponse, tags=["UI"])
     async def lean_studio_view():
-        return HTMLResponse(content=LEAN_STUDIO_HTML)
-
-    @app.get("/", response_class=HTMLResponse, tags=["UI"])
-    async def root_redirect():
         return HTMLResponse(content=LEAN_STUDIO_HTML)
 
     @app.get("/console", response_class=HTMLResponse, tags=["UI"])
