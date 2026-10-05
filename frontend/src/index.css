@@ -1,0 +1,78 @@
+@import "tailwindcss";
+
+@layer base {
+  :root {
+    /* Warm Editorial Stone & Linen (Apple HIG + Claude Calm) */
+    --color-bg-base: #FAF9F5;
+    --color-bg-surface: #FFFFFF;
+    --color-bg-sunken: #F3F1EA;
+    --color-bg-raised: #FFFFFF;
+
+    --color-text-primary: #1F1E1D;
+    --color-text-secondary: #6B6963;
+    --color-text-tertiary: #9E9B93;
+
+    --color-hairline: rgba(31, 30, 29, 0.08);
+    --color-hairline-strong: rgba(31, 30, 29, 0.16);
+
+    --color-accent: #C2603F;
+    --color-accent-hover: #AE5334;
+    --color-accent-subtle: #FBEFEA;
+    --color-accent-text: #FFFFFF;
+
+    --color-success: #386641;
+    --color-success-bg: #EDF4EE;
+    --color-warning: #995D1A;
+    --color-warning-bg: #FCF4EB;
+    --color-danger: #A63A38;
+    --color-danger-bg: #F9ECEB;
+
+    --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, system-ui, sans-serif;
+    --font-mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    --font-serif: "Newsreader", "Source Serif 4", Georgia, serif;
+  }
+
+  [data-theme="dark"] {
+    --color-bg-base: #1A1918;
+    --color-bg-surface: #232221;
+    --color-bg-sunken: #151413;
+    --color-bg-raised: #2B2A28;
+
+    --color-text-primary: #F2F0EA;
+    --color-text-secondary: #A19E96;
+    --color-text-tertiary: #6E6B65;
+
+    --color-hairline: rgba(255, 255, 255, 0.08);
+    --color-hairline-strong: rgba(255, 255, 255, 0.16);
+
+    --color-accent: #D97757;
+    --color-accent-hover: #E38A6C;
+    --color-accent-subtle: rgba(217, 119, 87, 0.15);
+    --color-accent-text: #FFFFFF;
+
+    --color-success: #609966;
+    --color-success-bg: rgba(96, 153, 102, 0.15);
+    --color-warning: #DDA15E;
+    --color-warning-bg: rgba(221, 161, 94, 0.15);
+    --color-danger: #D65A58;
+    --color-danger-bg: rgba(214, 90, 88, 0.15);
+  }
+
+  * {
+    border-color: var(--color-hairline);
+  }
+
+  body {
+    background-color: var(--color-bg-base);
+    color: var(--color-text-primary);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+  }
+
+  /* Tabular numbers for timers, meters, token counters */
+  .tabular-nums {
+    font-variant-numeric: tabular-nums;
+  }
+}
