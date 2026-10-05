@@ -39,6 +39,9 @@ At runtime, the gateway compiles the agent's persona prompt with:
 3. Call ending instructions.
 4. Dynamic local time string calculated in the agent's configured timezone (e.g. `The current local time is Monday 4:15 PM in Asia/Kolkata.`).
 
+> [!TIP]
+> For a step-by-step authoring walkthrough and production templates, see the comprehensive [Prompting Guide](PROMPTING_GUIDE.md).
+
 ---
 
 ## 3. SentencePiece Token Budgets & Latency Impact

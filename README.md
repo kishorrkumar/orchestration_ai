@@ -59,6 +59,7 @@ orchestration/
 For complete technical specifications, see:
 - [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — System design and audio DSP pipelines.
 - [`docs/HOW_THE_MODEL_WORKS.md`](docs/HOW_THE_MODEL_WORKS.md) — PersonaPlex 7B dual-decoder architecture.
+- [`docs/PROMPTING_GUIDE.md`](docs/PROMPTING_GUIDE.md) — S2S prompting rules, token budgets, and 5 copy-paste templates.
 - [`docs/VOICE_PRESETS.md`](docs/VOICE_PRESETS.md) — Catalog of all 18 official upstream voice conditioning embeddings.
 - [`docs/adr/`](docs/adr/) — Architecture Decision Records.
 

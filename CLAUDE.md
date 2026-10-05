@@ -16,7 +16,7 @@ A production-grade **Lean S2S (Speech-to-Speech) Voice Agent Platform** for **NV
    - Anti-Aliasing Resampling: High-quality libsoxr (`soxr.ResampleStream`) with >82 dB SNR and <0.2 ms delay.
 3. **Concurrency**: Upstream `moshi.server` wraps every connection in `async with self.lock:`. Exactly 1 active audio stream per worker process. Concurrency is handled by running multiple workers on distinct local ports (`8998`, `8999`).
 4. **VRAM Footprint**: ~18–20 GB VRAM per 7B worker process.
-5. **System Prompt Delimiters**: `<system> {prompt} <system>` (both tags are `<system>`, not `</system>`). Max 350 tokens during handshake (ideal ≤150). Token counting uses the verified SentencePiece model `models/tokenizer_spm_32k_3.model`.
+5. **System Prompt Delimiters & Rules**: `<system> {prompt} <system>` (both tags are `<system>`, not `</system>`). Max 350 tokens during handshake (ideal ≤135). Token counting uses the verified SentencePiece model `models/tokenizer_spm_32k_3.model`. See [`docs/PROMPTING_GUIDE.md`](docs/PROMPTING_GUIDE.md).
 6. **Lean Agent Model (6 Fields)**:
    - `name`: Display name and `{{agent_name}}` template variable.
    - `voice_id`: One of the 18 official PersonaPlex presets (`orchestration/persona/presets.py`).
@@ -35,17 +35,16 @@ A production-grade **Lean S2S (Speech-to-Speech) Voice Agent Platform** for **NV
 ### How to Run Locally (Zero GPU / Windows)
 Use `.venv-gpu` which contains all required dependencies:
 ```powershell
-.\.venv-gpu\Scripts\python.exe -m uvicorn orchestration.gateway.app:create_app --factory --host 127.0.0.1 --port 8000
+.\scripts\run.ps1 dev
 ```
-- **Lean Voice Agent Studio**: `http://localhost:8000/` (or `http://localhost:8000/studio`)
-- **Legacy Developer Console**: `http://localhost:8000/console/legacy`
+- **Lean Voice Agent Studio**: `http://127.0.0.1:8000/`
 - Automatically boots the local mock worker on `ws://127.0.0.1:8998` if no GPU worker is reachable.
 
 ### Test Suite Execution
 ```powershell
-.\.venv-gpu\Scripts\python.exe -m pytest
+.\scripts\run.ps1 test
 ```
-119 passed, 1 skipped (GPU-only test `test_persona_gpu.py`), 0 failures.
+130 passed, 1 skipped (GPU-only test `test_persona_gpu.py`), 0 failures.
 
 ### Project Layout
 - `orchestration/db/`: Database models, async session manager (SQLite + Neon Postgres), `AgentService`, and `CallSessionService`.
