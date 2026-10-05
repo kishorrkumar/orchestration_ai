@@ -4,6 +4,7 @@ SQLAlchemy 2.0 repository implementing domain CallSessionRepository protocol.
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -20,31 +21,41 @@ class SqlAlchemySessionRepository(CallSessionRepository):
 
     @staticmethod
     def _to_domain_session(rec: db_models.CallSession) -> CallSession:
+        end_r = None
+        if rec.end_reason:
+            try:
+                end_r = EndReason(rec.end_reason)
+            except ValueError:
+                end_r = EndReason.AGENT_CLOSED
+        status = CallStatus.COMPLETED if rec.ended_at else CallStatus.CONNECTED
+        turn_cnt = len(rec.turns) if ("turns" in rec.__dict__ and rec.turns is not None) else 0
+
         return CallSession(
             id=rec.id,
             agent_id=rec.agent_id,
-            agent_version=rec.agent_version_number or 1,
-            status=CallStatus(rec.status),
-            client_type=rec.client_type,
+            agent_version=1,
+            status=status,
+            client_type="web",
             duration_sec=rec.duration_sec,
-            end_reason=EndReason(rec.end_reason) if rec.end_reason else None,
-            total_turns=rec.turn_count,
-            created_at=rec.created_at,
+            end_reason=end_r,
+            total_turns=turn_cnt,
+            created_at=rec.started_at,
             ended_at=rec.ended_at,
         )
 
     @staticmethod
     def _to_domain_turn(rec: db_models.CallTurn) -> CallTurn:
+        speaker = TurnSpeaker.AGENT if rec.role == "agent" else TurnSpeaker.CALLER
         return CallTurn(
             id=rec.id,
             session_id=rec.session_id,
-            turn_index=rec.turn_index,
-            speaker=TurnSpeaker(rec.speaker),
-            text=rec.transcript or "",
-            started_at_sec=rec.started_at_sec or 0.0,
-            ended_at_sec=rec.ended_at_sec or 0.0,
-            latency_ms=rec.latency_ms,
-            created_at=rec.created_at,
+            turn_index=rec.idx,
+            speaker=speaker,
+            text=rec.text,
+            started_at_sec=rec.started_ms / 1000.0,
+            ended_at_sec=rec.started_ms / 1000.0,
+            latency_ms=None,
+            created_at=datetime.now(timezone.utc),
         )
 
     async def get_by_id(self, session_id: str) -> CallSession | None:
@@ -59,7 +70,7 @@ class SqlAlchemySessionRepository(CallSessionRepository):
         limit: int = 50,
         offset: int = 0,
     ) -> list[CallSession]:
-        stmt = select(db_models.CallSession).order_by(db_models.CallSession.created_at.desc()).limit(limit).offset(offset)
+        stmt = select(db_models.CallSession).order_by(db_models.CallSession.started_at.desc()).limit(limit).offset(offset)
         if agent_id:
             stmt = stmt.where(db_models.CallSession.agent_id == agent_id)
         result = await self.session.execute(stmt)
@@ -74,23 +85,19 @@ class SqlAlchemySessionRepository(CallSessionRepository):
         if not record:
             record = db_models.CallSession(
                 id=session.id,
-                workspace_id="wks_default",
                 agent_id=session.agent_id,
-                agent_version_number=session.agent_version,
-                client_type=session.client_type,
-                status=session.status.value,
+                agent_version_id=None,
                 duration_sec=session.duration_sec,
-                end_reason=session.end_reason.value if session.end_reason else None,
-                turn_count=session.total_turns,
-                created_at=session.created_at,
+                end_reason=session.end_reason.value if session.end_reason else "",
+                started_at=session.created_at,
                 ended_at=session.ended_at,
+                ttfa_ms=0.0,
+                handshake_ms=0.0,
             )
             self.session.add(record)
         else:
-            record.status = session.status.value
             record.duration_sec = session.duration_sec
-            record.end_reason = session.end_reason.value if session.end_reason else None
-            record.turn_count = session.total_turns
+            record.end_reason = session.end_reason.value if session.end_reason else ""
             record.ended_at = session.ended_at
 
         await self.session.commit()
@@ -101,13 +108,10 @@ class SqlAlchemySessionRepository(CallSessionRepository):
         record = db_models.CallTurn(
             id=turn.id,
             session_id=turn.session_id,
-            turn_index=turn.turn_index,
-            speaker=turn.speaker.value,
-            transcript=turn.text,
-            started_at_sec=turn.started_at_sec,
-            ended_at_sec=turn.ended_at_sec,
-            latency_ms=turn.latency_ms,
-            created_at=turn.created_at,
+            idx=turn.turn_index,
+            role="agent" if turn.speaker == TurnSpeaker.AGENT else "user",
+            text=turn.text,
+            started_ms=turn.started_at_sec * 1000.0,
         )
         self.session.add(record)
         await self.session.commit()
@@ -117,7 +121,7 @@ class SqlAlchemySessionRepository(CallSessionRepository):
         stmt = (
             select(db_models.CallTurn)
             .where(db_models.CallTurn.session_id == session_id)
-            .order_by(db_models.CallTurn.turn_index.asc())
+            .order_by(db_models.CallTurn.idx.asc())
         )
         result = await self.session.execute(stmt)
         records = result.scalars().all()

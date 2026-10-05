@@ -133,7 +133,8 @@ class SqlAlchemyAgentRepository(AgentRepository):
         stmt = delete(db_models.Agent).where(db_models.Agent.id == agent_id)
         result = await self.session.execute(stmt)
         await self.session.commit()
-        return bool(result.rowcount > 0)
+        rowcount = getattr(result, "rowcount", 0)
+        return bool(rowcount > 0)
 
     async def get_version(self, agent_id: str, version_number: int) -> AgentVersion | None:
         stmt = select(db_models.AgentVersion).where(
