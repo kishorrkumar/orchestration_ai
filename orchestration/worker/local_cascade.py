@@ -67,7 +67,10 @@ DEFAULT_ASR_INITIAL_PROMPT = (
 )
 
 # Root directory for persona templates
-PERSONA_DIR = pathlib.Path(__file__).resolve().parent.parent.parent / "personas"
+_root = pathlib.Path(__file__).resolve().parent.parent
+PERSONA_DIR = _root / "dormant" / "personas"
+if not PERSONA_DIR.exists():
+    PERSONA_DIR = _root.parent / "personas"
 
 
 def load_persona_prompt(agent_name: str) -> str:
