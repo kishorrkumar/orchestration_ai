@@ -1,5 +1,4 @@
-"""Backward-compatible facade for dormant local cascade worker."""
-from ..dormant.worker.local_cascade import (
+from .local_cascade import (
     DEFAULT_ASR_INITIAL_PROMPT,
     LocalCascadeWorkerServer,
     load_persona_prompt,

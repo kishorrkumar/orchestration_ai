@@ -1,5 +1,4 @@
-"""Backward-compatible facade for dormant voice cloning engine."""
-from ..dormant.tts.voice_clone import (
+from .voice_clone import (
     VoiceCloner,
     VoiceCloningValidationError,
     default_voice_cloner,

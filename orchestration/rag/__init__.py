@@ -1,23 +1,3 @@
-"""
-RAG (Retrieval-Augmented Generation) module for local document knowledge.
-"""
+from ..dormant.rag.engine import RAGEngine, default_rag_engine
 
-from .engine import (
-    BM25Retriever,
-    Document,
-    DocumentChunk,
-    DocumentParser,
-    RAGEngine,
-    TextChunker,
-    default_rag_engine,
-)
-
-__all__ = [
-    "BM25Retriever",
-    "Document",
-    "DocumentChunk",
-    "DocumentParser",
-    "RAGEngine",
-    "TextChunker",
-    "default_rag_engine",
-]
+__all__ = ["RAGEngine", "default_rag_engine"]
