@@ -53,6 +53,7 @@ from ..session.manager import SessionManager
 from ..tts.voice_clone import default_voice_cloner
 from ..worker.pool import PoolCapacityExceededError, WorkerNodeConfig, WorkerPool
 from .security import default_rate_limiter
+from .lean_studio_ui import LEAN_STUDIO_HTML
 from .studio_ui import STUDIO_HTML
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
@@ -816,15 +817,20 @@ def create_app(
             await mgr.end_session(session.session_id)
 
     # ==========================================================
-    # Interactive Developer Web Console
+    # Interactive Lean Voice Agent Studio & Legacy Console
     # ==========================================================
 
-    @app.get("/console", response_class=HTMLResponse, tags=["UI"])
-    async def developer_console():
-        return HTMLResponse(content=STUDIO_HTML)
+    @app.get("/studio", response_class=HTMLResponse, tags=["UI"])
+    async def lean_studio_view():
+        return HTMLResponse(content=LEAN_STUDIO_HTML)
 
     @app.get("/", response_class=HTMLResponse, tags=["UI"])
     async def root_redirect():
+        return HTMLResponse(content=LEAN_STUDIO_HTML)
+
+    @app.get("/console", response_class=HTMLResponse, tags=["UI"])
+    @app.get("/console/legacy", response_class=HTMLResponse, tags=["UI"])
+    async def legacy_developer_console():
         return HTMLResponse(content=STUDIO_HTML)
 
     return app
