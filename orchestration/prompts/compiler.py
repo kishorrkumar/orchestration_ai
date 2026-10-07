@@ -20,23 +20,61 @@ from ..protocol.prompt import (
     wrap_system_prompt,
 )
 
+import glob
+import logging
+import os
+
+logger = logging.getLogger("orchestration.prompts.compiler")
+
 # Lazy-loaded SentencePiece singleton
 _SP_TOKENIZER: sentencepiece.SentencePieceProcessor | None = None
-TOKENIZER_MODEL_PATH = Path("models/tokenizer_spm_32k_3.model")
+_TOKENIZER_CHECKED: bool = False
 
 
-def get_tokenizer() -> sentencepiece.SentencePieceProcessor:
-    """Returns the cached SentencePiece tokenizer."""
-    global _SP_TOKENIZER
-    if _SP_TOKENIZER is None:
-        if not TOKENIZER_MODEL_PATH.exists():
-            raise FileNotFoundError(
-                f"Tokenizer model not found at {TOKENIZER_MODEL_PATH.resolve()}. "
-                "Ensure models/tokenizer_spm_32k_3.model exists."
-            )
-        sp = sentencepiece.SentencePieceProcessor()
-        sp.load(str(TOKENIZER_MODEL_PATH))
-        _SP_TOKENIZER = sp
+def _find_tokenizer_path() -> Path | None:
+    repo_root = Path(__file__).resolve().parent.parent.parent
+    candidate_paths = [
+        Path("models/tokenizer_spm_32k_3.model"),
+        repo_root / "models" / "tokenizer_spm_32k_3.model",
+    ]
+    for p in candidate_paths:
+        if p.exists():
+            return p
+
+    # Search in Hugging Face cache directories
+    hf_dirs = [
+        os.environ.get("HF_HOME"),
+        "/workspace/huggingface",
+        os.path.expanduser("~/.cache/huggingface"),
+    ]
+    for hf_dir in hf_dirs:
+        if hf_dir and os.path.isdir(hf_dir):
+            matches = glob.glob(f"{hf_dir}/**/tokenizer_spm_32k_3.model", recursive=True)
+            if matches:
+                return Path(matches[0])
+
+    return None
+
+
+def get_tokenizer() -> sentencepiece.SentencePieceProcessor | None:
+    """Returns the cached SentencePiece tokenizer if available, else None."""
+    global _SP_TOKENIZER, _TOKENIZER_CHECKED
+    if not _TOKENIZER_CHECKED:
+        _TOKENIZER_CHECKED = True
+        model_path = _find_tokenizer_path()
+        if model_path:
+            try:
+                sp = sentencepiece.SentencePieceProcessor()
+                sp.load(str(model_path))
+                _SP_TOKENIZER = sp
+                logger.info(f"Loaded SentencePiece tokenizer from {model_path}")
+            except Exception as e:
+                logger.warning(f"Could not load SentencePiece model from {model_path}: {e}")
+                _SP_TOKENIZER = None
+        else:
+            logger.info("SentencePiece model not found on disk or in HF cache. Using BPE estimator.")
+            _SP_TOKENIZER = None
+
     return _SP_TOKENIZER
 
 
@@ -103,9 +141,21 @@ class CompiledPrompt:
 
 
 def count_tokens(text: str) -> int:
-    """Counts tokens using the official 32k PersonaPlex SentencePiece model."""
+    """Counts tokens using official 32k PersonaPlex SentencePiece model or BPE estimator."""
     sp = get_tokenizer()
-    return len(sp.encode(text))
+    if sp is not None:
+        try:
+            return len(sp.encode(text))
+        except Exception as e:
+            logger.warning(f"SentencePiece encoding error: {e}")
+
+    # Fallback BPE estimator heuristic (~3.8 chars per token for English prose)
+    cleaned = text.strip()
+    if not cleaned:
+        return 0
+    words = len(cleaned.split())
+    chars = len(cleaned)
+    return max(1, int(chars / 3.8 + words * 0.1))
 
 
 def lint_prompt(
