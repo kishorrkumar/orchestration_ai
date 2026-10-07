@@ -19,6 +19,9 @@ from ..audio.resample import AudioResampler, StreamingResampleBuffer
 from ..db.models import AgentVersion
 from ..db.service import AgentService, CallSessionService
 from ..db.session import get_session_factory
+from ..domain.engines.spec import EngineType
+from ..engines.base import SessionContext
+from ..engines.cascaded.engine import CascadedVoiceEngine
 from ..persona.registry import PersonaConfig
 from ..pipeline.end_detector import EndOfCallDetector
 from ..prompts.compiler import compile_prompt
@@ -53,11 +56,6 @@ async def voice_v2_endpoint(
     await websocket.accept()
 
     session_factory = get_session_factory()
-    worker_pool: WorkerPool = getattr(websocket.app.state, "pool", None)
-    if not worker_pool:
-        await websocket.send_json({"type": "error", "message": "Worker pool not available on gateway"})
-        await websocket.close(code=status.WS_1011_INTERNAL_ERROR)
-        return
 
     # 1. Resolve Agent and Version snapshot from Database
     async with session_factory() as db:
@@ -79,16 +77,60 @@ async def voice_v2_endpoint(
             # Fallback to latest version
             target_ver = agent.versions[-1]
 
-        # Extract active configuration values
-        voice_id = target_ver.voice_id if target_ver else agent.draft_voice_id
-        greeting_text = target_ver.greeting_text if target_ver else agent.draft_greeting_text
-        greeting_mode = target_ver.greeting_mode if target_ver else agent.draft_greeting_mode
-        system_prompt = target_ver.system_prompt if target_ver else agent.draft_system_prompt
-        ending_text = target_ver.ending_text if target_ver else agent.draft_ending_text
-        end_silence_sec = target_ver.end_silence_sec if target_ver else agent.draft_end_silence_sec
-        max_duration_sec = target_ver.max_duration_sec if target_ver else agent.draft_max_duration_sec
-        tz_name = target_ver.timezone if target_ver else agent.draft_timezone
+    # Check Engine type
+    resolved_engine = target_ver.engine if (target_ver and hasattr(target_ver, "engine")) else getattr(agent, "draft_engine", "personaplex_s2s")
+
+    # If Engine B (Cascaded Cloud pipeline)
+    if resolved_engine == EngineType.CASCADED_CLOUD.value or resolved_engine == "cascaded_cloud":
+        call_start_time = time.time()
+        call_session_id = f"call_{int(call_start_time)}_{agent.id[:8]}"
         agent_version_id = target_ver.id if target_ver else None
+        async with session_factory() as db:
+            call_svc = CallSessionService(db)
+            session_record = await call_svc.create_session(
+                agent_id=agent.id,
+                agent_version_id=agent_version_id,
+                session_id=call_session_id,
+                engine=EngineType.CASCADED_CLOUD.value,
+            )
+            await db.commit()
+
+        context = SessionContext(
+            websocket=websocket,
+            agent=agent,
+            version=target_ver,
+            session_record=session_record,
+            session_factory=session_factory,
+            client_sample_rate=sample_rate,
+            codec=codec,
+            template_vars={
+                "caller_name": caller_name or "",
+                "customer_name": customer_name or "",
+                "phone_number": phone_number or "",
+            },
+            workspace_id=agent.workspace_id,
+        )
+        engine_runner = CascadedVoiceEngine()
+        await engine_runner.run_session(context)
+        return
+
+    # Engine A (PersonaPlex S2S): requires GPU/Mock Worker Pool
+    worker_pool: WorkerPool = getattr(websocket.app.state, "pool", None)
+    if not worker_pool:
+        await websocket.send_json({"type": "error", "message": "Worker pool not available on gateway"})
+        await websocket.close(code=status.WS_1011_INTERNAL_ERROR)
+        return
+
+    # Extract active configuration values
+    voice_id = target_ver.voice_id if target_ver else agent.draft_voice_id
+    greeting_text = target_ver.greeting_text if target_ver else agent.draft_greeting_text
+    greeting_mode = target_ver.greeting_mode if target_ver else agent.draft_greeting_mode
+    system_prompt = target_ver.system_prompt if target_ver else agent.draft_system_prompt
+    ending_text = target_ver.ending_text if target_ver else agent.draft_ending_text
+    end_silence_sec = target_ver.end_silence_sec if target_ver else agent.draft_end_silence_sec
+    max_duration_sec = target_ver.max_duration_sec if target_ver else agent.draft_max_duration_sec
+    tz_name = target_ver.timezone if target_ver else agent.draft_timezone
+    agent_version_id = target_ver.id if target_ver else None
 
     # 2. Compile prompt with dynamic local time and caller interpolation
     compiled = compile_prompt(

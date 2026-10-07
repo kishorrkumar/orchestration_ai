@@ -36,3 +36,7 @@ node_modules/
 .agents/
 skills-lock.json
 package-lock.json
+
+# Local secrets
+.secrets/
+

@@ -1,0 +1,37 @@
+id: anthropic_llm
+kind: llm
+display_name: Anthropic
+description: Native Claude models with natural nuance and prompt caching.
+docs_url: https://docs.anthropic.com
+auth_fields:
+  - name: api_key
+    label: Anthropic API Key
+    field_type: password
+    required: true
+    placeholder: sk-ant-api03-...
+    description: API key from console.anthropic.com
+supported_languages:
+  - en-US
+  - en-IN
+  - ta-IN
+  - hi-IN
+native_sample_rates: []
+streaming: true
+native_eot: false
+default_model: claude-3-7-sonnet-latest
+model_list_type: static
+models:
+  - id: claude-3-7-sonnet-latest
+    name: Claude 3.7 Sonnet
+    description: Hybrid thinking / instant conversational intelligence with prompt caching.
+    context_window: 200000
+    latency_profile: fast
+    last_verified: "2026-10-01"
+  - id: claude-3-5-sonnet-latest
+    name: Claude 3.5 Sonnet
+    description: Top-tier natural voice dialogue and structured instruction following.
+    context_window: 200000
+    latency_profile: standard
+    last_verified: "2026-10-01"
+voices: []
+pipecat_service: pipecat.services.anthropic.llm.AnthropicLLMService

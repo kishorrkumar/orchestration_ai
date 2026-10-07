@@ -29,6 +29,9 @@ class CreateAgentRequest(BaseModel):
     silence_timeout_sec: float = Field(default=12.0, ge=3.0, le=60.0, json_schema_extra={"example": 12.0})
     max_duration_sec: float = Field(default=600.0, ge=10.0, le=3600.0, json_schema_extra={"example": 600.0})
     timezone_str: str = Field(default="UTC", json_schema_extra={"example": "America/New_York"})
+    engine: str = Field(default="personaplex_s2s", json_schema_extra={"example": "personaplex_s2s"})
+    language: str = Field(default="en", json_schema_extra={"example": "en"})
+    pipeline_json: str = Field(default="{}", json_schema_extra={"example": "{}"})
 
 
 class UpdateAgentRequest(BaseModel):
@@ -44,6 +47,9 @@ class UpdateAgentRequest(BaseModel):
     silence_timeout_sec: float | None = Field(default=None, ge=3.0, le=60.0)
     max_duration_sec: float | None = Field(default=None, ge=10.0, le=3600.0)
     timezone_str: str | None = None
+    engine: str | None = None
+    language: str | None = None
+    pipeline_json: str | None = None
     change_note: str | None = Field(default=None, max_length=256)
 
 
@@ -64,6 +70,9 @@ class AgentResponse(BaseModel):
     silence_timeout_sec: float
     max_duration_sec: float
     timezone_str: str
+    engine: str = "personaplex_s2s"
+    language: str = "en"
+    pipeline_json: str = "{}"
     status: str
     current_version: int
     published_version: int | None
@@ -85,6 +94,9 @@ class AgentVersionResponse(BaseModel):
     silence_timeout_sec: float
     max_duration_sec: float
     timezone_str: str
+    engine: str = "personaplex_s2s"
+    language: str = "en"
+    pipeline_json: str = "{}"
     compiled_prompt: str
     token_count: int
     created_at: datetime

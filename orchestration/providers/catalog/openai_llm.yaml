@@ -1,0 +1,55 @@
+id: openai_llm
+kind: llm
+display_name: OpenAI & Compatible
+description: OpenAI, Groq, OpenRouter, Cerebras, Together, or local Ollama endpoints.
+docs_url: https://platform.openai.com/docs/api-reference
+auth_fields:
+  - name: api_key
+    label: API Key
+    field_type: password
+    required: true
+    placeholder: sk-...
+    description: API key for the chosen OpenAI-compatible service (or 'ollama' for local).
+  - name: base_url
+    label: Custom Base URL (Optional)
+    field_type: text
+    required: false
+    placeholder: https://api.openai.com/v1
+    description: "Preset options: Groq (https://api.groq.com/openai/v1), OpenRouter (https://openrouter.ai/api/v1), Cerebras (https://api.cerebras.ai/v1), Together (https://api.together.xyz/v1), Ollama (http://127.0.0.1:11434/v1)."
+supported_languages:
+  - en-US
+  - en-IN
+  - ta-IN
+  - hi-IN
+native_sample_rates: []
+streaming: true
+native_eot: false
+default_model: gpt-4o-mini
+model_list_type: static
+models:
+  - id: gpt-4o-mini
+    name: GPT-4o Mini
+    description: Fast, highly intelligent conversational reasoning with prompt caching.
+    context_window: 128000
+    latency_profile: fast
+    last_verified: "2026-10-01"
+  - id: gpt-4o
+    name: GPT-4o
+    description: Flagship multimodal intelligence for complex conversational workflows.
+    context_window: 128000
+    latency_profile: standard
+    last_verified: "2026-10-01"
+  - id: llama-3.3-70b-versatile
+    name: "Groq: Llama 3.3 70B Versatile"
+    description: Ultra-low latency LPUs (<220ms TTFT) for lightning-fast voice turn-taking.
+    context_window: 128000
+    latency_profile: ultra-fast
+    last_verified: "2026-10-01"
+  - id: llama-3.1-8b-instant
+    name: "Groq: Llama 3.1 8B Instant"
+    description: Sub-150ms TTFT token generation for maximum conversational speed.
+    context_window: 128000
+    latency_profile: ultra-fast
+    last_verified: "2026-10-01"
+voices: []
+pipecat_service: pipecat.services.openai.llm.OpenAILLMService

@@ -5,10 +5,19 @@ from httpx import ASGITransport, AsyncClient
 
 from orchestration.config import settings
 from orchestration.gateway.app import create_app
-from orchestration.gateway.security import RateLimiter
+from orchestration.gateway.security import RateLimiter, default_rate_limiter
 from orchestration.persona.registry import PersonaRegistry
 from orchestration.session.manager import SessionManager
 from orchestration.worker.pool import WorkerPool
+
+
+@pytest.fixture(autouse=True)
+def reset_security_state():
+    default_rate_limiter._history.clear()
+    original_key = settings.gateway.api_key
+    yield
+    default_rate_limiter._history.clear()
+    settings.gateway.api_key = original_key
 
 
 @pytest.mark.asyncio

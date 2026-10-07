@@ -39,6 +39,9 @@ def _to_agent_response(a: Agent) -> AgentResponse:
         silence_timeout_sec=a.silence_timeout_sec,
         max_duration_sec=a.max_duration_sec,
         timezone_str=a.timezone_str,
+        engine=a.engine,
+        language=a.language,
+        pipeline_json=a.pipeline_json,
         status=a.status.value,
         current_version=a.current_version,
         published_version=a.published_version,
@@ -80,6 +83,9 @@ async def create_agent(
         silence_timeout_sec=req.silence_timeout_sec,
         max_duration_sec=req.max_duration_sec,
         timezone_str=req.timezone_str,
+        engine=req.engine,
+        language=req.language,
+        pipeline_json=req.pipeline_json,
     )
     agent = await svc.create_agent(cmd)
     return _to_agent_response(agent)
@@ -124,6 +130,9 @@ async def update_agent(
         silence_timeout_sec=req.silence_timeout_sec,
         max_duration_sec=req.max_duration_sec,
         timezone_str=req.timezone_str,
+        engine=req.engine,
+        language=req.language,
+        pipeline_json=req.pipeline_json,
         change_note=req.change_note,
     )
     agent = await svc.update_agent(agent_id, cmd)
@@ -136,7 +145,7 @@ async def publish_version(
     req: PublishVersionRequest,
     svc: AgentApplicationService = Depends(get_agent_service),
 ) -> AgentResponse:
-    """Publish current draft version. Enforces strict <=350 token limit."""
+    """Publish current draft version. Enforces strict <=350 token limit on Engine A."""
     cmd = PublishVersionCommand(change_note=req.change_note)
     agent = await svc.publish_version(agent_id, cmd)
     return _to_agent_response(agent)
@@ -175,6 +184,9 @@ async def list_versions(
             silence_timeout_sec=v.silence_timeout_sec,
             max_duration_sec=v.max_duration_sec,
             timezone_str=v.timezone_str,
+            engine=v.engine,
+            language=v.language,
+            pipeline_json=v.pipeline_json,
             compiled_prompt=v.compiled_prompt,
             token_count=v.token_count,
             created_at=v.created_at,

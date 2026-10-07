@@ -1,0 +1,29 @@
+id: fake_llm
+kind: llm
+display_name: Fake Language Model (Dev & CI)
+description: Deterministic simulated language model with configurable reply streaming.
+docs_url: https://github.com/kishorrkumar/orchestration_ai
+auth_fields:
+  - name: api_key
+    label: Mock Key (Any string)
+    field_type: password
+    required: false
+    placeholder: fake-llm-test-key
+    description: Optional test key for simulated verification.
+supported_languages:
+  - en-US
+  - ta-IN
+  - hi-IN
+native_sample_rates: []
+streaming: true
+native_eot: false
+default_model: mock-gpt
+model_list_type: static
+models:
+  - id: mock-gpt
+    name: Mock Fast LLM
+    description: Instant token generator for offline tests.
+    latency_profile: ultra-fast
+    last_verified: "2026-10-01"
+voices: []
+pipecat_service: orchestration.infrastructure.engines.cascaded.fakes.FakeLLMService

@@ -17,6 +17,9 @@ class CreateAgentCommand:
     silence_timeout_sec: float = 12.0
     max_duration_sec: float = 600.0
     timezone_str: str = "UTC"
+    engine: str = "personaplex_s2s"
+    language: str = "en"
+    pipeline_json: str = "{}"
 
 
 @dataclass
@@ -31,6 +34,9 @@ class UpdateAgentCommand:
     silence_timeout_sec: float | None = None
     max_duration_sec: float | None = None
     timezone_str: str | None = None
+    engine: str | None = None
+    language: str | None = None
+    pipeline_json: str | None = None
     change_note: str | None = None
 
 

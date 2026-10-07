@@ -6,10 +6,11 @@ import { AgentEditorView } from './views/AgentEditorView'
 import { CallsHistoryView } from './views/CallsHistoryView'
 import { DesignSystemView } from './views/DesignSystemView'
 import { PromptingGuideView } from './views/PromptingGuideView'
+import { ProvidersView } from './views/ProvidersView'
 import { TestCallModal } from './views/TestCallModal'
-import { Moon, Sun, Layers, PhoneCall, Bot, BookOpen } from 'lucide-react'
+import { Moon, Sun, Layers, PhoneCall, Bot, BookOpen, Key } from 'lucide-react'
 
-type ViewMode = 'agents' | 'editor' | 'calls' | 'design-system' | 'prompting-guide'
+type ViewMode = 'agents' | 'editor' | 'calls' | 'design-system' | 'prompting-guide' | 'providers'
 
 export function App() {
   const [view, setView] = useState<ViewMode>('agents')
@@ -99,6 +100,18 @@ export function App() {
             </button>
 
             <button
+              onClick={() => setView('providers')}
+              className={`px-3 py-1.5 rounded-lg text-[13px] font-medium flex items-center gap-1.5 transition-colors ${
+                view === 'providers'
+                  ? 'bg-[var(--color-bg-sunken)] text-[var(--color-text-primary)] font-semibold'
+                  : 'text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]'
+              }`}
+            >
+              <Key className="w-4 h-4" />
+              Providers
+            </button>
+
+            <button
               onClick={() => setView('calls')}
               className={`px-3 py-1.5 rounded-lg text-[13px] font-medium flex items-center gap-1.5 transition-colors ${
                 view === 'calls'
@@ -152,6 +165,7 @@ export function App() {
             onBack={navigateToAgents}
             onStartCall={(agent) => setActiveCallAgent(agent)}
             onOpenGuide={() => setView('prompting-guide')}
+            onOpenProviders={() => setView('providers')}
           />
         )}
 
@@ -160,6 +174,10 @@ export function App() {
             onBack={navigateToAgents}
             onUseTemplate={handleUseTemplate}
           />
+        )}
+
+        {view === 'providers' && (
+          <ProvidersView />
         )}
 
         {view === 'calls' && (

@@ -133,9 +133,46 @@ async def init_db() -> None:
         await conn.run_sync(Base.metadata.create_all)
         if engine.url.drivername.startswith("sqlite"):
             from sqlalchemy import text
-            for col, col_type in [("name", "VARCHAR(128) DEFAULT ''"), ("compiled_prompt", "TEXT DEFAULT ''")]:
+            for col, col_type in [
+                ("name", "VARCHAR(128) DEFAULT ''"),
+                ("compiled_prompt", "TEXT DEFAULT ''"),
+                ("engine", "VARCHAR(32) DEFAULT 'personaplex_s2s'"),
+                ("language", "VARCHAR(32) DEFAULT 'en'"),
+                ("pipeline_json", "TEXT DEFAULT '{}'"),
+            ]:
                 try:
                     await conn.execute(text(f"ALTER TABLE agent_versions ADD COLUMN {col} {col_type}"))
+                except Exception:
+                    pass
+
+            for col, col_type in [
+                ("draft_engine", "VARCHAR(32) DEFAULT 'personaplex_s2s'"),
+                ("draft_language", "VARCHAR(32) DEFAULT 'en'"),
+                ("draft_pipeline_json", "TEXT DEFAULT '{}'"),
+            ]:
+                try:
+                    await conn.execute(text(f"ALTER TABLE agents ADD COLUMN {col} {col_type}"))
+                except Exception:
+                    pass
+
+            for col, col_type in [
+                ("engine", "VARCHAR(32) DEFAULT 'personaplex_s2s'"),
+                ("providers_used_json", "TEXT DEFAULT '{}'"),
+            ]:
+                try:
+                    await conn.execute(text(f"ALTER TABLE call_sessions ADD COLUMN {col} {col_type}"))
+                except Exception:
+                    pass
+
+            for col, col_type in [
+                ("eot_ms", "FLOAT"),
+                ("stt_ms", "FLOAT"),
+                ("llm_ttft_ms", "FLOAT"),
+                ("tts_ttfa_ms", "FLOAT"),
+                ("voice_to_voice_ms", "FLOAT"),
+            ]:
+                try:
+                    await conn.execute(text(f"ALTER TABLE call_turns ADD COLUMN {col} {col_type}"))
                 except Exception:
                     pass
 

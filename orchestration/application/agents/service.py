@@ -42,6 +42,9 @@ class AgentApplicationService:
             silence_timeout_sec=cmd.silence_timeout_sec,
             max_duration_sec=cmd.max_duration_sec,
             timezone_str=cmd.timezone_str.strip(),
+            engine=cmd.engine,
+            language=cmd.language,
+            pipeline_json=cmd.pipeline_json,
             status=AgentStatus.DRAFT,
             current_version=1,
             published_version=None,
@@ -79,6 +82,9 @@ class AgentApplicationService:
             timezone_str=saved_agent.timezone_str,
             compiled_prompt=compiled.compiled_text,
             token_count=compiled.token_count,
+            engine=saved_agent.engine,
+            language=saved_agent.language,
+            pipeline_json=saved_agent.pipeline_json,
             created_at=now,
             change_note="Initial draft",
         )
@@ -120,6 +126,12 @@ class AgentApplicationService:
             agent.max_duration_sec = cmd.max_duration_sec
         if cmd.timezone_str is not None:
             agent.timezone_str = cmd.timezone_str.strip()
+        if cmd.engine is not None:
+            agent.engine = cmd.engine
+        if cmd.language is not None:
+            agent.language = cmd.language
+        if cmd.pipeline_json is not None:
+            agent.pipeline_json = cmd.pipeline_json
 
         try:
             agent.validate_timezone()
@@ -153,6 +165,9 @@ class AgentApplicationService:
             timezone_str=saved_agent.timezone_str,
             compiled_prompt=compiled.compiled_text,
             token_count=compiled.token_count,
+            engine=saved_agent.engine,
+            language=saved_agent.language,
+            pipeline_json=saved_agent.pipeline_json,
             created_at=now,
             change_note=cmd.change_note or f"Updated to version {saved_agent.current_version}",
         )
@@ -191,6 +206,9 @@ class AgentApplicationService:
             silence_timeout_sec=target_version.silence_timeout_sec,
             max_duration_sec=target_version.max_duration_sec,
             timezone_str=target_version.timezone_str,
+            engine=target_version.engine,
+            language=target_version.language,
+            pipeline_json=target_version.pipeline_json,
             change_note=f"Reverted to configuration of version {target_version_number}",
         )
         return await self.update_agent(agent_id, cmd)

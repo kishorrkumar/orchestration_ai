@@ -36,6 +36,12 @@ def _agent_to_dict(agent: Agent) -> dict[str, Any]:
         "draft_end_silence_sec": agent.draft_end_silence_sec,
         "draft_max_duration_sec": agent.draft_max_duration_sec,
         "draft_timezone": agent.draft_timezone,
+        "engine": getattr(agent, "draft_engine", "personaplex_s2s") or "personaplex_s2s",
+        "draft_engine": getattr(agent, "draft_engine", "personaplex_s2s") or "personaplex_s2s",
+        "language": getattr(agent, "draft_language", "en") or "en",
+        "draft_language": getattr(agent, "draft_language", "en") or "en",
+        "pipeline_json": getattr(agent, "draft_pipeline_json", "{}") or "{}",
+        "draft_pipeline_json": getattr(agent, "draft_pipeline_json", "{}") or "{}",
         # Legacy compatibility aliases
         "voice_prompt": agent.draft_voice_id,
         "text_prompt": agent.draft_system_prompt,
@@ -59,6 +65,9 @@ def _version_to_dict(ver: AgentVersion) -> dict[str, Any]:
         "end_silence_sec": ver.end_silence_sec,
         "max_duration_sec": ver.max_duration_sec,
         "timezone": ver.timezone,
+        "engine": getattr(ver, "engine", "personaplex_s2s") or "personaplex_s2s",
+        "language": getattr(ver, "language", "en") or "en",
+        "pipeline_json": getattr(ver, "pipeline_json", "{}") or "{}",
         "compiled_token_count": ver.compiled_token_count,
         "change_note": ver.change_note,
         "created_at": ver.created_at.isoformat() if ver.created_at else None,
@@ -105,6 +114,9 @@ async def create_agent(
     end_silence_sec = int(payload.get("end_silence_sec") or 20)
     max_duration_sec = int(payload.get("max_duration_sec") or 600)
     timezone = payload.get("timezone") or "Asia/Kolkata"
+    engine = payload.get("engine") or payload.get("draft_engine") or "personaplex_s2s"
+    language = payload.get("language") or payload.get("draft_language") or "en"
+    pipeline_json = payload.get("pipeline_json") or payload.get("draft_pipeline_json") or "{}"
     auto_publish = bool(payload.get("auto_publish", True))
 
     agent = await service.create_agent(
@@ -118,6 +130,9 @@ async def create_agent(
         end_silence_sec=end_silence_sec,
         max_duration_sec=max_duration_sec,
         timezone=timezone,
+        engine=engine,
+        language=language,
+        pipeline_json=pipeline_json,
         auto_publish=auto_publish,
     )
     res_dict = _agent_to_dict(agent)
@@ -162,6 +177,9 @@ async def update_agent(
     end_silence_sec = int(payload["end_silence_sec"]) if "end_silence_sec" in payload and payload["end_silence_sec"] is not None else None
     max_duration_sec = int(payload["max_duration_sec"]) if "max_duration_sec" in payload and payload["max_duration_sec"] is not None else None
     timezone = payload.get("timezone")
+    engine = payload.get("engine") if "engine" in payload else payload.get("draft_engine")
+    language = payload.get("language") if "language" in payload else payload.get("draft_language")
+    pipeline_json = payload.get("pipeline_json") if "pipeline_json" in payload else payload.get("draft_pipeline_json")
 
     agent = await service.update_agent_draft(
         agent_id=agent_id,
@@ -174,6 +192,9 @@ async def update_agent(
         end_silence_sec=end_silence_sec,
         max_duration_sec=max_duration_sec,
         timezone=timezone,
+        engine=engine,
+        language=language,
+        pipeline_json=pipeline_json,
     )
     if not agent:
         raise HTTPException(status_code=404, detail="Agent not found")

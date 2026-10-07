@@ -110,4 +110,34 @@ export const api = {
     request<CallSession>(`/v2/calls/${sessionId}`),
   getCallTurns: (sessionId: string) =>
     request<CallTurn[]>(`/v2/calls/${sessionId}/turns`),
+
+  // Engine B Providers & Encrypted Vault
+  listProviderCatalog: () =>
+    request<import('./types').ProviderManifest[]>('/v1/providers/catalog'),
+  getProviderModels: (providerId: string) =>
+    request<import('./types').ModelDescriptor[]>(`/v1/providers/${providerId}/models`),
+  getProviderVoices: (providerId: string) =>
+    request<import('./types').VoiceDescriptor[]>(`/v1/providers/${providerId}/voices`),
+  listProviderCredentials: () =>
+    request<import('./types').CredentialSummary[]>('/v1/providers/credentials'),
+  saveProviderCredential: (
+    providerId: string,
+    data: { api_key: string; label?: string; config?: Record<string, any> }
+  ) =>
+    request<import('./types').CredentialSummary>(`/v1/providers/${providerId}/credentials`, {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
+  testProviderCredential: (
+    providerId: string,
+    data?: { api_key?: string; config?: Record<string, any> }
+  ) =>
+    request<import('./types').ProviderTestResult>(`/v1/providers/${providerId}/credentials/test`, {
+      method: 'POST',
+      body: JSON.stringify(data || {}),
+    }),
+  deleteProviderCredential: (providerId: string) =>
+    request<{ deleted: boolean }>(`/v1/providers/${providerId}/credentials`, {
+      method: 'DELETE',
+    }),
 }

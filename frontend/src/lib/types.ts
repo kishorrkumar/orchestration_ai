@@ -7,6 +7,8 @@ export interface VoicePreset {
   recommended_for: string
 }
 
+export type EngineType = 'personaplex_s2s' | 'cascaded_cloud'
+
 export interface Agent {
   id: string
   name: string
@@ -19,6 +21,9 @@ export interface Agent {
   silence_timeout_sec: number
   max_duration_sec: number
   timezone_str: string
+  engine?: EngineType
+  language?: string
+  pipeline_json?: string
   status: 'draft' | 'published' | 'archived'
   current_version: number
   published_version?: number | null
@@ -40,9 +45,51 @@ export interface AgentVersion {
   silence_timeout_sec: number
   max_duration_sec: number
   timezone_str: string
+  engine?: EngineType
+  language?: string
+  pipeline_json?: string
   token_count: number
   created_at: string
   change_note: string
+}
+
+export interface STTPipelineConfig {
+  provider_id: string
+  model: string
+  language: string
+  credential_id?: string | null
+  extra_params?: Record<string, any>
+}
+
+export interface LLMPipelineConfig {
+  provider_id: string
+  model: string
+  temperature: number
+  max_tokens?: number | null
+  credential_id?: string | null
+  extra_params?: Record<string, any>
+}
+
+export interface TTSPipelineConfig {
+  provider_id: string
+  model: string
+  voice: string
+  speed?: number
+  credential_id?: string | null
+  extra_params?: Record<string, any>
+}
+
+export interface TurnPipelineConfig {
+  strategy: 'auto' | 'provider_eot' | 'vad_smart_turn'
+  stop_words?: string[]
+  eot_timeout_ms?: number
+}
+
+export interface CascadedPipelineSpec {
+  stt: STTPipelineConfig
+  llm: LLMPipelineConfig
+  tts: TTSPipelineConfig
+  turn: TurnPipelineConfig
 }
 
 export interface LintWarning {
@@ -101,3 +148,72 @@ export interface ProblemDetail {
     type: string
   }>
 }
+
+export type ProviderKind = 'stt' | 'llm' | 'tts'
+
+export interface AuthFieldSpec {
+  name: string
+  label: string
+  field_type: 'password' | 'text' | 'select'
+  required: boolean
+  placeholder?: string
+  description?: string
+  options?: string[]
+  default_value?: string
+}
+
+export interface ModelDescriptor {
+  id: string
+  name: string
+  description?: string
+  context_window?: number
+  latency_profile?: string
+  last_verified?: string
+}
+
+export interface VoiceDescriptor {
+  id: string
+  name: string
+  gender?: string
+  language: string
+  preview_url?: string
+}
+
+export interface ProviderManifest {
+  id: string
+  kind: ProviderKind
+  display_name: string
+  description: string
+  docs_url: string
+  auth_fields: AuthFieldSpec[]
+  supported_languages: string[]
+  native_sample_rates: number[]
+  streaming: boolean
+  native_eot: boolean
+  default_model: string
+  default_voice?: string
+  model_list_type: 'static' | 'live_api'
+  models: ModelDescriptor[]
+  voices: VoiceDescriptor[]
+  pipecat_service: string
+}
+
+export interface CredentialSummary {
+  id: string
+  workspace_id: string
+  provider_id: string
+  label: string
+  last4: string
+  status: 'untested' | 'valid' | 'invalid' | 'rate_limited'
+  last_tested_at?: string
+  last_latency_ms?: number
+  config: Record<string, any>
+  created_at: string
+}
+
+export interface ProviderTestResult {
+  status: 'valid' | 'invalid' | 'rate_limited' | 'error'
+  latency_ms: number
+  error_message?: string
+}
+

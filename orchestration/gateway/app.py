@@ -194,12 +194,14 @@ def create_app(
     from ..interfaces.http.routers.calls import router as calls_v2_router
     from ..interfaces.http.routers.health import router as health_v2_router
     from ..interfaces.http.routers.prompts import router as prompts_v2_router
+    from ..interfaces.http.routers.providers import router as providers_v2_router
 
     register_error_handlers(app)
     app.include_router(agents_v2_router)
     app.include_router(calls_v2_router)
     app.include_router(prompts_v2_router)
     app.include_router(health_v2_router)
+    app.include_router(providers_v2_router)
 
     # Attach instances to app state for test inspection
     app.state.pool = worker_pool
@@ -854,6 +856,7 @@ def create_app(
         @app.get("/agents", response_class=FileResponse, tags=["UI"])
         @app.get("/calls", response_class=FileResponse, tags=["UI"])
         @app.get("/design-system", response_class=FileResponse, tags=["UI"])
+        @app.get("/providers", response_class=FileResponse, tags=["UI"])
         async def react_app():
             return FileResponse(str(frontend_dist / "index.html"))
     else:

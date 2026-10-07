@@ -69,6 +69,9 @@ class AgentVersion:
     timezone_str: str
     compiled_prompt: str
     token_count: int
+    engine: str = "personaplex_s2s"
+    language: str = "en"
+    pipeline_json: str = "{}"
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     change_note: str | None = None
 
@@ -87,6 +90,9 @@ class Agent:
     silence_timeout_sec: float
     max_duration_sec: float
     timezone_str: str
+    engine: str = "personaplex_s2s"
+    language: str = "en"
+    pipeline_json: str = "{}"
     status: AgentStatus = AgentStatus.DRAFT
     current_version: int = 1
     published_version: int | None = None
@@ -100,8 +106,10 @@ class Agent:
         except (ZoneInfoNotFoundError, ValueError) as err:
             raise ValueError(f"Invalid IANA timezone '{self.timezone_str}'") from err
 
-    def validate_voice(self) -> VoicePreset:
+    def validate_voice(self) -> VoicePreset | None:
         """Validate that the configured voice preset exists in the official catalog."""
+        if self.engine == "cascaded_cloud":
+            return None
         if self.voice_id not in OFFICIAL_PRESETS:
             raise ValueError(
                 f"Unknown voice '{self.voice_id}'. Choose from: {list(OFFICIAL_PRESETS.keys())}"

@@ -1,0 +1,40 @@
+id: fake_tts
+kind: tts
+display_name: Fake Voice Synthesizer (Dev & CI)
+description: Deterministic simulated TTS producing 16kHz PCM audio frames.
+docs_url: https://github.com/kishorrkumar/orchestration_ai
+auth_fields:
+  - name: api_key
+    label: Mock Key (Any string)
+    field_type: password
+    required: false
+    placeholder: fake-tts-test-key
+    description: Optional test key for simulated verification.
+supported_languages:
+  - en-US
+  - ta-IN
+  - hi-IN
+native_sample_rates:
+  - 16000
+  - 8000
+streaming: true
+native_eot: false
+default_model: mock-voice
+default_voice: mock-alex
+model_list_type: static
+models:
+  - id: mock-voice
+    name: Mock Synthetic Voice
+    description: Instant PCM synthesizer for offline tests.
+    latency_profile: ultra-fast
+    last_verified: "2026-10-01"
+voices:
+  - id: mock-alex
+    name: Mock Alex (English)
+    gender: neutral
+    language: en-US
+  - id: mock-priya
+    name: Mock Priya (Tamil / Hindi)
+    gender: female
+    language: ta-IN
+pipecat_service: orchestration.infrastructure.engines.cascaded.fakes.FakeTTSService

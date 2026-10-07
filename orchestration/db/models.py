@@ -63,6 +63,9 @@ class Agent(Base, TimestampMixin):
     draft_end_silence_sec: Mapped[int] = mapped_column(Integer, default=20, nullable=False)
     draft_max_duration_sec: Mapped[int] = mapped_column(Integer, default=600, nullable=False)
     draft_timezone: Mapped[str] = mapped_column(String(64), default="Asia/Kolkata", nullable=False)
+    draft_engine: Mapped[str] = mapped_column(String(32), default="personaplex_s2s", nullable=False)
+    draft_language: Mapped[str] = mapped_column(String(32), default="en", nullable=False)
+    draft_pipeline_json: Mapped[str] = mapped_column(Text, default="{}", nullable=False)
 
     workspace: Mapped[Workspace] = relationship("Workspace", back_populates="agents")
     versions: Mapped[List[AgentVersion]] = relationship(
@@ -98,6 +101,9 @@ class AgentVersion(Base):
     end_silence_sec: Mapped[int] = mapped_column(Integer, default=20, nullable=False)
     max_duration_sec: Mapped[int] = mapped_column(Integer, default=600, nullable=False)
     timezone: Mapped[str] = mapped_column(String(64), default="Asia/Kolkata", nullable=False)
+    engine: Mapped[str] = mapped_column(String(32), default="personaplex_s2s", nullable=False)
+    language: Mapped[str] = mapped_column(String(32), default="en", nullable=False)
+    pipeline_json: Mapped[str] = mapped_column(Text, default="{}", nullable=False)
 
     compiled_prompt: Mapped[str] = mapped_column(Text, default="", nullable=False)
     compiled_token_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
@@ -139,6 +145,8 @@ class CallSession(Base):
     end_reason: Mapped[str] = mapped_column(String(64), default="", nullable=False)  # agent_closed | silence_timeout | max_duration | user_hangup | error
     ttfa_ms: Mapped[float] = mapped_column(Float, default=0.0, nullable=False)
     handshake_ms: Mapped[float] = mapped_column(Float, default=0.0, nullable=False)
+    engine: Mapped[str] = mapped_column(String(32), default="personaplex_s2s", nullable=False)
+    providers_used_json: Mapped[str] = mapped_column(Text, default="{}", nullable=False)
 
     agent: Mapped[Agent] = relationship("Agent", back_populates="sessions")
     version: Mapped[AgentVersion | None] = relationship("AgentVersion", back_populates="sessions")
@@ -148,7 +156,7 @@ class CallSession(Base):
 
 
 class CallTurn(Base):
-    """Text transcript turn recorded from opcode 0x02 text tokens."""
+    """Text transcript turn recorded from opcode 0x02 text tokens or streaming STT/LLM."""
 
     __tablename__ = "call_turns"
 
@@ -157,8 +165,59 @@ class CallTurn(Base):
     )
     session_id: Mapped[str] = mapped_column(ForeignKey("call_sessions.id", ondelete="CASCADE"), index=True, nullable=False)
     idx: Mapped[int] = mapped_column(Integer, nullable=False)
-    role: Mapped[str] = mapped_column(String(16), nullable=False)  # user | agent
+    role: Mapped[str] = mapped_column(String(16), nullable=False)  # user | assistant | agent
     text: Mapped[str] = mapped_column(Text, nullable=False)
     started_ms: Mapped[float] = mapped_column(Float, default=0.0, nullable=False)
 
+    # Detailed per-turn latency instrumentation
+    eot_ms: Mapped[float | None] = mapped_column(Float, nullable=True)
+    stt_ms: Mapped[float | None] = mapped_column(Float, nullable=True)
+    llm_ttft_ms: Mapped[float | None] = mapped_column(Float, nullable=True)
+    tts_ttfa_ms: Mapped[float | None] = mapped_column(Float, nullable=True)
+    voice_to_voice_ms: Mapped[float | None] = mapped_column(Float, nullable=True)
+
     session: Mapped[CallSession] = relationship("CallSession", back_populates="turns")
+
+
+class ProviderCredential(Base):
+    """
+    AES-256-GCM encrypted provider credentials vault record.
+    Never stores plaintext API keys.
+    """
+
+    __tablename__ = "provider_credentials"
+
+    id: Mapped[str] = mapped_column(
+        String(64), primary_key=True, default=lambda: generate_prefixed_id("crd")
+    )
+    workspace_id: Mapped[str] = mapped_column(
+        ForeignKey("workspaces.id", ondelete="CASCADE"), default="wks_default", nullable=False, index=True
+    )
+    provider_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    label: Mapped[str] = mapped_column(String(128), default="", nullable=False)
+
+    # AES-256-GCM encrypted payload
+    ciphertext: Mapped[str] = mapped_column(Text, nullable=False)
+    nonce: Mapped[str] = mapped_column(String(64), nullable=False)
+    key_version: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+    last4: Mapped[str] = mapped_column(String(16), nullable=False)
+
+    # Status tracking (untested | valid | invalid)
+    status: Mapped[str] = mapped_column(String(32), default="untested", nullable=False)
+    last_tested_at: Mapped[datetime.datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_latency_ms: Mapped[float | None] = mapped_column(Float, nullable=True)
+
+    # Optional configuration parameters (e.g., custom base URL, region)
+    config_json: Mapped[str] = mapped_column(Text, default="{}", nullable=False)
+
+    created_at: Mapped[datetime.datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.datetime.now(datetime.UTC),
+        server_default=func.now(),
+        nullable=False,
+    )
+
+    __table_args__ = (
+        Index("idx_workspace_provider_unique", "workspace_id", "provider_id", unique=True),
+    )
+

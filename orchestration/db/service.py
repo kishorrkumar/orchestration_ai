@@ -43,6 +43,9 @@ class AgentService:
         end_silence_sec: int = 20,
         max_duration_sec: int = 600,
         timezone: str = "Asia/Kolkata",
+        engine: str = "personaplex_s2s",
+        language: str = "en",
+        pipeline_json: str = "{}",
         auto_publish: bool = True,
         change_note: str = "Initial release",
     ) -> Agent:
@@ -62,6 +65,9 @@ class AgentService:
                 existing.draft_end_silence_sec = end_silence_sec
                 existing.draft_max_duration_sec = max_duration_sec
                 existing.draft_timezone = timezone
+                existing.draft_engine = engine
+                existing.draft_language = language
+                existing.draft_pipeline_json = pipeline_json
                 if auto_publish:
                     await self.publish_agent(existing.id, change_note=change_note)
                 else:
@@ -88,6 +94,9 @@ class AgentService:
             draft_end_silence_sec=end_silence_sec,
             draft_max_duration_sec=max_duration_sec,
             draft_timezone=timezone,
+            draft_engine=engine,
+            draft_language=language,
+            draft_pipeline_json=pipeline_json,
         )
         self.db.add(agent)
         await self.db.flush()
@@ -113,6 +122,9 @@ class AgentService:
                 end_silence_sec=end_silence_sec,
                 max_duration_sec=max_duration_sec,
                 timezone=timezone,
+                engine=engine,
+                language=language,
+                pipeline_json=pipeline_json,
                 compiled_token_count=compiled.token_count,
                 change_note=change_note,
             )
@@ -175,6 +187,9 @@ class AgentService:
         end_silence_sec: int | None = None,
         max_duration_sec: int | None = None,
         timezone: str | None = None,
+        engine: str | None = None,
+        language: str | None = None,
+        pipeline_json: str | None = None,
     ) -> Agent | None:
         """Updates draft fields in place."""
         agent = await self.get_agent(agent_id)
@@ -199,6 +214,12 @@ class AgentService:
             agent.draft_max_duration_sec = max_duration_sec
         if timezone is not None:
             agent.draft_timezone = timezone
+        if engine is not None:
+            agent.draft_engine = engine
+        if language is not None:
+            agent.draft_language = language
+        if pipeline_json is not None:
+            agent.draft_pipeline_json = pipeline_json
 
         # Modifying draft marks agent as draft if previously published
         if agent.status == "published":
@@ -230,7 +251,8 @@ class AgentService:
             timezone=agent.draft_timezone,
         )
 
-        if not compiled.can_publish:
+        engine = getattr(agent, "draft_engine", "personaplex_s2s")
+        if engine == "personaplex_s2s" and not compiled.can_publish:
             raise ValueError(
                 f"Cannot publish agent: prompt exceeds hard limit of 350 tokens (current: {compiled.token_count})."
             )
@@ -248,6 +270,9 @@ class AgentService:
             end_silence_sec=agent.draft_end_silence_sec,
             max_duration_sec=agent.draft_max_duration_sec,
             timezone=agent.draft_timezone,
+            engine=agent.draft_engine,
+            language=agent.draft_language,
+            pipeline_json=agent.draft_pipeline_json,
             compiled_token_count=compiled.token_count,
             change_note=change_note or f"Release v{new_version_no}",
         )
@@ -289,6 +314,9 @@ class AgentService:
         agent.draft_end_silence_sec = ver.end_silence_sec
         agent.draft_max_duration_sec = ver.max_duration_sec
         agent.draft_timezone = ver.timezone
+        agent.draft_engine = ver.engine
+        agent.draft_language = ver.language
+        agent.draft_pipeline_json = ver.pipeline_json
         agent.published_version_id = ver.id
         agent.status = "published"
 
@@ -313,6 +341,9 @@ class AgentService:
             end_silence_sec=orig.draft_end_silence_sec,
             max_duration_sec=orig.draft_max_duration_sec,
             timezone=orig.draft_timezone,
+            engine=orig.draft_engine,
+            language=orig.draft_language,
+            pipeline_json=orig.draft_pipeline_json,
             auto_publish=True,
             change_note=f"Duplicated from {orig.name}",
         )
@@ -341,6 +372,8 @@ class CallSessionService:
         agent_id: str,
         agent_version_id: str | None = None,
         session_id: str | None = None,
+        engine: str = "personaplex_s2s",
+        providers_used_json: str = "{}",
     ) -> CallSession:
         from .models import CallSession
         sid = session_id or generate_prefixed_id("ses")
@@ -352,6 +385,8 @@ class CallSessionService:
             end_reason="",
             ttfa_ms=0.0,
             handshake_ms=0.0,
+            engine=engine,
+            providers_used_json=providers_used_json,
         )
         self.db.add(call)
         await self.db.flush()
@@ -364,6 +399,11 @@ class CallSessionService:
         role: str,
         text: str,
         started_ms: float = 0.0,
+        eot_ms: float | None = None,
+        stt_ms: float | None = None,
+        llm_ttft_ms: float | None = None,
+        tts_ttfa_ms: float | None = None,
+        voice_to_voice_ms: float | None = None,
     ) -> CallTurn:
         from .models import CallTurn
         turn = CallTurn(
@@ -373,6 +413,11 @@ class CallSessionService:
             role=role,
             text=text,
             started_ms=started_ms,
+            eot_ms=eot_ms,
+            stt_ms=stt_ms,
+            llm_ttft_ms=llm_ttft_ms,
+            tts_ttfa_ms=tts_ttfa_ms,
+            voice_to_voice_ms=voice_to_voice_ms,
         )
         self.db.add(turn)
         await self.db.flush()

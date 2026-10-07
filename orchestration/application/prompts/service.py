@@ -89,17 +89,18 @@ class PromptCompilerUseCase:
         )
 
     def validate_for_publish(self, agent: Agent) -> CompiledPrompt:
-        """Validate compiled prompt, blocking publish if exceeding hard token limit."""
+        """Validate compiled prompt, blocking publish if exceeding hard token limit (Engine A only)."""
         compiled = self.compile(agent)
-        if not compiled.is_within_hard_limit:
-            raise PromptTooLongError(
-                f"Compiled prompt has {compiled.token_count} tokens, exceeding hard limit of {HARD_TOKEN_LIMIT}.",
-                invalid_params=[
-                    {
-                        "name": "system_prompt",
-                        "token_count": compiled.token_count,
-                        "limit": HARD_TOKEN_LIMIT,
-                    }
-                ],
-            )
+        if getattr(agent, "engine", "personaplex_s2s") == "personaplex_s2s":
+            if not compiled.is_within_hard_limit:
+                raise PromptTooLongError(
+                    f"Compiled prompt has {compiled.token_count} tokens, exceeding hard limit of {HARD_TOKEN_LIMIT}.",
+                    invalid_params=[
+                        {
+                            "name": "system_prompt",
+                            "token_count": compiled.token_count,
+                            "limit": HARD_TOKEN_LIMIT,
+                        }
+                    ],
+                )
         return compiled

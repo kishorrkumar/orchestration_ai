@@ -36,6 +36,10 @@ class RateLimiter:
         self._history[client_ip].append(now)
         return True
 
+    def reset(self) -> None:
+        """Reset all rate limiter tracking history (used in tests and maintenance)."""
+        self._history.clear()
+
 
 default_rate_limiter = RateLimiter(max_requests_per_minute=settings.gateway.rate_limit_per_minute)
 

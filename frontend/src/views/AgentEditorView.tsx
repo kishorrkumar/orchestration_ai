@@ -1,5 +1,14 @@
 import React, { useState, useEffect } from 'react'
-import type { Agent, AgentVersion, CompilePromptResult, VoicePreset } from '../lib/types'
+import type {
+  Agent,
+  AgentVersion,
+  CascadedPipelineSpec,
+  CompilePromptResult,
+  CredentialSummary,
+  EngineType,
+  ProviderManifest,
+  VoicePreset,
+} from '../lib/types'
 import { api, ApiError } from '../lib/api'
 import { AGENT_TEMPLATES, type AgentTemplate } from '../lib/templates'
 import { Button } from '../components/ui/Button'
@@ -19,6 +28,13 @@ import {
   Sparkles,
   BookOpen,
   X,
+  Cpu,
+  Layers,
+  Globe,
+  Sliders,
+  Key,
+  CheckCircle2,
+  AlertCircle,
 } from 'lucide-react'
 
 export interface AgentEditorViewProps {
@@ -27,6 +43,7 @@ export interface AgentEditorViewProps {
   onBack: () => void
   onStartCall: (agent: Agent) => void
   onOpenGuide?: () => void
+  onOpenProviders?: () => void
 }
 
 const COMMON_TIMEZONES = [
@@ -45,12 +62,30 @@ const COMMON_TIMEZONES = [
   'Australia/Sydney',
 ]
 
+const SUPPORTED_LANGUAGES = [
+  { code: 'en', label: 'English (US / Global)', flag: '🇺🇸' },
+  { code: 'en-IN', label: 'English (India)', flag: '🇮🇳' },
+  { code: 'ta-IN', label: 'Tamil (தமிழ்)', flag: '🇮🇳' },
+  { code: 'hi-IN', label: 'Hindi (हिंदी)', flag: '🇮🇳' },
+  { code: 'te-IN', label: 'Telugu (తెలుగు)', flag: '🇮🇳' },
+  { code: 'kn-IN', label: 'Kannada (ಕನ್ನಡ)', flag: '🇮🇳' },
+  { code: 'ml-IN', label: 'Malayalam (മലയാളം)', flag: '🇮🇳' },
+  { code: 'bn-IN', label: 'Bengali (বাংলা)', flag: '🇮🇳' },
+  { code: 'mr-IN', label: 'Marathi (मराठी)', flag: '🇮🇳' },
+]
+
+const INDIAN_ENGLISH_GUIDELINES = `\n\n[Indian English Conversational Guidelines]
+- Keep sentences concise, conversational, and direct.
+- Never use robotic fillers such as 'Regarding your query' or 'Kindly revert back'.
+- Confirm critical names, dates, or numbers respectfully and clearly.`
+
 export const AgentEditorView: React.FC<AgentEditorViewProps> = ({
   agentId,
   initialTemplate,
   onBack,
   onStartCall,
   onOpenGuide,
+  onOpenProviders,
 }) => {
   const isNew = !agentId
 
@@ -66,8 +101,24 @@ export const AgentEditorView: React.FC<AgentEditorViewProps> = ({
   const [silenceTimeoutSec, setSilenceTimeoutSec] = useState(12.0)
   const [maxDurationSec, setMaxDurationSec] = useState(600.0)
 
-  // Meta & Aux State
+  // Engine Architecture & Cascaded Cloud State
+  const [engine, setEngine] = useState<EngineType>('personaplex_s2s')
+  const [language, setLanguage] = useState('en')
+  const [sttProvider, setSttProvider] = useState('fake_stt')
+  const [sttModel, setSttModel] = useState('mock-fast-stt')
+  const [llmProvider, setLlmProvider] = useState('fake_llm')
+  const [llmModel, setLlmModel] = useState('mock-stream-llm')
+  const [llmTemperature, setLlmTemperature] = useState(0.7)
+  const [ttsProvider, setTtsProvider] = useState('fake_tts')
+  const [ttsModel, setTtsModel] = useState('mock-fast-tts')
+  const [ttsVoice, setTtsVoice] = useState('mock-alex')
+  const [turnStrategy, setTurnStrategy] = useState<'auto' | 'provider_eot' | 'vad_smart_turn'>('auto')
+  const [indianEnglishRules, setIndianEnglishRules] = useState(false)
+
+  // Meta & Catalog State
   const [voices, setVoices] = useState<VoicePreset[]>([])
+  const [catalog, setCatalog] = useState<ProviderManifest[]>([])
+  const [credentials, setCredentials] = useState<CredentialSummary[]>([])
   const [versions, setVersions] = useState<AgentVersion[]>([])
   const [showVersions, setShowVersions] = useState(false)
   const [showTemplatesModal, setShowTemplatesModal] = useState(false)
@@ -78,9 +129,11 @@ export const AgentEditorView: React.FC<AgentEditorViewProps> = ({
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
   const [successMessage, setSuccessMessage] = useState<string | null>(null)
 
-  // 1. Load Voices & Agent (if editing)
+  // 1. Load Voices, Catalog, Credentials & Agent (if editing)
   useEffect(() => {
     api.getVoices().then(setVoices).catch(console.error)
+    api.listProviderCatalog().then(setCatalog).catch(console.error)
+    api.listProviderCredentials().then(setCredentials).catch(console.error)
 
     if (agentId) {
       setIsLoading(true)
@@ -97,6 +150,29 @@ export const AgentEditorView: React.FC<AgentEditorViewProps> = ({
           setSilenceTimeoutSec(ag.silence_timeout_sec)
           setMaxDurationSec(ag.max_duration_sec)
           setVersions(vers)
+
+          // Load Engine B fields
+          if (ag.engine) setEngine(ag.engine)
+          if (ag.language) setLanguage(ag.language)
+          if (ag.pipeline_json && ag.pipeline_json !== '{}') {
+            try {
+              const spec = JSON.parse(ag.pipeline_json)
+              if (spec.stt?.provider_id) setSttProvider(spec.stt.provider_id)
+              if (spec.stt?.model) setSttModel(spec.stt.model)
+              if (spec.llm?.provider_id) setLlmProvider(spec.llm.provider_id)
+              if (spec.llm?.model) setLlmModel(spec.llm.model)
+              if (spec.llm?.temperature !== undefined) setLlmTemperature(spec.llm.temperature)
+              if (spec.tts?.provider_id) setTtsProvider(spec.tts.provider_id)
+              if (spec.tts?.model) setTtsModel(spec.tts.model)
+              if (spec.tts?.voice) setTtsVoice(spec.tts.voice)
+              if (spec.turn?.strategy) setTurnStrategy(spec.turn.strategy)
+            } catch (err) {
+              console.error('Failed to parse pipeline_json', err)
+            }
+          }
+          if (ag.system_prompt.includes('[Indian English Conversational Guidelines]')) {
+            setIndianEnglishRules(true)
+          }
         })
         .catch((err) => {
           setErrorMessage(err.message || 'Failed to load agent details')
@@ -153,17 +229,93 @@ export const AgentEditorView: React.FC<AgentEditorViewProps> = ({
     return () => clearTimeout(timer)
   }, [systemPrompt, greeting, ending, name, timezoneStr])
 
+  // Helper: check if provider has active credential
+  const hasCredential = (providerId: string) => {
+    if (providerId.startsWith('fake_')) return true
+    return credentials.some((c) => c.provider_id === providerId)
+  }
+
+  // Filter manifests by category
+  const sttManifests = catalog.filter((p) => p.kind === 'stt')
+  const llmManifests = catalog.filter((p) => p.kind === 'llm')
+  const ttsManifests = catalog.filter((p) => p.kind === 'tts')
+
+  // Handle Indian English Prompt Rules toggle
+  const toggleIndianEnglishRules = (enabled: boolean) => {
+    setIndianEnglishRules(enabled)
+    if (enabled) {
+      if (!systemPrompt.includes('[Indian English Conversational Guidelines]')) {
+        setSystemPrompt((prev) => prev.trim() + INDIAN_ENGLISH_GUIDELINES)
+      }
+    } else {
+      setSystemPrompt((prev) =>
+        prev.replace(INDIAN_ENGLISH_GUIDELINES, '').replace(/\n*\[Indian English Conversational Guidelines\][\s\S]*?clearly\./, '').trim()
+      )
+    }
+  }
+
+  // Handle STT Provider Change
+  const handleSttProviderChange = (pid: string) => {
+    setSttProvider(pid)
+    const manifest = catalog.find((p) => p.id === pid)
+    if (manifest) {
+      setSttModel(manifest.default_model || manifest.models[0]?.id || '')
+    }
+  }
+
+  // Handle LLM Provider Change
+  const handleLlmProviderChange = (pid: string) => {
+    setLlmProvider(pid)
+    const manifest = catalog.find((p) => p.id === pid)
+    if (manifest) {
+      setLlmModel(manifest.default_model || manifest.models[0]?.id || '')
+    }
+  }
+
+  // Handle TTS Provider Change
+  const handleTtsProviderChange = (pid: string) => {
+    setTtsProvider(pid)
+    const manifest = catalog.find((p) => p.id === pid)
+    if (manifest) {
+      setTtsModel(manifest.default_model || manifest.models[0]?.id || '')
+      setTtsVoice(manifest.default_voice || manifest.voices[0]?.id || 'default')
+    }
+  }
+
   // Save Draft
   const handleSaveDraft = async () => {
     setIsSaving(true)
     setErrorMessage(null)
     setSuccessMessage(null)
 
+    const pipelineSpec: CascadedPipelineSpec = {
+      stt: {
+        provider_id: sttProvider,
+        model: sttModel,
+        language: language,
+      },
+      llm: {
+        provider_id: llmProvider,
+        model: llmModel,
+        temperature: llmTemperature,
+      },
+      tts: {
+        provider_id: ttsProvider,
+        model: ttsModel,
+        voice: engine === 'cascaded_cloud' ? ttsVoice : voiceId,
+      },
+      turn: {
+        strategy: turnStrategy,
+      },
+    }
+    const pipelineJsonStr = JSON.stringify(pipelineSpec)
+    const effectiveVoiceId = engine === 'cascaded_cloud' ? ttsVoice : voiceId
+
     try {
       if (isNew) {
         const created = await api.createAgent({
           name: name.trim(),
-          voice_id: voiceId,
+          voice_id: effectiveVoiceId,
           greeting: greeting.trim(),
           agent_speaks_first: agentSpeaksFirst,
           system_prompt: systemPrompt.trim(),
@@ -171,6 +323,9 @@ export const AgentEditorView: React.FC<AgentEditorViewProps> = ({
           timezone_str: timezoneStr,
           silence_timeout_sec: silenceTimeoutSec,
           max_duration_sec: maxDurationSec,
+          engine: engine,
+          language: language,
+          pipeline_json: pipelineJsonStr,
         })
         setSuccessMessage('Agent created successfully.')
         setAgent(created)
@@ -179,7 +334,7 @@ export const AgentEditorView: React.FC<AgentEditorViewProps> = ({
       } else if (agent) {
         const updated = await api.updateAgent(agent.id, {
           name: name.trim(),
-          voice_id: voiceId,
+          voice_id: effectiveVoiceId,
           greeting: greeting.trim(),
           agent_speaks_first: agentSpeaksFirst,
           system_prompt: systemPrompt.trim(),
@@ -187,6 +342,9 @@ export const AgentEditorView: React.FC<AgentEditorViewProps> = ({
           timezone_str: timezoneStr,
           silence_timeout_sec: silenceTimeoutSec,
           max_duration_sec: maxDurationSec,
+          engine: engine,
+          language: language,
+          pipeline_json: pipelineJsonStr,
         })
         setAgent(updated)
         setSuccessMessage('Draft saved successfully.')
@@ -244,6 +402,24 @@ export const AgentEditorView: React.FC<AgentEditorViewProps> = ({
       setSystemPrompt(reverted.system_prompt)
       setEnding(reverted.ending)
       setTimezoneStr(reverted.timezone_str)
+      if (reverted.engine) setEngine(reverted.engine)
+      if (reverted.language) setLanguage(reverted.language)
+      if (reverted.pipeline_json && reverted.pipeline_json !== '{}') {
+        try {
+          const spec = JSON.parse(reverted.pipeline_json)
+          if (spec.stt?.provider_id) setSttProvider(spec.stt.provider_id)
+          if (spec.stt?.model) setSttModel(spec.stt.model)
+          if (spec.llm?.provider_id) setLlmProvider(spec.llm.provider_id)
+          if (spec.llm?.model) setLlmModel(spec.llm.model)
+          if (spec.llm?.temperature !== undefined) setLlmTemperature(spec.llm.temperature)
+          if (spec.tts?.provider_id) setTtsProvider(spec.tts.provider_id)
+          if (spec.tts?.model) setTtsModel(spec.tts.model)
+          if (spec.tts?.voice) setTtsVoice(spec.tts.voice)
+          if (spec.turn?.strategy) setTurnStrategy(spec.turn.strategy)
+        } catch (err) {
+          console.error('Failed to parse pipeline_json on revert', err)
+        }
+      }
       setSuccessMessage(`Configuration reverted to version ${verNum}.`)
       setShowVersions(false)
       const vers = await api.listVersions(agent.id)
@@ -256,7 +432,9 @@ export const AgentEditorView: React.FC<AgentEditorViewProps> = ({
   }
 
   const tokenCount = compileResult?.token_count ?? 0
-  const canPublish = tokenCount > 0 && tokenCount <= 350 && !isNew
+  const isEngineB = engine === 'cascaded_cloud'
+  // On Engine B, 350-token hard limit is relaxed; on Engine A, it is strictly enforced
+  const canPublish = !isNew && (isEngineB ? name.trim().length > 0 : (tokenCount > 0 && tokenCount <= 350))
 
   if (isLoading && !agent && !isNew) {
     return (
@@ -265,6 +443,11 @@ export const AgentEditorView: React.FC<AgentEditorViewProps> = ({
       </div>
     )
   }
+
+  // Selected manifests for current selections
+  const currentSttManifest = catalog.find((p) => p.id === sttProvider)
+  const currentLlmManifest = catalog.find((p) => p.id === llmProvider)
+  const currentTtsManifest = catalog.find((p) => p.id === ttsProvider)
 
   return (
     <div className="max-w-4xl mx-auto px-6 py-8 space-y-8">
@@ -287,6 +470,15 @@ export const AgentEditorView: React.FC<AgentEditorViewProps> = ({
                   ? `Published (v${agent.published_version})`
                   : `Draft (v${agent.current_version})`}
               </Badge>
+            )}
+            {isEngineB ? (
+              <span className="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-medium bg-emerald-50 text-emerald-700 border border-emerald-200">
+                Cascaded Cloud
+              </span>
+            ) : (
+              <span className="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-medium bg-purple-50 text-purple-700 border border-purple-200">
+                PersonaPlex S2S
+              </span>
             )}
           </div>
         </div>
@@ -329,7 +521,7 @@ export const AgentEditorView: React.FC<AgentEditorViewProps> = ({
               isLoading={isPublishing}
               disabled={!canPublish}
               onClick={handlePublish}
-              title={tokenCount > 350 ? 'Hard limit exceeded (>350 tokens)' : undefined}
+              title={!isEngineB && tokenCount > 350 ? 'Hard limit exceeded (>350 tokens)' : undefined}
             >
               Publish
             </Button>
@@ -378,7 +570,7 @@ export const AgentEditorView: React.FC<AgentEditorViewProps> = ({
                     <span className="text-[#9E9B93] text-[12px]">{ver.change_note || 'Snapshot'}</span>
                   </div>
                   <div className="text-[12px] text-[#6B6963] mt-0.5">
-                    Tokens: <span className="tabular-nums font-mono">{ver.token_count}</span> | Voice: {ver.voice_id} | Timezone: {ver.timezone_str}
+                    Engine: <strong className="font-medium text-[#1F1E1D]">{ver.engine || 'personaplex_s2s'}</strong> | Tokens: <span className="tabular-nums font-mono">{ver.token_count}</span> | Voice: {ver.voice_id} | Lang: {ver.language || 'en'}
                   </div>
                 </div>
                 {agent?.current_version !== ver.version_number && (
@@ -395,6 +587,66 @@ export const AgentEditorView: React.FC<AgentEditorViewProps> = ({
           </div>
         </div>
       )}
+
+      {/* Engine Architecture Switcher */}
+      <div className="bg-[#FFFFFF] border border-[rgba(31,30,29,0.08)] rounded-2xl p-5 shadow-xs space-y-3">
+        <div className="flex items-center justify-between">
+          <div>
+            <h2 className="text-[15px] font-semibold text-[#1F1E1D]">
+              Voice Engine Architecture
+            </h2>
+            <p className="text-[12px] text-[#6B6963]">
+              Switch between native PersonaPlex GPU full-duplex speech-to-speech or modular cloud STT → LLM → TTS
+            </p>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+          <button
+            type="button"
+            onClick={() => setEngine('personaplex_s2s')}
+            className={`p-4 rounded-xl border text-left transition-all cursor-pointer ${
+              engine === 'personaplex_s2s'
+                ? 'border-purple-500 bg-purple-50/40 ring-2 ring-purple-500/20 shadow-xs'
+                : 'border-[rgba(31,30,29,0.08)] bg-[#FAF9F5] hover:border-[rgba(31,30,29,0.18)]'
+            }`}
+          >
+            <div className="flex items-center justify-between mb-1.5">
+              <span className="font-semibold text-[14px] text-[#1F1E1D] flex items-center gap-2">
+                <Cpu className="w-4 h-4 text-purple-600" /> PersonaPlex S2S (GPU)
+              </span>
+              <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded bg-purple-100 text-purple-800">
+                Sub-100ms
+              </span>
+            </div>
+            <p className="text-[12px] text-[#6B6963]">
+              Native speech-to-speech neural model on NVIDIA GPU. English only, 18 official voice conditioning presets, strict &le;350 token prompt limit.
+            </p>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setEngine('cascaded_cloud')}
+            className={`p-4 rounded-xl border text-left transition-all cursor-pointer ${
+              engine === 'cascaded_cloud'
+                ? 'border-emerald-500 bg-emerald-50/40 ring-2 ring-emerald-500/20 shadow-xs'
+                : 'border-[rgba(31,30,29,0.08)] bg-[#FAF9F5] hover:border-[rgba(31,30,29,0.18)]'
+            }`}
+          >
+            <div className="flex items-center justify-between mb-1.5">
+              <span className="font-semibold text-[14px] text-[#1F1E1D] flex items-center gap-2">
+                <Layers className="w-4 h-4 text-emerald-600" /> Cascaded Cloud (STT + LLM + TTS)
+              </span>
+              <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded bg-emerald-100 text-emerald-800">
+                Multilingual
+              </span>
+            </div>
+            <p className="text-[12px] text-[#6B6963]">
+              Modular streaming pipeline using user API keys (Deepgram, Sarvam, OpenAI, Anthropic, Cartesia, ElevenLabs). Multilingual, Tamil/Hindi, no GPU required.
+            </p>
+          </button>
+        </div>
+      </div>
 
       {/* Templates Quick Selector Modal */}
       {showTemplatesModal && (
@@ -482,7 +734,7 @@ export const AgentEditorView: React.FC<AgentEditorViewProps> = ({
         </div>
       )}
 
-      {/* Main Form: The 6 Lean Agent Fields */}
+      {/* Main Form Fields */}
       <div className="bg-[#FFFFFF] border border-[rgba(31,30,29,0.08)] rounded-2xl p-6 sm:p-8 space-y-8 shadow-xs">
         {/* Field 1: Name */}
         <div className="space-y-1.5">
@@ -496,43 +748,341 @@ export const AgentEditorView: React.FC<AgentEditorViewProps> = ({
           />
         </div>
 
-        {/* Field 2: Voice Preset */}
-        <div className="space-y-2">
-          <div className="flex items-center justify-between">
-            <label className="text-[13px] font-medium text-[#1F1E1D]">
-              Voice Preset (PersonaPlex 18 Upstream Embeddings)
-            </label>
-            <span className="text-[12px] text-[#9E9B93]">Zero hallucinated voices</span>
-          </div>
+        {/* Engine A: PersonaPlex 18 Presets */}
+        {!isEngineB && (
+          <div className="space-y-2">
+            <div className="flex items-center justify-between">
+              <label className="text-[13px] font-medium text-[#1F1E1D]">
+                Voice Preset (PersonaPlex 18 Official Conditioning Presets)
+              </label>
+              <span className="text-[12px] text-[#9E9B93]">Zero hallucinated voices</span>
+            </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2.5">
-            {voices.map((v) => {
-              const isSelected = voiceId === v.id
-              return (
-                <button
-                  key={v.id}
-                  type="button"
-                  onClick={() => setVoiceId(v.id)}
-                  className={`text-left p-3 rounded-xl border transition-all text-[13px] ${
-                    isSelected
-                      ? 'border-[#C2603F] bg-[#FBEFEA] shadow-xs'
-                      : 'border-[rgba(31,30,29,0.08)] bg-[#FAF9F5] hover:border-[rgba(31,30,29,0.18)]'
-                  }`}
-                >
-                  <div className="flex items-center justify-between mb-1">
-                    <span className="font-semibold text-[#1F1E1D] flex items-center gap-1.5">
-                      <Volume2 className={`w-3.5 h-3.5 ${isSelected ? 'text-[#C2603F]' : 'text-[#6B6963]'}`} />
-                      {v.name}
-                    </span>
-                    <span className="text-[11px] text-[#9E9B93] uppercase font-mono">{v.gender[0]}</span>
-                  </div>
-                  <div className="text-[12px] text-[#6B6963] truncate">{v.speaking_style}</div>
-                  <div className="text-[11px] text-[#9E9B93] mt-1">{v.accent}</div>
-                </button>
-              )
-            })}
+            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2.5">
+              {voices.map((v) => {
+                const isSelected = voiceId === v.id
+                return (
+                  <button
+                    key={v.id}
+                    type="button"
+                    onClick={() => setVoiceId(v.id)}
+                    className={`text-left p-3 rounded-xl border transition-all text-[13px] cursor-pointer ${
+                      isSelected
+                        ? 'border-[#C2603F] bg-[#FBEFEA] shadow-xs'
+                        : 'border-[rgba(31,30,29,0.08)] bg-[#FAF9F5] hover:border-[rgba(31,30,29,0.18)]'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between mb-1">
+                      <span className="font-semibold text-[#1F1E1D] flex items-center gap-1.5">
+                        <Volume2 className={`w-3.5 h-3.5 ${isSelected ? 'text-[#C2603F]' : 'text-[#6B6963]'}`} />
+                        {v.name}
+                      </span>
+                      <span className="text-[11px] text-[#9E9B93] uppercase font-mono">{v.gender[0]}</span>
+                    </div>
+                    <div className="text-[12px] text-[#6B6963] truncate">{v.speaking_style}</div>
+                    <div className="text-[11px] text-[#9E9B93] mt-1">{v.accent}</div>
+                  </button>
+                )
+              })}
+            </div>
           </div>
-        </div>
+        )}
+
+        {/* Engine B: Cascaded Cloud Pipeline Studio */}
+        {isEngineB && (
+          <div className="space-y-6 p-5 bg-[#FAF9F5] border border-[rgba(31,30,29,0.08)] rounded-xl">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-[rgba(31,30,29,0.08)] pb-3">
+              <div>
+                <h3 className="text-[15px] font-semibold text-[#1F1E1D] flex items-center gap-2">
+                  <Sliders className="w-4 h-4 text-emerald-600" />
+                  Cascaded Cloud Pipeline Configuration
+                </h3>
+                <p className="text-[12px] text-[#6B6963]">
+                  Configure your streaming STT, LLM, TTS providers, voice, and conversational turn strategy.
+                </p>
+              </div>
+              {onOpenProviders && (
+                <button
+                  type="button"
+                  onClick={onOpenProviders}
+                  className="text-[12px] text-[#C2603F] hover:underline flex items-center gap-1 font-medium cursor-pointer self-start sm:self-auto"
+                >
+                  <Key className="w-3.5 h-3.5" /> Manage API Keys ({credentials.length})
+                </button>
+              )}
+            </div>
+
+            {/* Language & Indian English Rules Toggle */}
+            <div className="space-y-3">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div className="space-y-1">
+                  <label className="text-[13px] font-medium text-[#1F1E1D] flex items-center gap-1.5">
+                    <Globe className="w-3.5 h-3.5 text-[#6B6963]" /> Target Language & Dialect
+                  </label>
+                  <div className="flex flex-wrap gap-2 pt-1">
+                    {SUPPORTED_LANGUAGES.map((lang) => {
+                      const isSelected = language === lang.code
+                      return (
+                        <button
+                          key={lang.code}
+                          type="button"
+                          onClick={() => setLanguage(lang.code)}
+                          className={`px-3 py-1.5 rounded-lg text-[12px] font-medium border transition-all cursor-pointer flex items-center gap-1.5 ${
+                            isSelected
+                              ? 'border-emerald-600 bg-emerald-50 text-emerald-900 shadow-2xs font-semibold'
+                              : 'border-[rgba(31,30,29,0.1)] bg-[#FFFFFF] text-[#6B6963] hover:border-[rgba(31,30,29,0.2)]'
+                          }`}
+                        >
+                          <span>{lang.flag}</span>
+                          <span>{lang.label}</span>
+                        </button>
+                      )
+                    })}
+                  </div>
+                </div>
+              </div>
+
+              {/* Indian English Dialogue Rules Toggle */}
+              <div className="p-3 bg-[#FFFFFF] border border-[rgba(31,30,29,0.08)] rounded-xl flex items-center justify-between">
+                <div className="space-y-0.5">
+                  <span className="text-[13px] font-medium text-[#1F1E1D] block">
+                    Indian English Conversational Rules
+                  </span>
+                  <span className="text-[12px] text-[#6B6963] block">
+                    Suppresses mechanical phrasing like 'Regarding your query'; ensures warm, concise dialogue.
+                  </span>
+                </div>
+                <label className="relative inline-flex items-center cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={indianEnglishRules}
+                    onChange={(e) => toggleIndianEnglishRules(e.target.checked)}
+                    className="sr-only peer"
+                  />
+                  <div className="w-10 h-6 bg-gray-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-emerald-600"></div>
+                </label>
+              </div>
+            </div>
+
+            {/* Pipeline Stage 1: STT (Speech-to-Text) */}
+            <div className="p-4 bg-[#FFFFFF] border border-[rgba(31,30,29,0.08)] rounded-xl space-y-3">
+              <div className="flex items-center justify-between">
+                <span className="text-[13px] font-semibold text-[#1F1E1D] flex items-center gap-1.5">
+                  <span className="w-5 h-5 rounded-full bg-emerald-100 text-emerald-800 text-[11px] font-bold flex items-center justify-center">1</span>
+                  Speech-to-Text (STT)
+                </span>
+                {hasCredential(sttProvider) ? (
+                  <span className="inline-flex items-center gap-1 text-[11px] font-medium text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
+                    <CheckCircle2 className="w-3 h-3" /> Credential Active
+                  </span>
+                ) : (
+                  <span className="inline-flex items-center gap-1 text-[11px] font-medium text-amber-700 bg-amber-50 px-2 py-0.5 rounded border border-amber-200">
+                    <AlertCircle className="w-3 h-3" /> Needs API Key
+                  </span>
+                )}
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div className="space-y-1">
+                  <label className="text-[12px] text-[#6B6963]">STT Provider</label>
+                  <select
+                    value={sttProvider}
+                    onChange={(e) => handleSttProviderChange(e.target.value)}
+                    className="w-full h-9 px-2.5 text-[13px] bg-[#FAF9F5] border border-[rgba(31,30,29,0.12)] rounded-lg text-[#1F1E1D] focus:ring-2 focus:ring-emerald-500 focus:outline-none"
+                  >
+                    {sttManifests.map((p) => (
+                      <option key={p.id} value={p.id}>
+                        {p.display_name} {p.streaming ? '(Streaming)' : ''}
+                      </option>
+                    ))}
+                    {sttManifests.length === 0 && (
+                      <option value="fake_stt">Pipecat Fake STT (Offline Mock)</option>
+                    )}
+                  </select>
+                </div>
+
+                <div className="space-y-1">
+                  <label className="text-[12px] text-[#6B6963]">STT Model</label>
+                  {currentSttManifest && currentSttManifest.models.length > 0 ? (
+                    <select
+                      value={sttModel}
+                      onChange={(e) => setSttModel(e.target.value)}
+                      className="w-full h-9 px-2.5 text-[13px] bg-[#FAF9F5] border border-[rgba(31,30,29,0.12)] rounded-lg text-[#1F1E1D] focus:ring-2 focus:ring-emerald-500 focus:outline-none"
+                    >
+                      {currentSttManifest.models.map((m) => (
+                        <option key={m.id} value={m.id}>
+                          {m.name} ({m.latency_profile || 'fast'})
+                        </option>
+                      ))}
+                    </select>
+                  ) : (
+                    <input
+                      type="text"
+                      value={sttModel}
+                      onChange={(e) => setSttModel(e.target.value)}
+                      className="w-full h-9 px-2.5 text-[13px] bg-[#FAF9F5] border border-[rgba(31,30,29,0.12)] rounded-lg text-[#1F1E1D] focus:ring-2 focus:ring-emerald-500 focus:outline-none"
+                    />
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {/* Pipeline Stage 2: LLM (Language Model) */}
+            <div className="p-4 bg-[#FFFFFF] border border-[rgba(31,30,29,0.08)] rounded-xl space-y-3">
+              <div className="flex items-center justify-between">
+                <span className="text-[13px] font-semibold text-[#1F1E1D] flex items-center gap-1.5">
+                  <span className="w-5 h-5 rounded-full bg-emerald-100 text-emerald-800 text-[11px] font-bold flex items-center justify-center">2</span>
+                  LLM Intelligence & Routing
+                </span>
+                {hasCredential(llmProvider) ? (
+                  <span className="inline-flex items-center gap-1 text-[11px] font-medium text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
+                    <CheckCircle2 className="w-3 h-3" /> Credential Active
+                  </span>
+                ) : (
+                  <span className="inline-flex items-center gap-1 text-[11px] font-medium text-amber-700 bg-amber-50 px-2 py-0.5 rounded border border-amber-200">
+                    <AlertCircle className="w-3 h-3" /> Needs API Key
+                  </span>
+                )}
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div className="space-y-1">
+                  <label className="text-[12px] text-[#6B6963]">LLM Provider</label>
+                  <select
+                    value={llmProvider}
+                    onChange={(e) => handleLlmProviderChange(e.target.value)}
+                    className="w-full h-9 px-2.5 text-[13px] bg-[#FAF9F5] border border-[rgba(31,30,29,0.12)] rounded-lg text-[#1F1E1D] focus:ring-2 focus:ring-emerald-500 focus:outline-none"
+                  >
+                    {llmManifests.map((p) => (
+                      <option key={p.id} value={p.id}>
+                        {p.display_name}
+                      </option>
+                    ))}
+                    {llmManifests.length === 0 && (
+                      <option value="fake_llm">Pipecat Fake LLM (Offline Mock)</option>
+                    )}
+                  </select>
+                </div>
+
+                <div className="space-y-1">
+                  <label className="text-[12px] text-[#6B6963]">Model</label>
+                  {currentLlmManifest && currentLlmManifest.models.length > 0 ? (
+                    <select
+                      value={llmModel}
+                      onChange={(e) => setLlmModel(e.target.value)}
+                      className="w-full h-9 px-2.5 text-[13px] bg-[#FAF9F5] border border-[rgba(31,30,29,0.12)] rounded-lg text-[#1F1E1D] focus:ring-2 focus:ring-emerald-500 focus:outline-none"
+                    >
+                      {currentLlmManifest.models.map((m) => (
+                        <option key={m.id} value={m.id}>
+                          {m.name}
+                        </option>
+                      ))}
+                    </select>
+                  ) : (
+                    <input
+                      type="text"
+                      value={llmModel}
+                      onChange={(e) => setLlmModel(e.target.value)}
+                      className="w-full h-9 px-2.5 text-[13px] bg-[#FAF9F5] border border-[rgba(31,30,29,0.12)] rounded-lg text-[#1F1E1D] focus:ring-2 focus:ring-emerald-500 focus:outline-none"
+                    />
+                  )}
+                </div>
+
+                <div className="space-y-1">
+                  <div className="flex items-center justify-between">
+                    <label className="text-[12px] text-[#6B6963]">Temperature</label>
+                    <span className="text-[12px] font-mono font-medium text-[#1F1E1D]">{llmTemperature.toFixed(2)}</span>
+                  </div>
+                  <input
+                    type="range"
+                    min="0"
+                    max="1"
+                    step="0.05"
+                    value={llmTemperature}
+                    onChange={(e) => setLlmTemperature(parseFloat(e.target.value))}
+                    className="w-full accent-emerald-600 mt-1"
+                  />
+                </div>
+              </div>
+            </div>
+
+            {/* Pipeline Stage 3: TTS (Text-to-Speech) */}
+            <div className="p-4 bg-[#FFFFFF] border border-[rgba(31,30,29,0.08)] rounded-xl space-y-3">
+              <div className="flex items-center justify-between">
+                <span className="text-[13px] font-semibold text-[#1F1E1D] flex items-center gap-1.5">
+                  <span className="w-5 h-5 rounded-full bg-emerald-100 text-emerald-800 text-[11px] font-bold flex items-center justify-center">3</span>
+                  Text-to-Speech (TTS)
+                </span>
+                {hasCredential(ttsProvider) ? (
+                  <span className="inline-flex items-center gap-1 text-[11px] font-medium text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
+                    <CheckCircle2 className="w-3 h-3" /> Credential Active
+                  </span>
+                ) : (
+                  <span className="inline-flex items-center gap-1 text-[11px] font-medium text-amber-700 bg-amber-50 px-2 py-0.5 rounded border border-amber-200">
+                    <AlertCircle className="w-3 h-3" /> Needs API Key
+                  </span>
+                )}
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div className="space-y-1">
+                  <label className="text-[12px] text-[#6B6963]">TTS Provider</label>
+                  <select
+                    value={ttsProvider}
+                    onChange={(e) => handleTtsProviderChange(e.target.value)}
+                    className="w-full h-9 px-2.5 text-[13px] bg-[#FAF9F5] border border-[rgba(31,30,29,0.12)] rounded-lg text-[#1F1E1D] focus:ring-2 focus:ring-emerald-500 focus:outline-none"
+                  >
+                    {ttsManifests.map((p) => (
+                      <option key={p.id} value={p.id}>
+                        {p.display_name}
+                      </option>
+                    ))}
+                    {ttsManifests.length === 0 && (
+                      <option value="fake_tts">Pipecat Fake TTS (Offline Mock)</option>
+                    )}
+                  </select>
+                </div>
+
+                <div className="space-y-1">
+                  <label className="text-[12px] text-[#6B6963]">Voice</label>
+                  {currentTtsManifest && currentTtsManifest.voices.length > 0 ? (
+                    <select
+                      value={ttsVoice}
+                      onChange={(e) => setTtsVoice(e.target.value)}
+                      className="w-full h-9 px-2.5 text-[13px] bg-[#FAF9F5] border border-[rgba(31,30,29,0.12)] rounded-lg text-[#1F1E1D] focus:ring-2 focus:ring-emerald-500 focus:outline-none"
+                    >
+                      {currentTtsManifest.voices.map((v) => (
+                        <option key={v.id} value={v.id}>
+                          {v.name} ({v.gender || 'neutral'})
+                        </option>
+                      ))}
+                    </select>
+                  ) : (
+                    <input
+                      type="text"
+                      value={ttsVoice}
+                      onChange={(e) => setTtsVoice(e.target.value)}
+                      className="w-full h-9 px-2.5 text-[13px] bg-[#FAF9F5] border border-[rgba(31,30,29,0.12)] rounded-lg text-[#1F1E1D] focus:ring-2 focus:ring-emerald-500 focus:outline-none"
+                    />
+                  )}
+                </div>
+
+                <div className="space-y-1">
+                  <label className="text-[12px] text-[#6B6963]">Turn Detection Strategy</label>
+                  <select
+                    value={turnStrategy}
+                    onChange={(e) => setTurnStrategy(e.target.value as any)}
+                    className="w-full h-9 px-2.5 text-[13px] bg-[#FAF9F5] border border-[rgba(31,30,29,0.12)] rounded-lg text-[#1F1E1D] focus:ring-2 focus:ring-emerald-500 focus:outline-none"
+                  >
+                    <option value="auto">Adaptive Auto-Turn</option>
+                    <option value="provider_eot">Provider Native End-of-Turn</option>
+                    <option value="vad_smart_turn">Silero VAD + Smart Turn</option>
+                  </select>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Field 3: Greeting */}
         <div className="space-y-3">
@@ -542,7 +1092,13 @@ export const AgentEditorView: React.FC<AgentEditorViewProps> = ({
             value={greeting}
             onChange={(e) => setGreeting(e.target.value)}
             rows={2}
-            placeholder="Hello! Thank you for calling Metro Health. How can I help you today?"
+            placeholder={
+              language === 'ta-IN'
+                ? 'Vanakkam! Metro Health-ku azhaithadharku nandri. Naan ungaluku epdi udhavalam?'
+                : language === 'hi-IN'
+                ? 'Namaste! Metro Health me call karne ke liye dhanyavad. Main aapki kya madad kar sakta hoon?'
+                : 'Hello! Thank you for calling Metro Health. How can I help you today?'
+            }
           />
           <div className="flex items-center gap-3">
             <label className="inline-flex items-center gap-2 cursor-pointer select-none text-[13px] text-[#1F1E1D]">
@@ -565,7 +1121,9 @@ export const AgentEditorView: React.FC<AgentEditorViewProps> = ({
                 System Prompt (Spoken Persona Instructions)
               </label>
               <span className="text-[12px] text-[#9E9B93]">
-                Wrapped as <span className="font-mono text-[11px]">&lt;system&gt; &#123;prompt&#125; &lt;system&gt;</span>
+                {isEngineB
+                  ? 'Fed directly to streaming LLM. Large prompts supported (up to 128k context).'
+                  : 'Wrapped as <system> {prompt} <system>. Hard limit of 350 tokens.'}
               </span>
             </div>
             <div className="flex items-center gap-2">
@@ -573,7 +1131,7 @@ export const AgentEditorView: React.FC<AgentEditorViewProps> = ({
                 <button
                   type="button"
                   onClick={onOpenGuide}
-                  className="text-[12px] text-[#C2603F] hover:underline flex items-center gap-1 font-medium"
+                  className="text-[12px] text-[#C2603F] hover:underline flex items-center gap-1 font-medium cursor-pointer"
                 >
                   <BookOpen className="w-3.5 h-3.5" />
                   Prompting Guide
@@ -599,11 +1157,25 @@ export const AgentEditorView: React.FC<AgentEditorViewProps> = ({
 
           {/* Token Meter Live Feedback */}
           <div className="p-4 bg-[#FAF9F5] border border-[rgba(31,30,29,0.06)] rounded-xl space-y-2">
-            <TokenMeter
-              tokenCount={tokenCount}
-              recommendedLimit={150}
-              hardLimit={350}
-            />
+            {isEngineB ? (
+              <div className="flex items-center justify-between text-[13px]">
+                <div className="flex items-center gap-2">
+                  <span className="font-semibold text-[#1F1E1D]">Prompt Tokens:</span>
+                  <span className="font-mono tabular-nums font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
+                    {tokenCount} tokens
+                  </span>
+                </div>
+                <span className="text-[12px] text-emerald-700 font-medium flex items-center gap-1">
+                  <CheckCircle2 className="w-3.5 h-3.5" /> 350-token hard limit relaxed for Cloud LLMs
+                </span>
+              </div>
+            ) : (
+              <TokenMeter
+                tokenCount={tokenCount}
+                recommendedLimit={150}
+                hardLimit={350}
+              />
+            )}
             {compileResult && (
               <div className="text-[12px] text-[#6B6963] flex items-center justify-between font-mono pt-1">
                 <span>{compileResult.local_time_line}</span>
@@ -646,7 +1218,13 @@ export const AgentEditorView: React.FC<AgentEditorViewProps> = ({
             hint="Trigger phrase detected by EndOfCallDetector to gracefully hang up"
             value={ending}
             onChange={(e) => setEnding(e.target.value)}
-            placeholder="e.g. Thanks for calling, have a wonderful day! Goodbye!"
+            placeholder={
+              language === 'ta-IN'
+                ? 'Nandri, vanakkam!'
+                : language === 'hi-IN'
+                ? 'Aapka din shubh ho, dhanyavad!'
+                : 'e.g. Thanks for calling, have a wonderful day! Goodbye!'
+            }
           />
         </div>
 

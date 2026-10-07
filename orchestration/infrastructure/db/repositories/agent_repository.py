@@ -39,6 +39,9 @@ class SqlAlchemyAgentRepository(AgentRepository):
             silence_timeout_sec=float(rec.draft_end_silence_sec),
             max_duration_sec=float(rec.draft_max_duration_sec),
             timezone_str=rec.draft_timezone,
+            engine=getattr(rec, "draft_engine", "personaplex_s2s") or "personaplex_s2s",
+            language=getattr(rec, "draft_language", "en") or "en",
+            pipeline_json=getattr(rec, "draft_pipeline_json", "{}") or "{}",
             status=AgentStatus(rec.status),
             current_version=rec.current_version_no,
             published_version=pub_ver,
@@ -64,6 +67,9 @@ class SqlAlchemyAgentRepository(AgentRepository):
             timezone_str=rec.timezone,
             compiled_prompt=rec.compiled_prompt or "",
             token_count=rec.compiled_token_count,
+            engine=getattr(rec, "engine", "personaplex_s2s") or "personaplex_s2s",
+            language=getattr(rec, "language", "en") or "en",
+            pipeline_json=getattr(rec, "pipeline_json", "{}") or "{}",
             created_at=rec.created_at,
             change_note=rec.change_note,
         )
@@ -105,6 +111,9 @@ class SqlAlchemyAgentRepository(AgentRepository):
                 draft_end_silence_sec=int(agent.silence_timeout_sec),
                 draft_max_duration_sec=int(agent.max_duration_sec),
                 draft_timezone=agent.timezone_str,
+                draft_engine=agent.engine,
+                draft_language=agent.language,
+                draft_pipeline_json=agent.pipeline_json,
                 created_at=agent.created_at,
                 updated_at=agent.updated_at,
             )
@@ -123,6 +132,9 @@ class SqlAlchemyAgentRepository(AgentRepository):
             record.draft_end_silence_sec = int(agent.silence_timeout_sec)
             record.draft_max_duration_sec = int(agent.max_duration_sec)
             record.draft_timezone = agent.timezone_str
+            record.draft_engine = agent.engine
+            record.draft_language = agent.language
+            record.draft_pipeline_json = agent.pipeline_json
             record.updated_at = agent.updated_at
 
         await self.session.commit()
@@ -169,6 +181,9 @@ class SqlAlchemyAgentRepository(AgentRepository):
             end_silence_sec=int(version.silence_timeout_sec),
             max_duration_sec=int(version.max_duration_sec),
             timezone=version.timezone_str,
+            engine=version.engine,
+            language=version.language,
+            pipeline_json=version.pipeline_json,
             compiled_prompt=version.compiled_prompt,
             compiled_token_count=version.token_count,
             change_note=version.change_note or "",

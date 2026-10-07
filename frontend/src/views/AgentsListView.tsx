@@ -127,7 +127,7 @@ export const AgentsListView: React.FC<AgentsListViewProps> = ({
               >
                 <Monogram name={agent.name} size="lg" />
                 <div className="space-y-1">
-                  <div className="flex items-center gap-2.5 flex-wrap">
+                  <div className="flex items-center gap-2 flex-wrap">
                     <span className="text-[16px] font-semibold text-[#1F1E1D] hover:text-[#C2603F] transition-colors">
                       {agent.name}
                     </span>
@@ -139,6 +139,20 @@ export const AgentsListView: React.FC<AgentsListViewProps> = ({
                         ? `Published (v${agent.published_version})`
                         : `Draft (v${agent.current_version})`}
                     </Badge>
+                    {agent.engine === 'cascaded_cloud' ? (
+                      <span className="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-medium bg-emerald-50 text-emerald-700 border border-emerald-200">
+                        Cascaded Cloud
+                      </span>
+                    ) : (
+                      <span className="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-medium bg-purple-50 text-purple-700 border border-purple-200">
+                        PersonaPlex S2S
+                      </span>
+                    )}
+                    {agent.language && agent.language !== 'en' && (
+                      <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase bg-amber-50 text-amber-700 border border-amber-200">
+                        {agent.language}
+                      </span>
+                    )}
                   </div>
                   <p className="text-[13px] text-[#6B6963] line-clamp-1 max-w-xl">
                     {agent.system_prompt}

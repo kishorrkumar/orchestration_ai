@@ -1,0 +1,43 @@
+id: deepgram_tts
+kind: tts
+display_name: Deepgram Aura
+description: Natural conversational speech synthesis with sub-200ms latency.
+docs_url: https://developers.deepgram.com/docs/text-to-speech
+auth_fields:
+  - name: api_key
+    label: Deepgram API Key
+    field_type: password
+    required: true
+    placeholder: Token abcdef123456...
+    description: API key from console.deepgram.com
+supported_languages:
+  - en-US
+native_sample_rates:
+  - 16000
+  - 24000
+  - 8000
+streaming: true
+native_eot: false
+default_model: aura
+default_voice: aura-asteria-en
+model_list_type: static
+models:
+  - id: aura
+    name: Deepgram Aura v1
+    description: Conversational low-latency text-to-speech.
+    latency_profile: fast
+    last_verified: "2026-10-01"
+voices:
+  - id: aura-asteria-en
+    name: Asteria (Conversational Female)
+    gender: female
+    language: en-US
+  - id: aura-luna-en
+    name: Luna (Gentle Female)
+    gender: female
+    language: en-US
+  - id: aura-orion-en
+    name: Orion (Warm Male)
+    gender: male
+    language: en-US
+pipecat_service: pipecat.services.deepgram.tts.DeepgramTTSService
