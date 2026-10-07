@@ -101,6 +101,10 @@ class EndOfCallDetector:
         if not self.is_active:
             return False
 
+        # Guard: Ignore closer detection during initial greeting / opening turn (first 15s)
+        if (now - self.session_start_time) < 15.0:
+            return False
+
         self.last_speech_time = now
         self.agent_rolling_text += token
 

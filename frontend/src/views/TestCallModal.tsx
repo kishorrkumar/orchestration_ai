@@ -146,6 +146,7 @@ export const TestCallModal: React.FC<TestCallModalProps> = ({ agent, onClose }) 
   // 2. Initialize WebSocket & Web Audio Streaming with AudioWorklet & Jitter Buffer
   useEffect(() => {
     let isCleanedUp = false
+    let pingInterval: ReturnType<typeof setInterval> | null = null
 
     async function startCall() {
       try {
@@ -195,6 +196,13 @@ export const TestCallModal: React.FC<TestCallModalProps> = ({ agent, onClose }) 
             })
           )
         }
+
+        // Keepalive heartbeat every 3.0s to ensure cloud reverse proxies never timeout the connection
+        pingInterval = setInterval(() => {
+          if (!isCleanedUp && ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({ type: 'ping' }))
+          }
+        }, 3000)
 
         ws.onmessage = async (event) => {
           if (isCleanedUp) return
@@ -453,6 +461,9 @@ export const TestCallModal: React.FC<TestCallModalProps> = ({ agent, onClose }) 
 
     return () => {
       isCleanedUp = true
+      if (pingInterval) {
+        clearInterval(pingInterval)
+      }
       cleanupAudio()
       if (wsRef.current) {
         wsRef.current.close()

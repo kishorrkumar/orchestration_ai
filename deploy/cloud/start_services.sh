@@ -165,6 +165,26 @@ try:
         src = src.replace(old_close, new_close)
         modified = True
 
+    # Fix 6: Protect ws.send_bytes with send_lock and protect opus_reader append against corrupt packet crashes
+    if 'send_lock = asyncio.Lock()' not in src:
+        src = src.replace(
+            'opus_reader.append_bytes(payload)',
+            'try:\n                            opus_reader.append_bytes(payload)\n                        except Exception as e:\n                            clog.log(\"warning\", f\"opus_reader decode warning: {e}\")'
+        )
+        src = src.replace(
+            'clog.log("info", "connection closed")',
+            'clog.log("info", "connection closed")\n\n        send_lock = asyncio.Lock()'
+        )
+        src = src.replace(
+            'await ws.send_bytes(msg)',
+            'async with send_lock:\n                                await ws.send_bytes(msg)'
+        )
+        src = src.replace(
+            'await ws.send_bytes(b"\\x01" + msg)',
+            'async with send_lock:\n                        await ws.send_bytes(b"\\x01" + msg)'
+        )
+        modified = True
+
     if modified:
         with open(server_path, 'w', encoding='utf-8') as f:
             f.write(src)

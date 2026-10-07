@@ -298,9 +298,11 @@ async def voice_v2_endpoint(
     SESSION_DEBUG_LOGS[call_session_id] = telemetry
 
     # 4. Initialize EndOfCallDetector
+    # Set silence timeout to at least 120 seconds for interactive testing so caller is never cut off
+    effective_silence_sec = max(120.0, float(end_silence_sec)) if end_silence_sec else 120.0
     detector = EndOfCallDetector(
         ending_text=ending_text,
-        silence_timeout_sec=end_silence_sec,
+        silence_timeout_sec=effective_silence_sec,
         max_duration_sec=max_duration_sec,
     )
 
@@ -642,6 +644,7 @@ async def voice_v2_endpoint(
 
                 term_reason = detector.check_termination(time.time())
                 if term_reason:
+                    logger.warning(f"[VoiceSession {call_session_id}] EndOfCallDetector termination triggered: {term_reason}")
                     try:
                         await websocket.send_json({
                             "type": "call_ended",
