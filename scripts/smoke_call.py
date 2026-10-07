@@ -41,6 +41,31 @@ def generate_synthetic_query_speech(sr: int = 16000, duration_sec: float = 2.0) 
     return audio.astype(np.float32)
 
 
+def detect_repetition_loops(transcript_text: str, n_gram_size: int = 4, max_repeats: int = 3) -> bool:
+    """
+    Detects degenerative repetition loops in model transcript.
+    Returns True if any n-gram sequence is repeated >= max_repeats consecutively.
+    """
+    words = transcript_text.lower().split()
+    if len(words) < n_gram_size * max_repeats:
+        return False
+
+    for i in range(len(words) - n_gram_size + 1):
+        ngram = tuple(words[i : i + n_gram_size])
+        repeats = 1
+        j = i + n_gram_size
+        while j + n_gram_size <= len(words):
+            next_ngram = tuple(words[j : j + n_gram_size])
+            if next_ngram == ngram:
+                repeats += 1
+                if repeats >= max_repeats:
+                    return True
+                j += n_gram_size
+            else:
+                break
+    return False
+
+
 async def run_smoke_call(
     url: str,
     agent_id: str,
@@ -49,6 +74,7 @@ async def run_smoke_call(
     sample_rate: int = 16000,
     max_wait_sec: float = 30.0,
     token: str | None = None,
+    soak_duration_sec: float | None = None,
 ):
     print(f"\n=======================================================")
     print(f" Starting PersonaPlex Voice Smoke Call")
@@ -173,33 +199,89 @@ async def run_smoke_call(
 
             # 4. Record agent response
             reply_start_wall = time.time()
-            while time.time() - reply_start_wall < max_wait_sec:
-                try:
-                    res = await asyncio.wait_for(ws.recv(), timeout=1.5)
-                    now = time.perf_counter()
+            if soak_duration_sec and soak_duration_sec > 0:
+                print(f"\n--- Soak Mode Active: Maintaining call for {soak_duration_sec:.1f}s ---")
+                soak_start = time.time()
+                last_ping = time.time()
+                last_user_query = time.time()
+                turn_idx = 0
+                simulated_queries = [
+                    "What is your favorite thing about cricket?",
+                    "Do you prefer hot ginger chai or filter coffee?",
+                    "Tell me about good Bollywood movies you like.",
+                    "How is the weather where you are today?",
+                    "What music do you listen to while working?",
+                ]
 
-                    if isinstance(res, bytes) and len(res) > 0:
-                        if t_first_reply_audio == 0.0:
-                            t_first_reply_audio = now
-                        i16 = np.frombuffer(res, dtype=np.int16)
-                        f32 = i16.astype(np.float32) / 32768.0
-                        agent_audio_chunks.append(f32)
+                while time.time() - soak_start < soak_duration_sec:
+                    now = time.time()
+                    # Periodic ping keepalive
+                    if now - last_ping >= 3.0:
+                        await ws.send(json.dumps({"type": "ping"}))
+                        last_ping = now
 
-                    elif isinstance(res, str):
-                        data = json.loads(res)
-                        mtype = data.get("type")
-                        if mtype == "transcript":
-                            tok = data.get("text", "")
-                            current_agent_text.append(tok)
-                            all_assistant_tokens.append(tok)
-                            print(tok, end="", flush=True)
-                        elif mtype == "call_ended":
-                            print(f"\n[Call Ended] Reason: {data.get('reason')}")
+                    # Periodic user turn simulation every 25s
+                    if now - last_user_query >= 25.0:
+                        q_text = simulated_queries[turn_idx % len(simulated_queries)]
+                        turn_idx += 1
+                        print(f"\n\n[USER @ {now - soak_start:.1f}s]: {q_text}")
+                        transcripts.append({"role": "user", "text": q_text})
+                        q_audio = generate_synthetic_query_speech(sr=sample_rate, duration_sec=2.0)
+                        q_pcm16 = (np.clip(q_audio, -1.0, 1.0) * 32767.0).astype(np.int16).tobytes()
+                        for j in range(0, len(q_pcm16), chunk_bytes):
+                            await ws.send(q_pcm16[j : j + chunk_bytes])
+                            await asyncio.sleep(0.02)
+                        last_user_query = time.time()
+
+                    # Receive audio / transcript frames
+                    try:
+                        res = await asyncio.wait_for(ws.recv(), timeout=0.2)
+                        if isinstance(res, bytes) and len(res) > 0:
+                            if t_first_reply_audio == 0.0:
+                                t_first_reply_audio = time.perf_counter()
+                            i16 = np.frombuffer(res, dtype=np.int16)
+                            agent_audio_chunks.append(i16.astype(np.float32) / 32768.0)
+                        elif isinstance(res, str):
+                            data = json.loads(res)
+                            mtype = data.get("type")
+                            if mtype == "transcript":
+                                tok = data.get("text", "")
+                                current_agent_text.append(tok)
+                                all_assistant_tokens.append(tok)
+                                print(tok, end="", flush=True)
+                            elif mtype == "call_ended":
+                                print(f"\n[Call Ended] Reason: {data.get('reason')}")
+                                break
+                    except TimeoutError:
+                        pass
+            else:
+                while time.time() - reply_start_wall < max_wait_sec:
+                    try:
+                        res = await asyncio.wait_for(ws.recv(), timeout=1.5)
+                        now = time.perf_counter()
+
+                        if isinstance(res, bytes) and len(res) > 0:
+                            if t_first_reply_audio == 0.0:
+                                t_first_reply_audio = now
+                            i16 = np.frombuffer(res, dtype=np.int16)
+                            f32 = i16.astype(np.float32) / 32768.0
+                            agent_audio_chunks.append(f32)
+
+                        elif isinstance(res, str):
+                            data = json.loads(res)
+                            mtype = data.get("type")
+                            if mtype == "transcript":
+                                tok = data.get("text", "")
+                                current_agent_text.append(tok)
+                                all_assistant_tokens.append(tok)
+                                print(tok, end="", flush=True)
+                            elif mtype == "call_ended":
+                                print(f"\n[Call Ended] Reason: {data.get('reason')}")
+                                break
+                    except TimeoutError:
+                        if len(agent_audio_chunks) > 10 and time.time() - reply_start_wall > 4.0:
+                            # Agent finished reply and silence settled
                             break
-                except TimeoutError:
-                    if len(agent_audio_chunks) > 10 and time.time() - reply_start_wall > 4.0:
-                        # Agent finished reply and silence settled
-                        break
 
             print()
             # Send hangup
@@ -207,6 +289,7 @@ async def run_smoke_call(
                 await ws.send(json.dumps({"type": "hangup"}))
             except Exception:
                 pass
+
 
     except Exception as e:
         print(f"\n[ERROR] Call failed with exception: {e}")
@@ -243,6 +326,8 @@ async def run_smoke_call(
     ttfa_greeting_ms = (t_first_greeting_audio - t_connect_start) * 1000 if t_first_greeting_audio else 0.0
     ttfa_reply_ms = (t_first_reply_audio - t_user_speech_ended) * 1000 if (t_first_reply_audio and t_user_speech_ended) else 0.0
 
+    has_repetition = detect_repetition_loops(full_transcript_str)
+
     print("\n=======================================================")
     print(" SMOKE CALL RESULTS SUMMARY")
     print("=======================================================")
@@ -253,6 +338,7 @@ async def run_smoke_call(
     print(f" Agent Audio Level RMS:      {audio_rms:.4f}")
     print(f" Agent Audio Level Peak:     {audio_peak:.4f}")
     print(f" Assistant Text Tokens:      {len(all_assistant_tokens)}")
+    print(f" Repetition Loop Detected:   {has_repetition}")
     print(f" Unresolved '{{{{' Leaks:      {unresolved_vars}")
     print(f" Audio Recorded To:          {output_wav}")
     print(f" Transcript Saved To:        {transcript_file}")
@@ -260,6 +346,9 @@ async def run_smoke_call(
     for turn in transcripts:
         print(f"   [{turn['role'].upper()}]: {turn['text']}")
     print("=======================================================\n")
+
+    if has_repetition:
+        print("[WARNING] Degenerative repetition loop detected in output transcript!")
 
     return True
 
@@ -273,6 +362,7 @@ def main():
     parser.add_argument("--output-wav", default="eval_out/reply.wav", help="Output reply WAV path")
     parser.add_argument("--sample-rate", type=int, default=16000, help="Sample rate (16000 or 8000)")
     parser.add_argument("--max-wait", type=float, default=15.0, help="Max wait duration in seconds")
+    parser.add_argument("--soak-duration", type=float, default=None, help="Maintain call for N seconds in soak test mode")
 
     args = parser.parse_args()
     success = asyncio.run(
@@ -284,9 +374,11 @@ def main():
             sample_rate=args.sample_rate,
             max_wait_sec=args.max_wait,
             token=args.token,
+            soak_duration_sec=args.soak_duration,
         )
     )
     sys.exit(0 if success else 1)
+
 
 
 if __name__ == "__main__":

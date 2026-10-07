@@ -94,6 +94,11 @@ class PersonaPlexWorkerClient:
         return self._status == WorkerStatus.IDLE
 
     @property
+    def is_connected(self) -> bool:
+        return self._ws is not None and self._status == WorkerStatus.BUSY
+
+
+    @property
     def active_session_id(self) -> str | None:
         return self._active_session_id
 

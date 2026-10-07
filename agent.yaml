@@ -1,6 +1,5 @@
 # ==============================================================================
-# PersonaPlex Voice Agent Configuration (agent.example.yaml)
-# Copy this file to agent.yaml and customize for your agent.
+# PersonaPlex Voice Agent Configuration (agent.yaml)
 # ==============================================================================
 
 # Agent Identity
@@ -9,9 +8,7 @@ voice_prompt: "NATM1.pt"
 timezone: "Asia/Kolkata"
 
 # Persona System Prompt
-# S2S Best Practice:
-# - Write natural conversational prose describing who the persona is, how they speak, and what they know.
-# - Just the plain system prompt: no variables, no rigid quotation scripts.
+# Pure system prompt without variables, matching training distribution style.
 system_prompt: >
   You enjoy having a good conversation. You are Aarav, a warm, cheerful young man from
   India chatting casually on a phone call. Speak natural Indian English in short
@@ -19,7 +16,6 @@ system_prompt: >
   simple follow-up or share a small thought about cricket, chai, music or movies. Keep the
   conversation going and do not say goodbye unless the other person does. If you did not
   catch something, politely ask them to repeat it.
-
 
 # PersonaPlex Generation Settings
 generation:

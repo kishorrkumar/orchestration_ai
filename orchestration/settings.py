@@ -163,7 +163,14 @@ class Settings(BaseSettings):
     ENABLE_PREWARM: bool = Field(default=True, description="Pre-warm and prime an idle worker on page load")
     PREWARM_IDLE_TIMEOUT_SEC: float = Field(default=120.0, description="Idle release timeout for pre-warmed worker")
 
-    # 6. Configuration Paths
+    # 6. Seamless Session Rollover (5+ Minute Calls)
+    ROLLOVER_ENABLED: bool = Field(default=True, description="Enable seamless session rollover before LM context wrap")
+    ROLLOVER_BUDGET_SEC: float = Field(default=210.0, description="LM context conversation budget in seconds before rollover (Moshi cap is ~220s)")
+    ROLLOVER_THRESHOLD: float = Field(default=0.70, description="Fraction of conversation budget at which background rollover is prepared (0.70 = ~147s)")
+    ROLLOVER_SUMMARY_MAX_WORDS: int = Field(default=40, description="Max word count for rolling conversation summary in rollover prompt")
+    ROLLOVER_CROSSFADE_MS: float = Field(default=50.0, description="Crossfade duration in ms when switching worker audio")
+
+    # 7. Configuration Paths
     AGENT_YAML_PATH: str = Field(default="agent.yaml", description="Path to agent configuration YAML file")
 
     # Active Agent Configuration instance
