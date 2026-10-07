@@ -243,6 +243,18 @@ async def test_rfc_9457_problem_details_and_v2_routes():
         assert agent_id.startswith("agt_")
         assert agent_data["current_version"] == 1
 
+        # 4b. Verify PATCH draft with silence_timeout_sec=1800 (Aarav default) succeeds
+        r_patch = await client.patch(
+            f"/v2/agents/{agent_id}",
+            json={
+                "system_prompt": "You enjoy having a good conversation. You are Aarav.",
+                "silence_timeout_sec": 1800.0,
+                "voice_id": "NATM1.pt",
+            },
+        )
+        assert r_patch.status_code == 200, r_patch.text
+        assert r_patch.json()["system_prompt"] == "You enjoy having a good conversation. You are Aarav."
+
         # 5. RFC 9457: Not Found Error (404)
         r_404 = await client.get("/v2/agents/agt_nonexistent12345")
         assert r_404.status_code == 404

@@ -50,11 +50,14 @@ def register_error_handlers(app: FastAPI) -> None:
                 "type": err.get("type", "value_error"),
             })
 
+        reasons = [f"{p['name']}: {p['reason']}" for p in invalid_params]
+        detail_msg = f"Validation failed: {'; '.join(reasons)}" if reasons else "The request body or query parameters failed schema validation."
+
         problem = ProblemDetail(
             type="https://errors.personaplex.ai/validation-error",
             title="Validation Failed",
             status=422,
-            detail="The request body or query parameters failed schema validation.",
+            detail=detail_msg,
             code="VALIDATION_ERROR",
             error_id=error_id,
             invalid_params=invalid_params,

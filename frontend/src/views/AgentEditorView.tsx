@@ -353,7 +353,9 @@ export const AgentEditorView: React.FC<AgentEditorViewProps> = ({
       }
     } catch (err: unknown) {
       if (err instanceof ApiError) {
-        setErrorMessage(err.problem.detail || err.problem.title)
+        const p = err.problem
+        const invalidStr = p.invalid_params?.map((ip) => `${ip.name}: ${ip.reason}`).join('; ')
+        setErrorMessage(invalidStr ? `Validation failed: ${invalidStr}` : (p.detail || p.title))
       } else {
         setErrorMessage('Failed to save draft.')
       }
@@ -379,7 +381,9 @@ export const AgentEditorView: React.FC<AgentEditorViewProps> = ({
       setVersions(vers)
     } catch (err: unknown) {
       if (err instanceof ApiError) {
-        setErrorMessage(err.problem.detail || err.problem.title)
+        const p = err.problem
+        const invalidStr = p.invalid_params?.map((ip) => `${ip.name}: ${ip.reason}`).join('; ')
+        setErrorMessage(invalidStr ? `Validation failed: ${invalidStr}` : (p.detail || p.title))
       } else {
         setErrorMessage('Failed to publish version.')
       }
