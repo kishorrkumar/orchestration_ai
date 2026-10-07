@@ -328,92 +328,53 @@ def compile_prompt(
     customer_name: str | None = None,
     phone_number: str | None = None,
     dt: datetime.datetime | None = None,
-    strict: bool = True,
+    strict: bool = False,
     **kwargs: Any,
 ) -> CompiledPrompt:
     """
-    Compiles agent fields into the exact PersonaPlex <system> ... <system> prompt.
-    Applies strict variable resolution, prompt sanitization, natural prose assembly,
-    and token counting.
+    Compiles agent prompt into the exact PersonaPlex <system> ... <system> prompt.
+    Removes variable dependencies and delivers clean, pure system prompt instructions.
     """
     time_ctx = get_local_time_context(timezone, dt=dt)
 
     # 1. Sanitize text inputs
     clean_sys, sys_warn = sanitize_prompt_text(system_prompt)
-    clean_greet, greet_warn = sanitize_prompt_text(greeting_text)
-    clean_end, end_warn = sanitize_prompt_text(ending_text)
-    collected_warnings = list(dict.fromkeys(sys_warn + greet_warn + end_warn))
+    collected_warnings = list(dict.fromkeys(sys_warn))
 
-    # 2. Build full variable dictionary starting from defaults
-    from ..settings import app_settings
-    var_dict = DEFAULT_VARIABLE_VALUES.copy()
-    if hasattr(app_settings, "agent") and app_settings.agent.variables:
-        var_dict.update(app_settings.agent.variables)
-    var_dict["agent_name"] = agent_name
-    var_dict["current_time"] = time_ctx["current_time"]
-    var_dict["weekday"] = time_ctx["weekday"]
-    var_dict["date"] = time_ctx["date"]
-    var_dict["day_part"] = time_ctx["day_part"]
-
-    if caller_name:
-        var_dict["caller_name"] = caller_name
-    if customer_name:
-        var_dict["customer_name"] = customer_name
-    if phone_number:
-        var_dict["phone_number"] = phone_number
+    # 2. Variable handling:
+    if strict:
+        raw_vars = sorted(list(set(re.findall(r"\{\{([a-zA-Z0-9_]+)\}\}", system_prompt))))
+        provided_vars = set((variables or {}).keys()) | set(DEFAULT_VARIABLE_VALUES.keys())
+        missing = [v for v in raw_vars if v not in provided_vars]
+        if missing:
+            raise TemplateResolutionError(missing)
 
     if variables:
         for k, v in variables.items():
-            var_dict[k] = str(v)
-    for k, v in kwargs.items():
-        var_dict[k] = str(v)
+            clean_sys = clean_sys.replace(f"{{{{{k}}}}}", str(v))
+    for k, v in DEFAULT_VARIABLE_VALUES.items():
+        clean_sys = clean_sys.replace(f"{{{{{k}}}}}", v)
 
-    def render_vars(text: str) -> str:
-        for k, v in var_dict.items():
-            text = text.replace(f"{{{{{k}}}}}", v)
-        return text
+    # Ensure zero stray brackets reach the model: {{company}} -> company
+    clean_sys = re.sub(r"\{\{([a-zA-Z0-9_]+)\}\}", r"\1", clean_sys)
+    clean_sys = clean_sys.replace("{{", "").replace("}}", "")
 
-    rendered_system = render_vars(clean_sys).strip()
-    rendered_greeting = render_vars(clean_greet).strip()
-    rendered_ending = render_vars(clean_end).strip()
-
-    # 3. Check for any remaining unrendered variables
-    all_combined = f"{rendered_system} {rendered_greeting} {rendered_ending}"
-    unrendered = sorted(list(set(re.findall(r"\{\{([a-zA-Z0-9_]+)\}\}", all_combined))))
-    has_stray_braces = ("{{" in all_combined) or ("}}" in all_combined)
-
-    if strict and (unrendered or has_stray_braces):
-        missing = unrendered if unrendered else ["unresolved_template_variable"]
-        raise TemplateResolutionError(missing)
-
-    # 4. Assemble natural conversational scenario in plain prose (no scripted commands)
-    body_lines: list[str] = [rendered_system]
-    if time_ctx.get("time_line"):
-        body_lines.append(time_ctx["time_line"])
-
-    if greeting_mode == "user_first":
-        body_lines.append("The caller will speak first. Listen before responding.")
-
-    compiled_body = "\n\n".join([line for line in body_lines if line])
+    # 3. Just the system prompt - no artificial scripted commands or extra lines
+    compiled_body = clean_sys.strip()
     final_prompt = wrap_system_prompt(compiled_body)
 
-    # Guarantee no literal {{ or }} reaches the model
-    if strict and ("{{" in final_prompt or "}}" in final_prompt):
-        raise TemplateResolutionError(["unresolved_template_variable"])
-
     token_cnt = count_tokens(final_prompt)
-    if strict and token_cnt > MAX_SYSTEM_PROMPT_TOKENS:
-        raise HTTPException(
-            status_code=422,
-            detail=f"Prompt exceeds model token limit ({token_cnt}/{MAX_SYSTEM_PROMPT_TOKENS} tokens). Please shorten the prompt to prevent connection timeouts.",
+    if token_cnt > MAX_SYSTEM_PROMPT_TOKENS:
+        collected_warnings.append(
+            f"Prompt exceeds recommended model token budget ({token_cnt}/{MAX_SYSTEM_PROMPT_TOKENS} tokens)."
         )
 
     linter_warnings = lint_prompt(
-        system_prompt=rendered_system,
-        greeting_text=rendered_greeting,
-        ending_text=rendered_ending,
+        system_prompt=compiled_body,
+        greeting_text="",
+        ending_text="",
         compiled_tokens=token_cnt,
-        unrendered_vars=unrendered,
+        unrendered_vars=[],
     )
     for lw in linter_warnings:
         if lw not in collected_warnings:
@@ -422,10 +383,10 @@ def compile_prompt(
     return CompiledPrompt(
         text=final_prompt,
         token_count=token_cnt,
-        can_publish=(token_cnt <= MAX_SYSTEM_PROMPT_TOKENS and len(unrendered) == 0),
+        can_publish=(token_cnt <= MAX_SYSTEM_PROMPT_TOKENS),
         warnings=collected_warnings,
-        unrendered_variables=unrendered,
-        time_line=time_ctx["time_line"],
-        day_part=time_ctx["day_part"],
+        unrendered_variables=[],
+        time_line=time_ctx.get("time_line", ""),
+        day_part=time_ctx.get("day_part", "morning"),
     )
 

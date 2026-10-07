@@ -54,13 +54,24 @@ def test_variable_resolution_no_double_brackets():
     assert "AcmeTelecom" in res.formatted_prompt
     assert "Rohan" in res.formatted_prompt
 
-    # Missing variable should raise 422 TemplateResolutionError
+    # In strict mode, missing variable raises TemplateResolutionError
     with pytest.raises(TemplateResolutionError):
         compile_prompt(
             system_prompt="Hello {{undefined_token}}!",
             agent_name="Alex",
             variables={},
+            strict=True,
         )
+
+    # In default runtime mode (strict=False), variables are simply stripped without error
+    res_clean = compile_prompt(
+        system_prompt="Hello {{undefined_token}}!",
+        agent_name="Alex",
+        variables={},
+        strict=False,
+    )
+    assert "{{" not in res_clean.formatted_prompt
+    assert "undefined_token" in res_clean.formatted_prompt
 
 
 def test_prompt_wrapping_and_sanitization():

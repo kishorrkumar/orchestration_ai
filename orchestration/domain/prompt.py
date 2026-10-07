@@ -120,8 +120,12 @@ def compute_local_time_context(
     """
     try:
         tz = ZoneInfo(tz_str)
-    except (ZoneInfoNotFoundError, ValueError):
-        tz = ZoneInfo("UTC")
+    except Exception:
+        try:
+            tz = ZoneInfo("UTC")
+        except Exception:
+            from datetime import timezone
+            tz = timezone.utc
 
     now = reference_dt or datetime.now(UTC)
     local_dt = now.astimezone(tz)

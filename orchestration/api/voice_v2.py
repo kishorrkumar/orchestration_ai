@@ -244,19 +244,18 @@ async def voice_v2_endpoint(
         return
     resolved_voice = norm_voice
 
-    # 2. Compile prompt with dynamic local time and caller interpolation
-    compiled = compile_prompt(
-        system_prompt=system_prompt,
-        greeting_text=greeting_text,
-        greeting_mode=greeting_mode,
-        ending_text=ending_text,
-        agent_name=agent.name,
-        timezone=tz_name,
-        caller_name=caller_name,
-        customer_name=customer_name,
-        phone_number=phone_number,
-        strict=True,
-    )
+    # 2. Compile prompt - pure system prompt with variables removed
+    try:
+        compiled = compile_prompt(
+            system_prompt=system_prompt,
+            agent_name=agent.name,
+            strict=False,
+        )
+    except Exception as compile_err:
+        logger.warning(f"compile_prompt note: {compile_err}, using direct system prompt")
+        from ..protocol.prompt import wrap_system_prompt
+        clean_text = system_prompt.replace("{{", "").replace("}}", "")
+        compiled = type("CompiledPromptStub", (), {"text": wrap_system_prompt(clean_text)})()
 
     # 3. Create CallSession in Database
     call_start_time = time.time()

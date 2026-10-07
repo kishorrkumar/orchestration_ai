@@ -1,50 +1,21 @@
 # ==============================================================================
-# PersonaPlex Single Voice Agent Configuration (agent.example.yaml)
+# PersonaPlex Voice Agent Configuration (agent.example.yaml)
 # Copy this file to agent.yaml and customize for your agent.
 # ==============================================================================
 
 # Agent Identity
 name: "Alex"
-timezone: "Asia/Kolkata"
-
-# Voice Reference File (.pt embedding or .wav in voices directory)
-# Official PersonaPlex presets:
-# Natural Female: NATF0.pt, NATF1.pt, NATF2.pt (default), NATF3.pt
-# Natural Male:   NATM0.pt, NATM1.pt, NATM2.pt, NATM3.pt
-# Variety Female: VARF0.pt, VARF1.pt, VARF2.pt, VARF3.pt, VARF4.pt
-# Variety Male:   VARM0.pt, VARM1.pt, VARM2.pt, VARM3.pt, VARM4.pt
 voice_prompt: "NATF2.pt"
 
-# Turn Taking & Greeting Mode
-# - "agent_first": The agent speaks first upon connection.
-# - "user_first":  The agent listens silently until the user speaks.
-greeting_mode: "agent_first"
-
-# Optional greeting line (used to condition the agent's opening turn in agent_first mode)
-greeting_text: "Hello! This is Alex from {{company}}. How can I help you today?"
-
-# Closing statement
-ending_text: "Thank you for calling. Have a great day, goodbye!"
-
 # Persona System Prompt
-# IMPORTANT: Replace with your own prompt!
 # S2S Best Practice:
-# - Write in short, conversational prose.
-# - Avoid bullet points, emojis, markdown headers, and rigid quotation scripts ("say exactly...").
-# - Describe who the persona is, how they speak, and their role.
+# - Write natural conversational prose describing who the persona is, how they speak, and what they know.
+# - Just the plain system prompt: no variables, no rigid quotation scripts.
 system_prompt: >
-  [REPLACE WITH YOUR OWN PROMPT]
-  You are Alex, a helpful and friendly voice assistant at {{company}}.
-  You are speaking with {{caller_name}} over the phone.
+  You are Alex, a helpful and friendly voice assistant.
+  You are speaking with the caller over the phone.
   You speak in short, natural sentences, the way real people converse.
   You listen carefully, answer concisely, and verify understanding before moving to the next point.
-
-# Template Variables & Defaults
-# Any {{variable}} in the prompt or greeting MUST have a default defined here.
-variables:
-  company: "BrightNet"
-  caller_name: "the caller"
-  customer_name: "the customer"
 
 # PersonaPlex Generation Settings
 generation:
@@ -56,5 +27,5 @@ generation:
 
 # Call Session Limits
 session:
-  max_duration_sec: 600
-  end_silence_sec: 20
+  max_duration_sec: 1800
+  end_silence_sec: 1800

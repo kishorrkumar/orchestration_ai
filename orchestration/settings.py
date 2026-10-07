@@ -41,21 +41,15 @@ class AgentConfig(BaseModel):
     timezone: str = "Asia/Kolkata"
     voice_prompt: str = "NATF2.pt"
     greeting_mode: str = "agent_first"
-    greeting_text: str = "Hello! This is Alex from {{company}}. How can I help you today?"
-    ending_text: str = "Thank you for calling. Have a great day, goodbye!"
+    greeting_text: str = ""
+    ending_text: str = ""
     system_prompt: str = (
-        "You are Alex, a helpful and friendly voice assistant at {{company}}. "
-        "You are speaking with {{caller_name}} over the phone. "
+        "You are Alex, a helpful and friendly voice assistant. "
+        "You are speaking with the caller over the phone. "
         "You speak in short, natural sentences, the way real people converse. "
         "You listen carefully, answer concisely, and verify understanding before moving to the next point."
     )
-    variables: dict[str, str] = Field(
-        default_factory=lambda: {
-            "company": "BrightNet",
-            "caller_name": "the caller",
-            "customer_name": "the customer",
-        }
-    )
+    variables: dict[str, str] = Field(default_factory=dict)
     # Generation settings
     audio_temperature: float = 0.8
     text_temperature: float = 0.7
