@@ -615,6 +615,17 @@ async def voice_v2_endpoint(
         except Exception as e:
             logger.debug(f"worker_to_client_loop exception: {e}")
             trigger_stop(f"worker_loop_exc_{e}")
+        else:
+            if not stop_event.is_set():
+                logger.warning("worker_client message stream ended unexpectedly")
+                trigger_stop("worker_stream_ended")
+                try:
+                    await websocket.send_json({
+                        "type": "error",
+                        "message": "PersonaPlex worker stream closed unexpectedly. Ensure HF_TOKEN is exported and worker on 127.0.0.1:8998 is running.",
+                    })
+                except Exception:
+                    pass
 
     async def lifecycle_heartbeat():
         try:
@@ -696,6 +707,9 @@ async def voice_v2_endpoint(
         await worker_pool.release_worker(worker_client.worker_id)
 
     try:
-        await websocket.close()
+        close_code = status.WS_1000_NORMAL_CLOSURE
+        if "exc" in disconnect_reason or "fail" in disconnect_reason or "worker_stream_ended" in disconnect_reason:
+            close_code = status.WS_1011_INTERNAL_ERROR
+        await websocket.close(code=close_code)
     except Exception:
         pass

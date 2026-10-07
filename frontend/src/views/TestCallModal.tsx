@@ -101,6 +101,7 @@ export const TestCallModal: React.FC<TestCallModalProps> = ({ agent, onClose }) 
   const [elapsedSec, setElapsedSec] = useState(0)
   const [turns, setTurns] = useState<TranscriptTurn[]>([])
   const [endReason, setEndReason] = useState<string | null>(null)
+  const [sttSupported, setSttSupported] = useState<boolean>(true)
 
   const wsRef = useRef<WebSocket | null>(null)
   const audioContextRef = useRef<AudioContext | null>(null)
@@ -112,6 +113,8 @@ export const TestCallModal: React.FC<TestCallModalProps> = ({ agent, onClose }) 
   const isMutedRef = useRef<boolean>(false)
   const transcriptBoxRef = useRef<HTMLDivElement | null>(null)
   const activeSourcesRef = useRef<AudioBufferSourceNode[]>([])
+  const recognitionRef = useRef<any>(null)
+  const resetUserTurnRef = useRef<(() => void) | null>(null)
 
   // Sync refs for audio callbacks
   isAgentSpeakingRef.current = isAgentSpeaking
@@ -211,6 +214,11 @@ export const TestCallModal: React.FC<TestCallModalProps> = ({ agent, onClose }) 
                 const role = msg.role || 'assistant'
                 const text = msg.text || ''
 
+                // If agent speaks, finish user's preceding turn for clean separation
+                if (role !== 'user') {
+                  resetUserTurnRef.current?.()
+                }
+
                 setTurns((prev) => {
                   if (prev.length > 0 && prev[prev.length - 1].role === role) {
                     const last = prev[prev.length - 1]
@@ -272,9 +280,15 @@ export const TestCallModal: React.FC<TestCallModalProps> = ({ agent, onClose }) 
               )
               setCallStatus('error')
             } else {
-              setCallStatus((curr) =>
-                curr === 'connected' || curr === 'priming' ? 'ended' : curr
-              )
+              setCallStatus((curr) => {
+                if (curr === 'connecting' || curr === 'priming') {
+                  setErrorMessage(
+                    (prev) => prev || 'Call disconnected before audio session could start. Verify that the PersonaPlex worker is running on the server.'
+                  )
+                  return 'error'
+                }
+                return 'ended'
+              })
             }
           }
         }
@@ -344,6 +358,83 @@ export const TestCallModal: React.FC<TestCallModalProps> = ({ agent, onClose }) 
         source.connect(workletNode)
         workletNode.connect(muteGain)
         muteGain.connect(audioCtx.destination)
+
+        // Live User Speech Recognition (Client-side STT)
+        // PersonaPlex is an end-to-end S2S model that only outputs agent text tokens.
+        // Web Speech API transcribes the caller's microphone into the transcript box in real-time.
+        const SpeechRecognitionClass =
+          (window as any).SpeechRecognition ||
+          (window as any).webkitSpeechRecognition
+        if (SpeechRecognitionClass) {
+          try {
+            setSttSupported(true)
+            const recognition = new SpeechRecognitionClass()
+            recognition.continuous = true
+            recognition.interimResults = true
+            recognition.lang = 'en-US'
+
+            let finalTranscript = ''
+
+            resetUserTurnRef.current = () => {
+              finalTranscript = ''
+            }
+
+            recognition.onresult = (event: any) => {
+              if (isCleanedUp) return
+              let interim = ''
+              for (let i = event.resultIndex; i < event.results.length; ++i) {
+                const textPart = event.results[i][0]?.transcript || ''
+                if (event.results[i].isFinal) {
+                  finalTranscript += (finalTranscript ? ' ' : '') + textPart.trim()
+                } else {
+                  interim += textPart
+                }
+              }
+              const spoken = (finalTranscript + (interim ? ' ' + interim : '')).trim()
+              if (!spoken) return
+
+              setTurns((prev) => {
+                if (prev.length > 0 && prev[prev.length - 1].role === 'user') {
+                  const updated = [...prev]
+                  updated[updated.length - 1] = {
+                    ...updated[updated.length - 1],
+                    text: spoken,
+                  }
+                  return updated
+                } else {
+                  return [
+                    ...prev,
+                    {
+                      id: `user-${Date.now()}-${Math.random()}`,
+                      role: 'user',
+                      text: spoken,
+                    },
+                  ]
+                }
+              })
+            }
+
+            recognition.onerror = (e: any) => {
+              console.debug('Speech recognition event:', e?.error)
+            }
+
+            recognition.onend = () => {
+              // Restart if call is still active
+              if (!isCleanedUp && wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+                try {
+                  recognition.start()
+                } catch {}
+              }
+            }
+
+            recognition.start()
+            recognitionRef.current = recognition
+          } catch (e) {
+            console.debug('Browser speech recognition initialization notice:', e)
+          }
+        } else {
+          setSttSupported(false)
+        }
       } catch (err: unknown) {
         console.error('Failed to start call', err)
         setErrorMessage(
@@ -424,6 +515,12 @@ export const TestCallModal: React.FC<TestCallModalProps> = ({ agent, onClose }) 
 
   const cleanupAudio = () => {
     flushPlaybackBuffer()
+    if (recognitionRef.current) {
+      try {
+        recognitionRef.current.stop()
+      } catch {}
+      recognitionRef.current = null
+    }
     if (workletNodeRef.current) {
       workletNodeRef.current.disconnect()
       workletNodeRef.current = null
@@ -589,6 +686,12 @@ export const TestCallModal: React.FC<TestCallModalProps> = ({ agent, onClose }) 
           />
           <span>Mute mic while agent speaks (prevents self-talk feedback)</span>
         </label>
+
+        {!sttSupported && (
+          <p className="text-[11px] text-[#8C8980]">
+            PersonaPlex processes audio natively. Live caller transcript requires Google Chrome or Microsoft Edge.
+          </p>
+        )}
 
         {/* Action Controls */}
         <div className="flex items-center gap-4 pt-1">
