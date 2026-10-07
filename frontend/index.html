@@ -10,6 +10,31 @@
   <body>
     <!-- React 18 Root -->
     <div id="root"></div>
+    <script>
+      // Krutrim Cloud HTTPS proxy 502 retry handler for critical JS/CSS assets
+      window.addEventListener('error', function (e) {
+        var target = e.target;
+        if (target && (target.tagName === 'LINK' || target.tagName === 'SCRIPT')) {
+          var retryCount = parseInt(target.getAttribute('data-retry') || '0', 10);
+          if (retryCount < 3) {
+            target.setAttribute('data-retry', retryCount + 1);
+            setTimeout(function () {
+              var url = new URL(target.src || target.href, window.location.href);
+              url.searchParams.set('_retry', Date.now());
+              if (target.tagName === 'SCRIPT') {
+                var s = document.createElement('script');
+                s.type = target.type || 'module';
+                s.src = url.toString();
+                s.setAttribute('data-retry', retryCount + 1);
+                target.parentNode.replaceChild(s, target);
+              } else {
+                target.href = url.toString();
+              }
+            }, (retryCount + 1) * 1000);
+          }
+        }
+      }, true);
+    </script>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

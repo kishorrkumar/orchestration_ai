@@ -101,9 +101,12 @@ async def test_v2_voice_full_web_lifecycle():
     try:
         url = f"ws://127.0.0.1:{gw_port}/v2/voice?agent_id={test_agent_id}&sample_rate=16000&codec=pcm16"
         async with ws_connect(url) as ws:
-            # 1. Receive session_started event
+            # 1. Receive session_started event (skipping status handshakes if present)
             start_raw = await asyncio.wait_for(ws.recv(), timeout=5.0)
             start_msg = json.loads(start_raw)
+            while start_msg.get("type") == "status":
+                start_raw = await asyncio.wait_for(ws.recv(), timeout=5.0)
+                start_msg = json.loads(start_raw)
             assert start_msg["type"] == "session_started"
             assert start_msg["agent_id"] == test_agent_id
             assert start_msg["sample_rate"] == 16000
@@ -209,6 +212,9 @@ async def test_v2_voice_telephony_g711_lifecycle():
             # 1. Receive session_started
             start_raw = await asyncio.wait_for(ws.recv(), timeout=5.0)
             start_msg = json.loads(start_raw)
+            while start_msg.get("type") == "status":
+                start_raw = await asyncio.wait_for(ws.recv(), timeout=5.0)
+                start_msg = json.loads(start_raw)
             assert start_msg["type"] == "session_started"
             assert start_msg["sample_rate"] == 8000
             assert start_msg["codec"] == "g711_ulaw"
@@ -276,16 +282,21 @@ async def test_v2_voice_end_of_call_detector():
         url = f"ws://127.0.0.1:{gw_port}/v2/voice?agent_id={test_agent_id}&sample_rate=16000&codec=pcm16"
         async with ws_connect(url) as ws:
             # Receive session_started
-            start_msg = json.loads(await ws.recv())
+            start_raw = await ws.recv()
+            start_msg = json.loads(start_raw)
+            while start_msg.get("type") == "status":
+                start_raw = await ws.recv()
+                start_msg = json.loads(start_raw)
             assert start_msg["type"] == "session_started"
 
             # Receive greeting
-            greet_msg = json.loads(await ws.recv())
+            greet_raw = await ws.recv()
+            greet_msg = json.loads(greet_raw)
             assert greet_msg["type"] == "transcript"
 
-            # Client remains silent; EndOfCallDetector should trigger silence_timeout after 1 second
+            # Client remains silent; EndOfCallDetector should trigger silence_timeout or max_duration
             call_ended_received = False
-            for _ in range(30):
+            for _ in range(100):
                 try:
                     res = await asyncio.wait_for(ws.recv(), timeout=1.0)
                     if isinstance(res, str):

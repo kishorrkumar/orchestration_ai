@@ -6,11 +6,36 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="description" content="PersonaPlex Voice Agent Studio — Production Speech-to-Speech Voice Platform (React 18)" />
     <title>PersonaPlex Studio — Voice Agent Platform</title>
-    <script type="module" crossorigin src="/assets/index-BPUXZCPB.js"></script>
-    <link rel="stylesheet" crossorigin href="/assets/index-D5ty8GK_.css">
+    <script type="module" crossorigin src="/assets/index-Cg-pJQMU.js"></script>
+    <link rel="stylesheet" crossorigin href="/assets/index-BxzmDXTx.css">
   </head>
   <body>
     <!-- React 18 Root -->
-    <div id="root"></div>
+    <div id="root"></div>
+    <script>
+      // Krutrim Cloud HTTPS proxy 502 retry handler for critical JS/CSS assets
+      window.addEventListener('error', function (e) {
+        var target = e.target;
+        if (target && (target.tagName === 'LINK' || target.tagName === 'SCRIPT')) {
+          var retryCount = parseInt(target.getAttribute('data-retry') || '0', 10);
+          if (retryCount < 3) {
+            target.setAttribute('data-retry', retryCount + 1);
+            setTimeout(function () {
+              var url = new URL(target.src || target.href, window.location.href);
+              url.searchParams.set('_retry', Date.now());
+              if (target.tagName === 'SCRIPT') {
+                var s = document.createElement('script');
+                s.type = target.type || 'module';
+                s.src = url.toString();
+                s.setAttribute('data-retry', retryCount + 1);
+                target.parentNode.replaceChild(s, target);
+              } else {
+                target.href = url.toString();
+              }
+            }, (retryCount + 1) * 1000);
+          }
+        }
+      }, true);
+    </script>
   </body>
 </html>

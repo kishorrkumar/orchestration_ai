@@ -84,9 +84,12 @@ async def test_engine_b_v2_voice_full_lifecycle():
     try:
         url = f"ws://127.0.0.1:{gw_port}/v2/voice?agent_id={test_agent_id}&sample_rate=16000&codec=pcm16"
         async with ws_connect(url) as ws:
-            # 1. Receive session_started
+            # 1. Receive session_started (skipping status messages)
             start_raw = await asyncio.wait_for(ws.recv(), timeout=5.0)
             start_msg = json.loads(start_raw)
+            while start_msg.get("type") == "status":
+                start_raw = await asyncio.wait_for(ws.recv(), timeout=5.0)
+                start_msg = json.loads(start_raw)
             assert start_msg["type"] == "session_started"
             assert start_msg["agent_id"] == test_agent_id
             assert start_msg["engine"] == "cascaded_cloud"
@@ -225,7 +228,12 @@ async def test_engine_b_v2_voice_barge_in():
         url = f"ws://127.0.0.1:{gw_port}/v2/voice?agent_id={test_agent_id}&sample_rate=16000&codec=pcm16"
         async with ws_connect(url) as ws:
             # Consume session_started & greeting
-            await ws.recv()  # session_started
+            first_raw = await ws.recv()
+            first_msg = json.loads(first_raw)
+            while first_msg.get("type") == "status":
+                first_raw = await ws.recv()
+                first_msg = json.loads(first_raw)
+            assert first_msg["type"] == "session_started"
             await ws.recv()  # greeting transcript
 
             # Send interrupt

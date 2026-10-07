@@ -851,6 +851,13 @@ def create_app(
         if assets_dir.exists():
             app.mount("/assets", StaticFiles(directory=str(assets_dir)), name="assets")
 
+        @app.get("/audio-capture-worklet.js", include_in_schema=False)
+        async def audio_worklet_js():
+            worklet = frontend_dist / "audio-capture-worklet.js"
+            if worklet.exists():
+                return FileResponse(str(worklet), media_type="application/javascript")
+            return HTMLResponse(content="", status_code=404)
+
         @app.get("/favicon.svg", include_in_schema=False)
         async def favicon_svg():
             fav = frontend_dist / "favicon.svg"

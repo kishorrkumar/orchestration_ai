@@ -456,6 +456,8 @@ class PersonaPlexMockServer:
 
                 except websockets.ConnectionClosed:
                     pass
+                except Exception as ee:
+                    logger.debug(f"Mock receiver exception: {ee}")
                 finally:
                     stop_event.set()
 

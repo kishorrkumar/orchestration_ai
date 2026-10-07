@@ -71,8 +71,11 @@ def test_sentencepiece_token_counting_and_compiler():
 
     assert compiled.text.startswith("<system>")
     assert compiled.text.endswith("<system>")
-    assert "Start: Open the call by saying:" in compiled.text
-    assert "Close: When the conversation is done, say:" in compiled.text
+    # Plain prose should not contain rigid 'Start:' or 'Close:' scripted quotes
+    assert "Start: Open the call by saying:" not in compiled.text
+    assert "Close: When the conversation is done, say:" not in compiled.text
+    assert "{{" not in compiled.text
+    assert "}}" not in compiled.text
     assert compiled.token_count > 0
     assert compiled.token_count <= MAX_SYSTEM_PROMPT_TOKENS
     assert compiled.can_publish is True

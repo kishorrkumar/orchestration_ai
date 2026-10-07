@@ -4,7 +4,11 @@ FastAPI REST controller for Voice Agents and Immutable Versions (/v2/agents).
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, status
+import os
+import pathlib
+import re
+
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
 
 from orchestration.application.agents.commands import (
     CreateAgentCommand,
@@ -52,8 +56,8 @@ def _to_agent_response(a: Agent) -> AgentResponse:
 
 @router.get("/voices", response_model=list[VoicePresetResponse])
 async def list_voice_presets() -> list[VoicePresetResponse]:
-    """Return all 18 official PersonaPlex voice conditioning presets."""
-    return [
+    """Return all 18 official PersonaPlex voice conditioning presets plus custom uploaded voices."""
+    presets = [
         VoicePresetResponse(
             id=p.id,
             name=p.name,
@@ -64,6 +68,119 @@ async def list_voice_presets() -> list[VoicePresetResponse]:
         )
         for p in OFFICIAL_PRESETS.values()
     ]
+
+    # Discover custom voices in local voices/ directory or HF_HOME/voices
+    custom_dirs = [
+        pathlib.Path("voices"),
+        pathlib.Path(os.environ.get("HF_HOME", "")) / "voices" if os.environ.get("HF_HOME") else None,
+    ]
+    seen_ids = {p.id for p in presets}
+    for cdir in custom_dirs:
+        if cdir and cdir.exists() and cdir.is_dir():
+            for fpath in cdir.glob("*"):
+                if fpath.suffix.lower() in (".wav", ".pt") and fpath.name not in seen_ids:
+                    seen_ids.add(fpath.name)
+                    stem = fpath.stem.replace("_", " ").title()
+                    presets.append(
+                        VoicePresetResponse(
+                            id=fpath.name,
+                            name=f"{stem} (Custom)",
+                            gender="custom",
+                            speaking_style="User conditioning reference",
+                            accent="Indian English" if "indian" in fpath.stem.lower() or "aarav" in fpath.stem.lower() else "Custom Reference",
+                            recommended_for="Custom persona voice conditioning",
+                        )
+                    )
+    return presets
+
+
+@router.post("/voices/upload", response_model=VoicePresetResponse, status_code=status.HTTP_201_CREATED)
+async def upload_custom_voice(
+    file: UploadFile = File(...),
+    name: str = Form(None),
+    accent: str = Form("Indian English"),
+    gender: str = Form("unspecified"),
+) -> VoicePresetResponse:
+    """
+    Upload a custom reference voice prompt (clean mono WAV, 10-20s, 24 kHz recommended).
+    Saves the conditioning audio to voices/ so PersonaPlex worker can condition on it.
+    """
+    if not file.filename:
+        raise HTTPException(status_code=400, detail="Filename required")
+
+    ext = pathlib.Path(file.filename).suffix.lower()
+    if ext not in (".wav", ".pt"):
+        raise HTTPException(status_code=400, detail="Only .wav or .pt audio reference files are supported")
+
+    content = await file.read()
+    if len(content) < 1024:
+        raise HTTPException(status_code=400, detail="Audio file too small (must contain valid audio data)")
+
+    # Sanitize filename
+    clean_stem = re.sub(r"[^\w\-]", "_", pathlib.Path(file.filename).stem).strip("_")
+    if not clean_stem:
+        clean_stem = "custom_voice"
+
+    target_dir = pathlib.Path("voices")
+    target_dir.mkdir(parents=True, exist_ok=True)
+    out_path = target_dir / f"{clean_stem}{ext}"
+
+    if ext == ".wav":
+        try:
+            import io
+            import soundfile as sf
+            data, sr = sf.read(io.BytesIO(content), dtype="float32")
+            if data.ndim > 1:
+                data = data.mean(axis=1)
+
+            duration_sec = len(data) / sr
+            if duration_sec < 2.0:
+                raise HTTPException(status_code=400, detail=f"Audio duration {duration_sec:.1f}s is too short (min 2s, recommend 10-20s)")
+            if duration_sec > 60.0:
+                raise HTTPException(status_code=400, detail=f"Audio duration {duration_sec:.1f}s is too long (max 60s)")
+
+            # Resample to 24000 Hz if needed
+            target_sr = 24000
+            if sr != target_sr:
+                import numpy as np
+                num_samples = int(len(data) * target_sr / sr)
+                data = np.interp(
+                    np.linspace(0, len(data), num_samples, endpoint=False),
+                    np.arange(len(data)),
+                    data,
+                ).astype(np.float32)
+
+            sf.write(str(out_path), data, target_sr, subtype="PCM_16")
+
+            # Also mirror to HF_HOME/voices if set
+            hf_home = os.environ.get("HF_HOME")
+            if hf_home:
+                hf_voices = pathlib.Path(hf_home) / "voices"
+                hf_voices.mkdir(parents=True, exist_ok=True)
+                sf.write(str(hf_voices / f"{clean_stem}.wav"), data, target_sr, subtype="PCM_16")
+
+        except HTTPException:
+            raise
+        except Exception as err:
+            raise HTTPException(status_code=400, detail=f"Invalid WAV file: {err}")
+    else:
+        # Raw .pt PyTorch tensor
+        out_path.write_bytes(content)
+        hf_home = os.environ.get("HF_HOME")
+        if hf_home:
+            hf_voices = pathlib.Path(hf_home) / "voices"
+            hf_voices.mkdir(parents=True, exist_ok=True)
+            (hf_voices / f"{clean_stem}.pt").write_bytes(content)
+
+    display_name = name or clean_stem.replace("_", " ").title()
+    return VoicePresetResponse(
+        id=out_path.name,
+        name=f"{display_name} (Custom)",
+        gender=gender,
+        speaking_style="User conditioning reference",
+        accent=accent,
+        recommended_for="Custom persona voice conditioning",
+    )
 
 
 @router.post("", response_model=AgentResponse, status_code=status.HTTP_201_CREATED)

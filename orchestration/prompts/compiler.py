@@ -7,11 +7,16 @@ from __future__ import annotations
 
 import datetime
 import re
+import glob
+import logging
+import os
+import re
 import zoneinfo
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from fastapi import HTTPException
 import sentencepiece
 
 from ..protocol.prompt import (
@@ -20,11 +25,29 @@ from ..protocol.prompt import (
     wrap_system_prompt,
 )
 
-import glob
-import logging
-import os
-
 logger = logging.getLogger("orchestration.prompts.compiler")
+
+# Built-in defaults for template placeholders so un-configured agents never produce literal {{...}}
+DEFAULT_VARIABLE_VALUES: dict[str, str] = {
+    "company": "BrightNet",
+    "customer_name": "the caller",
+    "caller_name": "the caller",
+    "agent_name": "Assistant",
+    "goal": "assist the caller with their request",
+}
+
+
+class TemplateResolutionError(HTTPException):
+    """Raised when required template variables remain unrendered."""
+
+    def __init__(self, missing_variables: list[str] | set[str]):
+        var_names = ", ".join(sorted(missing_variables))
+        super().__init__(
+            status_code=422,
+            detail=f"Unresolved template variables: {var_names}. Please provide values or defaults before publishing or compiling.",
+        )
+        self.missing_variables = sorted(list(missing_variables))
+
 
 # Lazy-loaded SentencePiece singleton
 _SP_TOKENIZER: sentencepiece.SentencePieceProcessor | None = None
@@ -78,14 +101,77 @@ def get_tokenizer() -> sentencepiece.SentencePieceProcessor | None:
     return _SP_TOKENIZER
 
 
+def sanitize_prompt_text(text: str) -> tuple[str, list[str]]:
+    """
+    Strips markdown formatting, bullets, emojis, and rigid quotation-mark scripts from prompts.
+    Returns the cleaned plain prose and a list of warnings describing what was stripped.
+    """
+    warnings: list[str] = []
+    cleaned = text
+
+    # Protect template placeholders like {{company}} or {{agent_name}} during markdown cleanup
+    placeholders: list[str] = []
+    def _save_ph(m: re.Match) -> str:
+        placeholders.append(m.group(0))
+        return f"__TEMPLATE_PH_{len(placeholders) - 1}__"
+
+    cleaned = re.sub(r"\{\{[a-zA-Z0-9_]+\}\}", _save_ph, cleaned)
+
+    # 1. Emojis
+    emoji_pattern = re.compile(r"[\U00010000-\U0010ffff\u2600-\u27bf\u2300-\u23ff\u2b50]")
+    if emoji_pattern.search(cleaned):
+        cleaned = emoji_pattern.sub("", cleaned)
+        warnings.append("Removed emojis from prompt (speech models may hallucinate emoji characters)")
+
+    # 2. Markdown headers (e.g. ## Header)
+    if re.search(r"^\s*#+\s*", cleaned, flags=re.MULTILINE):
+        cleaned = re.sub(r"^\s*#+\s*", "", cleaned, flags=re.MULTILINE)
+        warnings.append("Removed markdown heading symbols (#)")
+
+    # 3. Bold/italics (**bold**, *italic*, __bold__, _italic_)
+    if re.search(r"\*\*([^*]+)\*\*", cleaned):
+        cleaned = re.sub(r"\*\*([^*]+)\*\*", r"\1", cleaned)
+        warnings.append("Removed markdown bold formatting (**)")
+    if re.search(r"\*([^*]+)\*", cleaned):
+        cleaned = re.sub(r"\*([^*]+)\*", r"\1", cleaned)
+        warnings.append("Removed markdown italic formatting (*)")
+    if re.search(r"(?<!\w)__([^_]+)__(?!\w)", cleaned):
+        cleaned = re.sub(r"(?<!\w)__([^_]+)__(?!\w)", r"\1", cleaned)
+        warnings.append("Removed markdown bold formatting (__) ")
+    if re.search(r"(?<!\w)_([^_]+)_(?!\w)", cleaned):
+        cleaned = re.sub(r"(?<!\w)_([^_]+)_(?!\w)", r"\1", cleaned)
+        warnings.append("Removed markdown italic formatting (_)")
+
+    # 4. Bullet points and numbered lists
+    if re.search(r"^\s*[-*+]\s+", cleaned, flags=re.MULTILINE):
+        cleaned = re.sub(r"^\s*[-*+]\s+", "", cleaned, flags=re.MULTILINE)
+        warnings.append("Removed bullet point markers (- / * / +)")
+
+    if re.search(r"^\s*\d+\.\s+", cleaned, flags=re.MULTILINE):
+        cleaned = re.sub(r"^\s*\d+\.\s+", "", cleaned, flags=re.MULTILINE)
+        warnings.append("Removed numbered list markers")
+
+    # 5. Rigid scripted quotes (e.g. Start: Open the call by saying: "..." or Close: When the conversation is done, say: "...")
+    if re.search(r"(?:Start|Close):\s*(?:Open the call by saying|When the conversation is done, say)?[:\s]*\"[^\"]*\"", cleaned, flags=re.IGNORECASE):
+        cleaned = re.sub(r"(?:Start|Close):\s*(?:Open the call by saying|When the conversation is done, say)?[:\s]*\"([^\"]*)\"", r"\1", cleaned, flags=re.IGNORECASE)
+        warnings.append("Removed scripted quotation commands ('Start:' / 'Close:')")
+
+    # Restore placeholders
+    for idx, ph in enumerate(placeholders):
+        cleaned = cleaned.replace(f"__TEMPLATE_PH_{idx}__", ph)
+
+    # Normalize whitespace
+    cleaned = re.sub(r"[ \t]+", " ", cleaned)
+    cleaned = re.sub(r"\n\s*\n\s*\n+", "\n\n", cleaned).strip()
+
+    return cleaned, warnings
+
+
 def get_local_time_context(tz_name: str = "Asia/Kolkata", dt: datetime.datetime | None = None) -> dict[str, str]:
     """
     Computes local weekday, time, and day-part for a given IANA timezone.
-    Day-part boundaries:
-      - 05:00 - 11:59: morning
-      - 12:00 - 16:59: afternoon
-      - 17:00 - 20:59: evening
-      - 21:00 - 04:59: night
+    Phased naturally for PersonaPlex conversational style:
+    "It is Wednesday morning for the caller."
     """
     try:
         tz = zoneinfo.ZoneInfo(tz_name)
@@ -95,7 +181,6 @@ def get_local_time_context(tz_name: str = "Asia/Kolkata", dt: datetime.datetime 
     now = dt.astimezone(tz) if dt else datetime.datetime.now(tz)
     weekday = now.strftime("%A")
     date_str = now.strftime("%B %d, %Y")
-    # Clean leading 0 from 12-hour format: '03:15 PM' -> '3:15 PM'
     time_str = now.strftime("%I:%M %p").lstrip("0")
     if not time_str:
         time_str = now.strftime("%I:%M %p")
@@ -110,7 +195,7 @@ def get_local_time_context(tz_name: str = "Asia/Kolkata", dt: datetime.datetime 
     else:
         day_part = "night"
 
-    time_line = f"It is {weekday}, {time_str} ({day_part}) for the caller."
+    time_line = f"It is {weekday} {day_part} for the caller."
 
     return {
         "timezone": tz_name,
@@ -139,6 +224,10 @@ class CompiledPrompt:
     def formatted_prompt(self) -> str:
         return self.text
 
+    @property
+    def is_critical_overflow(self) -> bool:
+        return not self.can_publish or self.token_count > self.hard_limit
+
 
 def count_tokens(text: str) -> int:
     """Counts tokens using official 32k PersonaPlex SentencePiece model or BPE estimator."""
@@ -165,14 +254,7 @@ def lint_prompt(
     compiled_tokens: int,
     unrendered_vars: list[str],
 ) -> list[str]:
-    """
-    Lean voice-specific linter:
-    - Token budget checks (>150 ideal, >350 hard limit)
-    - Non-English character detection
-    - Spoken markdown/bullets/emoji detection
-    - Long lists of NEVER/ALWAYS rules
-    - Missing goal / missing wrap-up
-    """
+    """Lean voice-specific linter."""
     warnings = []
 
     # 1. Budget checks
@@ -181,10 +263,10 @@ def lint_prompt(
             f"Prompt exceeds hard limit ({compiled_tokens}/{MAX_SYSTEM_PROMPT_TOKENS} tokens). "
             "Publish is blocked. Shorten system prompt to prevent connection handshake timeouts."
         )
-    elif compiled_tokens > IDEAL_SYSTEM_PROMPT_TOKENS:
+    elif compiled_tokens > 300:
         warnings.append(
-            f"Prompt is above recommended budget ({compiled_tokens}/{IDEAL_SYSTEM_PROMPT_TOKENS} tokens). "
-            "Handshake will take ~2-4s. Aim for under 150 tokens for lowest latency."
+            f"Prompt is above recommended conversational budget ({compiled_tokens}/200 tokens). "
+            "Handshake will take ~2-4s. Aim for under 200 tokens for lowest latency."
         )
 
     # 2. Markdown / formatting
@@ -215,16 +297,12 @@ def lint_prompt(
     if unrendered_vars:
         warnings.append(f"Unfilled variables detected: {', '.join(unrendered_vars)}. Fill them or remove braces before testing.")
 
-    # 7. Missing goal
-    if "goal" not in system_prompt.lower() and "help" not in system_prompt.lower():
-        warnings.append("Consider explicitly stating the agent's goal (e.g., 'Your goal: ...') for clearer turn-taking.")
-
     return warnings
 
 
 def compile_prompt(
     system_prompt: str,
-    greeting_text: str,
+    greeting_text: str = "",
     greeting_mode: str = "agent_first",
     ending_text: str = "",
     agent_name: str = "Assistant",
@@ -234,19 +312,30 @@ def compile_prompt(
     customer_name: str | None = None,
     phone_number: str | None = None,
     dt: datetime.datetime | None = None,
+    strict: bool = True,
     **kwargs: Any,
 ) -> CompiledPrompt:
     """
     Compiles agent fields into the exact PersonaPlex <system> ... <system> prompt.
+    Applies strict variable resolution, prompt sanitization, natural prose assembly,
+    and token counting.
     """
     time_ctx = get_local_time_context(timezone, dt=dt)
-    var_dict = {
-        "agent_name": agent_name,
-        "current_time": time_ctx["current_time"],
-        "weekday": time_ctx["weekday"],
-        "date": time_ctx["date"],
-        "day_part": time_ctx["day_part"],
-    }
+
+    # 1. Sanitize text inputs
+    clean_sys, sys_warn = sanitize_prompt_text(system_prompt)
+    clean_greet, greet_warn = sanitize_prompt_text(greeting_text)
+    clean_end, end_warn = sanitize_prompt_text(ending_text)
+    collected_warnings = list(dict.fromkeys(sys_warn + greet_warn + end_warn))
+
+    # 2. Build full variable dictionary starting from defaults
+    var_dict = DEFAULT_VARIABLE_VALUES.copy()
+    var_dict["agent_name"] = agent_name
+    var_dict["current_time"] = time_ctx["current_time"]
+    var_dict["weekday"] = time_ctx["weekday"]
+    var_dict["date"] = time_ctx["date"]
+    var_dict["day_part"] = time_ctx["day_part"]
+
     if caller_name:
         var_dict["caller_name"] = caller_name
     if customer_name:
@@ -265,51 +354,57 @@ def compile_prompt(
             text = text.replace(f"{{{{{k}}}}}", v)
         return text
 
-    rendered_system = render_vars(system_prompt).strip()
-    rendered_greeting = render_vars(greeting_text).strip()
-    rendered_ending = render_vars(ending_text).strip()
+    rendered_system = render_vars(clean_sys).strip()
+    rendered_greeting = render_vars(clean_greet).strip()
+    rendered_ending = render_vars(clean_end).strip()
 
-    # Find any remaining unrendered variables
+    # 3. Check for any remaining unrendered variables
     all_combined = f"{rendered_system} {rendered_greeting} {rendered_ending}"
-    unrendered = list(set(re.findall(r"\{\{([a-zA-Z0-9_]+)\}\}", all_combined)))
+    unrendered = sorted(list(set(re.findall(r"\{\{([a-zA-Z0-9_]+)\}\}", all_combined))))
+    has_stray_braces = ("{{" in all_combined) or ("}}" in all_combined)
 
-    # Greeting instruction
+    if strict and (unrendered or has_stray_braces):
+        missing = unrendered if unrendered else ["unresolved_template_variable"]
+        raise TemplateResolutionError(missing)
+
+    # 4. Assemble natural conversational scenario in plain prose (no scripted Start:/Close: quotes)
+    body_lines: list[str] = [rendered_system, time_ctx["time_line"]]
+
     if greeting_mode == "user_first":
-        start_instruction = 'Start: Wait for the caller to speak first.'
-    else:
-        start_instruction = f'Start: Open the call by saying: "{rendered_greeting}"'
+        body_lines.append("The caller will speak first. Listen before responding.")
+    elif greeting_mode == "agent_first":
+        if rendered_greeting and rendered_greeting.lower() not in rendered_system.lower() and "greet" not in rendered_system.lower():
+            body_lines.append(f"When the call connects, greet the caller warmly: {rendered_greeting}")
 
-    # Ending instruction
-    if rendered_ending:
-        close_instruction = f'Close: When the conversation is done, say: "{rendered_ending}"'
-    else:
-        close_instruction = 'Close: When the conversation is done, say: "Thank you for calling. Goodbye!"'
+    if rendered_ending and rendered_ending.lower() not in rendered_system.lower() and "goodbye" not in rendered_system.lower():
+        body_lines.append(f"When concluding the call: {rendered_ending}")
 
-    # Assemble the tight prompt
-    body_lines = [
-        rendered_system,
-        time_ctx["time_line"],
-        start_instruction,
-        close_instruction,
-    ]
-    compiled_body = "\n".join([line for line in body_lines if line])
+    compiled_body = "\n\n".join([line for line in body_lines if line])
     final_prompt = wrap_system_prompt(compiled_body)
 
+    # Guarantee no literal {{ or }} reaches the model
+    if strict and ("{{" in final_prompt or "}}" in final_prompt):
+        raise TemplateResolutionError(["unresolved_template_variable"])
+
     token_cnt = count_tokens(final_prompt)
-    warnings = lint_prompt(
+    linter_warnings = lint_prompt(
         system_prompt=rendered_system,
         greeting_text=rendered_greeting,
         ending_text=rendered_ending,
         compiled_tokens=token_cnt,
         unrendered_vars=unrendered,
     )
+    for lw in linter_warnings:
+        if lw not in collected_warnings:
+            collected_warnings.append(lw)
 
     return CompiledPrompt(
         text=final_prompt,
         token_count=token_cnt,
-        can_publish=(token_cnt <= MAX_SYSTEM_PROMPT_TOKENS),
-        warnings=warnings,
+        can_publish=(token_cnt <= MAX_SYSTEM_PROMPT_TOKENS and len(unrendered) == 0),
+        warnings=collected_warnings,
         unrendered_variables=unrendered,
         time_line=time_ctx["time_line"],
         day_part=time_ctx["day_part"],
     )
+
