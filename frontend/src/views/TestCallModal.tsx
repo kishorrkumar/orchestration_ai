@@ -108,14 +108,19 @@ export const TestCallModal: React.FC<TestCallModalProps> = ({ agent, onClose }) 
         ws.onerror = (e) => {
           console.error('WebSocket error', e)
           if (!isCleanedUp) {
-            setErrorMessage('Could not establish voice connection with worker.')
+            setErrorMessage((prev) => prev || 'WebSocket error: connection failed')
             setCallStatus('error')
           }
         }
 
-        ws.onclose = () => {
+        ws.onclose = (e) => {
           if (!isCleanedUp) {
-            setCallStatus((curr) => (curr === 'connected' ? 'ended' : curr))
+            if (e.code !== 1000 && e.code !== 1001 && e.code !== 1005) {
+              setErrorMessage((prev) => prev || e.reason || `Server disconnected (code ${e.code})`)
+              setCallStatus('error')
+            } else {
+              setCallStatus((curr) => (curr === 'connected' ? 'ended' : curr))
+            }
           }
         }
 
@@ -146,7 +151,11 @@ export const TestCallModal: React.FC<TestCallModalProps> = ({ agent, onClose }) 
         }
 
         source.connect(processor)
-        processor.connect(audioCtx.destination)
+        // Mute gain node prevents local microphone loopback howling
+        const muteGain = audioCtx.createGain()
+        muteGain.gain.value = 0
+        processor.connect(muteGain)
+        muteGain.connect(audioCtx.destination)
       } catch (err: unknown) {
         console.error('Failed to start call', err)
         setErrorMessage(

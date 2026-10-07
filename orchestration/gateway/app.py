@@ -851,6 +851,20 @@ def create_app(
         if assets_dir.exists():
             app.mount("/assets", StaticFiles(directory=str(assets_dir)), name="assets")
 
+        @app.get("/favicon.svg", include_in_schema=False)
+        async def favicon_svg():
+            fav = frontend_dist / "favicon.svg"
+            if fav.exists():
+                return FileResponse(str(fav), media_type="image/svg+xml")
+            return HTMLResponse(content="", status_code=404)
+
+        @app.get("/icons.svg", include_in_schema=False)
+        async def icons_svg():
+            ico = frontend_dist / "icons.svg"
+            if ico.exists():
+                return FileResponse(str(ico), media_type="image/svg+xml")
+            return HTMLResponse(content="", status_code=404)
+
         @app.get("/", response_class=FileResponse, tags=["UI"])
         @app.get("/app", response_class=FileResponse, tags=["UI"])
         @app.get("/agents", response_class=FileResponse, tags=["UI"])
