@@ -47,8 +47,19 @@ else
 fi
 
 if [ -n "${HF_TOKEN:-}" ]; then
-    mkdir -p ~/.cache/huggingface
+    mkdir -p ~/.cache/huggingface "$HF_HOME"
     echo -n "$HF_TOKEN" > ~/.cache/huggingface/token
+    echo -n "$HF_TOKEN" > "$HF_HOME/token"
+    echo "[INFO] Hugging Face token configured."
+elif [ -f "$HF_HOME/token" ]; then
+    export HF_TOKEN="$(cat "$HF_HOME/token")"
+    echo "[INFO] Loaded HF_TOKEN from $HF_HOME/token."
+elif [ -f "$HOME/.cache/huggingface/token" ]; then
+    export HF_TOKEN="$(cat "$HOME/.cache/huggingface/token")"
+    echo "[INFO] Loaded HF_TOKEN from ~/.cache/huggingface/token."
+else
+    echo "[WARNING] No HF_TOKEN detected! PersonaPlex-7B weights (nvidia/personaplex-7b-v1) require a Hugging Face token."
+    echo "[WARNING] Set it with: export HF_TOKEN=\"hf_...\" before running this script."
 fi
 
 # Modern PyTorch compatibility flag for Moshi
