@@ -21,7 +21,11 @@ from ..db.service import AgentService, CallSessionService
 from ..db.session import get_session_factory
 from ..domain.engines.spec import EngineType
 from ..engines.base import SessionContext
-from ..engines.cascaded.engine import CascadedVoiceEngine
+
+try:
+    from ..engines.cascaded.engine import CascadedVoiceEngine
+except ImportError:
+    CascadedVoiceEngine = None  # type: ignore
 from ..persona.registry import PersonaConfig
 from ..pipeline.end_detector import EndOfCallDetector
 from ..prompts.compiler import compile_prompt
@@ -110,6 +114,15 @@ async def voice_v2_endpoint(
             },
             workspace_id=agent.workspace_id,
         )
+
+        if CascadedVoiceEngine is None:
+            await websocket.send_json({
+                "type": "error",
+                "message": "Engine B requires Pipecat. Install via: pip install 'pipecat-ai>=1.12.0'",
+            })
+            await websocket.close(code=status.WS_1011_INTERNAL_ERROR)
+            return
+
         engine_runner = CascadedVoiceEngine()
         await engine_runner.run_session(context)
         return

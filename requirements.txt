@@ -23,4 +23,5 @@ greenlet>=3.0.0
 aiosqlite>=0.20.0
 pydantic-settings>=2.4.0
 structlog>=24.0.0
+pipecat-ai>=0.0.50
 
