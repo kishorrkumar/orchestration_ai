@@ -27,7 +27,7 @@ try:
     from ..engines.cascaded.engine import CascadedVoiceEngine
 except ImportError:
     CascadedVoiceEngine = None  # type: ignore
-from ..persona.registry import PersonaConfig
+from ..persona.registry import OFFICIAL_VOICE_PRESETS, PersonaConfig
 from ..pipeline.end_detector import EndOfCallDetector
 from ..prompts.compiler import compile_prompt
 from ..protocol.audio import (
@@ -227,6 +227,11 @@ async def voice_v2_endpoint(
     resolved_audio_topk = audio_topk if audio_topk is not None else pipeline_cfg.get("audio_topk", 250)
     resolved_text_topk = text_topk if text_topk is not None else pipeline_cfg.get("text_topk", 25)
     resolved_voice = voice_prompt or pipeline_cfg.get("voice_id") or voice_id
+    if not resolved_voice or (resolved_voice not in OFFICIAL_VOICE_PRESETS and f"{resolved_voice}.pt" not in OFFICIAL_VOICE_PRESETS and not str(resolved_voice).endswith(".wav")):
+        logger.warning(f"Requested voice '{resolved_voice}' not found in official presets. Defaulting to 'NATF2.pt'")
+        resolved_voice = "NATF2.pt"
+    elif not str(resolved_voice).endswith(".pt") and not str(resolved_voice).endswith(".wav"):
+        resolved_voice = f"{resolved_voice}.pt"
 
     # 2. Compile prompt with dynamic local time and caller interpolation
     compiled = compile_prompt(

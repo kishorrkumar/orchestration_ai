@@ -65,29 +65,113 @@ fi
 # Modern PyTorch compatibility flag for Moshi
 export NO_TORCH_COMPILE=1
 
-# 4. Locate Voice Presets
+# 4. Locate and Extract Voice Presets (.pt)
+echo "[INFO] Verifying PersonaPlex voice presets (.pt)..."
+python3 -c "
+import os, tarfile, shutil
+from pathlib import Path
+
+hf_home = os.environ.get('HF_HOME', os.path.expanduser('~/.cache/huggingface'))
+token = os.environ.get('HF_TOKEN')
+voices_dir = Path(hf_home) / 'voices'
+voices_dir.mkdir(parents=True, exist_ok=True)
+
+pt_files = list(voices_dir.glob('*.pt'))
+if len(pt_files) < 18:
+    print('[INFO] Extracting/downloading 18 PersonaPlex voice presets...')
+    tgz_candidates = list(Path(hf_home).glob('**/voices.tgz'))
+    if tgz_candidates:
+        tgz_file = tgz_candidates[0]
+        print(f'[INFO] Extracting cached archive: {tgz_file}')
+        with tarfile.open(tgz_file, 'r:gz') as tar:
+            tar.extractall(path=voices_dir)
+    else:
+        try:
+            from huggingface_hub import hf_hub_download
+            print('[INFO] Downloading voices.tgz from nvidia/personaplex-7b-v1...')
+            downloaded = hf_hub_download('nvidia/personaplex-7b-v1', 'voices.tgz', token=token)
+            with tarfile.open(downloaded, 'r:gz') as tar:
+                tar.extractall(path=voices_dir)
+        except Exception as e:
+            print(f'[WARNING] Could not fetch voices.tgz: {e}')
+
+# Sync to local ./voices directory
+proj_voices = Path('voices')
+proj_voices.mkdir(exist_ok=True)
+for pt in voices_dir.glob('*.pt'):
+    dest = proj_voices / pt.name
+    if not dest.exists():
+        try:
+            dest.symlink_to(pt)
+        except Exception:
+            shutil.copy2(pt, dest)
+
+print(f'[INFO] Voice presets verified: {len(list(voices_dir.glob(\"*.pt\")))} presets available.')
+" || true
+
+# 5. Patch moshi.server upstream bugs in active environment
+python3 -c "
+try:
+    import moshi.server
+    server_path = moshi.server.__file__
+    with open(server_path, 'r', encoding='utf-8') as f:
+        src = f.read()
+
+    modified = False
+    # Fix 1: seed KeyError
+    if 'request[\"seed\"]' in src:
+        src = src.replace('request[\"seed\"]', 'request.query[\"seed\"]')
+        modified = True
+
+    # Fix 2: voice_prompt_path NoneType endswith
+    old_block = 'if self.lm_gen.voice_prompt != voice_prompt_path:\n            if voice_prompt_path.endswith(\'.pt\'):'
+    new_block = 'if voice_prompt_path is not None and self.lm_gen.voice_prompt != voice_prompt_path:\n            if voice_prompt_path.endswith(\'.pt\'):'
+    if old_block in src:
+        src = src.replace(old_block, new_block)
+        modified = True
+
+    # Fix 3: Fallback on missing voice file instead of crashing TCP
+    old_fnf = 'raise FileNotFoundError(\n                    f\"Requested voice prompt \'{voice_prompt_filename}\' not found in \'{self.voice_prompt_dir}\"\"\n                )'
+    new_fnf = '''import glob
+                pt_candidates = sorted(glob.glob(os.path.join(self.voice_prompt_dir, \"*.pt\")))
+                if pt_candidates:
+                    voice_prompt_path = pt_candidates[0]
+                    clog.log(\"warning\", f\"Requested voice \'{voice_prompt_filename}\' not found, falling back to {voice_prompt_path}\")
+                else:
+                    voice_prompt_path = None'''
+    if old_fnf in src:
+        src = src.replace(old_fnf, new_fnf)
+        modified = True
+
+    if modified:
+        with open(server_path, 'w', encoding='utf-8') as f:
+            f.write(src)
+        print(f'[SUCCESS] Patched moshi.server at {server_path}')
+    else:
+        print('[INFO] moshi.server already patched.')
+except Exception as patch_err:
+    print(f'[INFO] moshi patch status: {patch_err}')
+" || true
+
 VOICES_DIR=""
-if [ -d "$HF_HOME/voices" ]; then
+if [ -d "$HF_HOME/voices" ] && [ -n "$(ls -A "$HF_HOME/voices"/*.pt 2>/dev/null)" ]; then
     VOICES_DIR="$HF_HOME/voices"
+elif [ -d "voices" ] && [ -n "$(ls -A "voices"/*.pt 2>/dev/null)" ]; then
+    VOICES_DIR="$(pwd)/voices"
 else
-    FOUND=$(find "$HF_HOME" -type d -name "voices" 2>/dev/null | head -n 1)
-    if [ -n "$FOUND" ]; then
-        VOICES_DIR="$FOUND"
-    fi
+    mkdir -p voices
+    VOICES_DIR="$(pwd)/voices"
 fi
 
 echo "=============================================================================="
 echo " Starting PersonaPlex 7B Voice Services on NVIDIA A100 GPU"
 echo " HF_HOME:    ${HF_HOME}"
-echo " Voices Dir: ${VOICES_DIR:-none}"
+echo " Voices Dir: ${VOICES_DIR}"
 echo "=============================================================================="
 
-# 5. Start Moshi 7B Inference Worker
+# 6. Start Moshi 7B Inference Worker
 echo "[INFO] Launching PersonaPlex 7B Worker on 127.0.0.1:8998..."
-WORKER_CMD="python -m moshi.server --host 127.0.0.1 --port 8998"
-if [ -n "$VOICES_DIR" ]; then
-    WORKER_CMD="$WORKER_CMD --voice-prompt-dir $VOICES_DIR"
-fi
+WORKER_CMD="python -m moshi.server --host 127.0.0.1 --port 8998 --voice-prompt-dir $VOICES_DIR"
 
 $WORKER_CMD > worker.log 2>&1 &
 WORKER_PID=$!

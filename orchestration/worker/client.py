@@ -16,7 +16,7 @@ import numpy as np
 import websockets
 from websockets.asyncio.client import ClientConnection
 
-from ..persona.registry import PersonaConfig
+from ..persona.registry import OFFICIAL_VOICE_PRESETS, PersonaConfig
 from ..protocol.messages import (
     AudioMessage,
     ControlAction,
@@ -108,8 +108,11 @@ class PersonaPlexWorkerClient:
             clean_prompt = "<system> You enjoy having a good conversation. <system>"
 
         voice = persona.get_normalized_voice_prompt()
-        if not voice.endswith(".pt"):
+        if not voice.endswith(".pt") and not voice.endswith(".wav"):
             voice = f"{voice}.pt"
+        if voice not in OFFICIAL_VOICE_PRESETS and not voice.endswith(".wav"):
+            logger.warning(f"Voice preset '{voice}' is not an official PersonaPlex preset. Falling back to 'NATF2.pt'")
+            voice = "NATF2.pt"
 
         # Upstream moshi.server accepts ONLY text_prompt, voice_prompt, etc.
         # Upstream moshi/server.py line 171 has a known bug: `request["seed"]` instead of `request.query["seed"]`,
