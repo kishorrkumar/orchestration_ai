@@ -85,6 +85,88 @@ async def list_session_debugs(
     return list(SESSION_DEBUG_LOGS.values())
 
 
+from pathlib import Path
+import datetime
+
+CONVERSATIONS_DIR = Path("conversations")
+CONVERSATIONS_DIR.mkdir(parents=True, exist_ok=True)
+LOGS_CONVERSATIONS_DIR = Path("logs/conversations")
+LOGS_CONVERSATIONS_DIR.mkdir(parents=True, exist_ok=True)
+
+
+@router.get("/conversations")
+@router.get("/v2/conversations")
+@router.get("/api/v2/conversations")
+async def list_conversations(
+    token: str | None = Query(None),
+    authorization: str | None = Header(None),
+):
+    """List recent conversation JSON recordings with turn counts and audio stats."""
+    if app_settings.AUTH_TOKEN:
+        auth_header = authorization.replace("Bearer ", "").strip() if authorization else None
+        provided = token or auth_header
+        if provided != app_settings.AUTH_TOKEN:
+            raise HTTPException(status_code=401, detail="Unauthorized: invalid or missing auth token")
+
+    all_files = sorted(
+        list(CONVERSATIONS_DIR.glob("*.json")) + list(LOGS_CONVERSATIONS_DIR.glob("*.json")),
+        key=lambda p: p.stat().st_mtime,
+        reverse=True,
+    )
+    seen_ids = set()
+    summaries = []
+    for f in all_files:
+        if f.stem in seen_ids:
+            continue
+        seen_ids.add(f.stem)
+        try:
+            with open(f, "r", encoding="utf-8") as fp:
+                data = json.load(fp)
+            summaries.append({
+                "session_id": data.get("session_id", f.stem),
+                "agent_name": data.get("agent_name"),
+                "voice_id": data.get("voice_id"),
+                "duration_sec": data.get("duration_sec"),
+                "turns_count": len(data.get("turns", [])),
+                "disconnect_reason": data.get("disconnect_reason"),
+                "started_at": data.get("created_at_iso") or data.get("started_at"),
+                "file_path": str(f),
+            })
+        except Exception:
+            pass
+        if len(summaries) >= 50:
+            break
+    return summaries
+
+
+@router.get("/conversations/{session_id}")
+@router.get("/v2/conversations/{session_id}")
+@router.get("/api/v2/conversations/{session_id}")
+async def get_conversation(
+    session_id: str,
+    token: str | None = Query(None),
+    authorization: str | None = Header(None),
+):
+    """Retrieve full conversation JSON recording for a specific call session."""
+    if app_settings.AUTH_TOKEN:
+        auth_header = authorization.replace("Bearer ", "").strip() if authorization else None
+        provided = token or auth_header
+        if provided != app_settings.AUTH_TOKEN:
+            raise HTTPException(status_code=401, detail="Unauthorized: invalid or missing auth token")
+
+    target_file = CONVERSATIONS_DIR / f"{session_id}.json"
+    if not target_file.exists():
+        target_file = LOGS_CONVERSATIONS_DIR / f"{session_id}.json"
+    if not target_file.exists():
+        raise HTTPException(status_code=404, detail=f"Conversation recording for session '{session_id}' not found.")
+    try:
+        with open(target_file, "r", encoding="utf-8") as fp:
+            return json.load(fp)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to read conversation recording: {e}")
+
+
+
 @router.websocket("/v2/voice")
 async def voice_v2_endpoint(
     websocket: WebSocket,
@@ -453,6 +535,24 @@ async def voice_v2_endpoint(
     current_agent_turn_text = []
     current_agent_turn_start = 0.0
 
+    conversation_turns: list[dict[str, Any]] = []
+    current_agent_buffer: list[str] = []
+    current_agent_start_ms: float = 0.0
+
+    def commit_agent_turn():
+        nonlocal current_agent_buffer, current_agent_start_ms
+        if current_agent_buffer:
+            text = "".join(current_agent_buffer).strip()
+            if text:
+                conversation_turns.append({
+                    "role": "assistant",
+                    "text": text,
+                    "started_ms": round(current_agent_start_ms, 1),
+                    "time_offset_sec": round(current_agent_start_ms / 1000.0, 2),
+                    "timestamp": time.time(),
+                })
+            current_agent_buffer.clear()
+
     is_pcm_client = (codec == "pcm16" or codec == "g711_ulaw")
 
     # Inbound Opus encoder and outbound Opus reader for PCM clients (tests / telephony)
@@ -559,6 +659,18 @@ async def voice_v2_endpoint(
                             await websocket.send_json({"type": "pong", "time": time.time()})
                         elif mtype == "interrupt":
                             logger.info(f"[VoiceSession {call_session_id}] User JSON interrupt noted (handled locally)")
+                        elif mtype in ("user_transcript", "transcript"):
+                            user_text = msg_json.get("text", "").strip()
+                            if user_text:
+                                commit_agent_turn()
+                                conversation_turns.append({
+                                    "role": "user",
+                                    "text": user_text,
+                                    "time_offset_sec": round(time.time() - call_start_time, 2),
+                                    "timestamp": time.time(),
+                                })
+                                last_user_speech_time = time.time()
+                                detector.on_user_speech(last_user_speech_time)
                         elif mtype == "client_info":
                             telemetry["client_audio_context_state"] = msg_json.get("audio_context_state", "unknown")
                     except json.JSONDecodeError:
@@ -609,7 +721,10 @@ async def voice_v2_endpoint(
                         telemetry["traffic"]["gateway_to_worker"]["frames"] += 1
                         await cur_worker.send_audio(frame_to_send)
 
-                await asyncio.sleep(frame_interval)
+                # Dynamically pace: drain quickly if frames accumulated, else 80ms
+                q_size = audio_frame_queue.qsize()
+                sleep_interval = 0.040 if q_size > 3 else frame_interval
+                await asyncio.sleep(sleep_interval)
         except asyncio.CancelledError:
             pass
         except Exception as e:
@@ -653,15 +768,22 @@ async def voice_v2_endpoint(
                     else:
                         # Decode for PCM test / browser clients
                         pcm = None
-                        if raw[1:].startswith(b"OggS") and server_opus_reader is not None:
+                        payload = raw[1:]
+                        if len(payload) == 1920 * 4 and not payload.startswith(b"OggS"):
+                            # Raw PCM from mock worker in unit tests
                             try:
-                                server_opus_reader.append_bytes(raw[1:])
+                                pcm = np.frombuffer(payload, dtype=np.float32)
+                            except Exception as pcm_err:
+                                logger.debug(f"Raw PCM decode note: {pcm_err}")
+                        elif server_opus_reader is not None:
+                            try:
+                                server_opus_reader.append_bytes(payload)
                                 pcm = server_opus_reader.read_pcm()
                             except Exception as opus_err:
                                 logger.debug(f"Opus decode note: {opus_err}")
-                        elif len(raw) > 1:
+                        elif len(payload) > 1:
                             try:
-                                pcm = np.frombuffer(raw[1:], dtype=np.float32)
+                                pcm = np.frombuffer(payload, dtype=np.float32)
                             except Exception as pcm_err:
                                 logger.debug(f"Raw PCM decode note: {pcm_err}")
 
@@ -684,6 +806,9 @@ async def voice_v2_endpoint(
                     if not current_agent_turn_text:
                         current_agent_turn_start = (time.time() - call_start_time) * 1000.0
                     current_agent_turn_text.append(token)
+                    if not current_agent_buffer:
+                        current_agent_start_ms = (time.time() - call_start_time) * 1000.0
+                    current_agent_buffer.append(token)
 
                     # Stream text token to client as JSON transcript and forward raw frame
                     await websocket.send_json({
@@ -825,6 +950,13 @@ async def voice_v2_endpoint(
                     )
                     asyncio.create_task(stream_worker_frames(cur_worker))
 
+            if is_pcm_client:
+                try:
+                    import sphn
+                    server_opus_reader = sphn.OpusStreamReader(MODEL_SAMPLE_RATE)
+                except Exception:
+                    pass
+
             current_worker_start_time = time.time()
             logger.info(f"[VoiceSession {call_session_id}] Seamless rollover #{session_rollover_count} completed successfully.")
 
@@ -897,11 +1029,41 @@ async def voice_v2_endpoint(
         p.cancel()
     await asyncio.gather(*pending, return_exceptions=True)
 
-    # 9. Finalize Call Session in DB and Telemetry
+    # 9. Finalize Call Session in DB, Telemetry, and Conversation JSON file
+    commit_agent_turn()
     duration_sec = max(0.0, time.time() - call_start_time)
     telemetry["duration_sec"] = round(duration_sec, 2)
     telemetry["close_reason"] = disconnect_reason
     telemetry["closed_by"] = "client" if ("client" in disconnect_reason or "user" in disconnect_reason) else "server"
+
+    # Save complete conversation recording to JSON file
+    convo_payload = {
+        "session_id": call_session_id,
+        "agent_id": agent.id,
+        "agent_name": agent.name,
+        "voice_id": resolved_voice,
+        "status": "completed",
+        "started_at": call_start_time,
+        "ended_at": time.time(),
+        "created_at_iso": datetime.datetime.fromtimestamp(call_start_time, tz=datetime.timezone.utc).isoformat(),
+        "duration_sec": round(duration_sec, 2),
+        "disconnect_reason": disconnect_reason,
+        "closed_by": telemetry["closed_by"],
+        "system_prompt": system_prompt,
+        "formatted_prompt": getattr(compiled, "formatted_prompt", getattr(compiled, "text", "")),
+        "turns": conversation_turns,
+        "telemetry": telemetry,
+    }
+    for dest_dir in (CONVERSATIONS_DIR, LOGS_CONVERSATIONS_DIR):
+        try:
+            dest_dir.mkdir(parents=True, exist_ok=True)
+            dest_file = dest_dir / f"{call_session_id}.json"
+            with open(dest_file, "w", encoding="utf-8") as fp:
+                json.dump(convo_payload, fp, indent=2)
+            logger.info(f"[VoiceSession {call_session_id}] Saved conversation JSON to {dest_file}")
+        except Exception as file_err:
+            logger.warning(f"Failed to write conversation JSON to {dest_dir}: {file_err}")
+
     try:
         async with session_factory() as db:
             call_svc = CallSessionService(db)

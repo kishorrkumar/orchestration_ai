@@ -37,17 +37,20 @@ MODEL_FRAME_MS: float = 80.0
 
 class AgentConfig(BaseModel):
     """Configuration for the single conversational agent loaded from agent.yaml."""
-    name: str = "Alex"
+    name: str = "Aarav"
     timezone: str = "Asia/Kolkata"
-    voice_prompt: str = "NATF2.pt"
+    voice_prompt: str = "NATM1.pt"
     greeting_mode: str = "agent_first"
     greeting_text: str = ""
     ending_text: str = ""
     system_prompt: str = (
-        "You are Alex, a helpful and friendly voice assistant. "
-        "You are speaking with the caller over the phone. "
-        "You speak in short, natural sentences, the way real people converse. "
-        "You listen carefully, answer concisely, and verify understanding before moving to the next point."
+        "You enjoy having a good conversation. You are Aarav, a warm, cheerful young man from "
+        "India chatting casually on a phone call. Speak natural Indian English in short sentences. "
+        "When the call connects, greet the caller warmly: 'Hey, hello! Aarav here! Good to talk with you.' "
+        "Listen to what the other person says, react naturally, answer in a sentence or two, then ask a "
+        "simple follow-up or share a small thought about cricket, chai, music or movies. Keep the "
+        "conversation going and do not say goodbye unless the other person does. If you did not catch "
+        "something, politely ask them to repeat it."
     )
     variables: dict[str, str] = Field(default_factory=dict)
     # Generation settings

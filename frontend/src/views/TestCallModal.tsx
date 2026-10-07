@@ -102,6 +102,7 @@ export const TestCallModal: React.FC<TestCallModalProps> = ({ agent, onClose }) 
   const [turns, setTurns] = useState<TranscriptTurn[]>([])
   const [endReason, setEndReason] = useState<string | null>(null)
   const [sttSupported, setSttSupported] = useState<boolean>(true)
+  const [activeSessionId, setActiveSessionId] = useState<string | null>(null)
 
   const wsRef = useRef<WebSocket | null>(null)
   const audioContextRef = useRef<AudioContext | null>(null)
@@ -219,6 +220,9 @@ export const TestCallModal: React.FC<TestCallModalProps> = ({ agent, onClose }) 
                 }
               } else if (msg.type === 'session_started') {
                 setCallStatus('connected')
+                if (msg.session_id) {
+                  setActiveSessionId(msg.session_id)
+                }
               } else if (msg.type === 'transcript') {
                 setIsAgentSpeaking(true)
                 const role = msg.role || 'assistant'
@@ -423,6 +427,15 @@ export const TestCallModal: React.FC<TestCallModalProps> = ({ agent, onClose }) 
                   ]
                 }
               })
+
+              if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+                wsRef.current.send(
+                  JSON.stringify({
+                    type: 'user_transcript',
+                    text: spoken,
+                  })
+                )
+              }
             }
 
             recognition.onerror = (e: any) => {
@@ -730,9 +743,21 @@ export const TestCallModal: React.FC<TestCallModalProps> = ({ agent, onClose }) 
               End Call
             </Button>
           ) : (
-            <Button variant="secondary" size="regular" onClick={onClose}>
-              Dismiss
-            </Button>
+            <div className="flex items-center gap-2">
+              {activeSessionId && (
+                <a
+                  href={`/v2/conversations/${activeSessionId}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="px-3 py-1.5 rounded-lg border border-[rgba(31,30,29,0.15)] bg-white text-[12px] font-medium text-[#1F1E1D] hover:bg-[#F4F3F0] transition-colors flex items-center gap-1.5 shadow-xs"
+                >
+                  <span>Download Conversation JSON</span>
+                </a>
+              )}
+              <Button variant="secondary" size="regular" onClick={onClose}>
+                Dismiss
+              </Button>
+            </div>
           )}
         </div>
       </div>

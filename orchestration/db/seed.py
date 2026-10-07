@@ -23,6 +23,8 @@ LEGACY_STARTER_NAMES = {
     "Friendly Caller (Blank Template)",
     "Clinic Appointment Assistant",
     "Support Agent (Alex)",
+    "Alex",
+    "Alex (Support Specialist)",
     "Indian Tech Support (Arjun)",
     "Wise Teacher (Dr. Elena)",
     "Marcus (Sales Specialist)",
@@ -56,10 +58,10 @@ async def seed_database(db: AsyncSession) -> None:
     res = await db.execute(stmt)
     existing_agents = list(res.scalars().all())
 
-    # Prune legacy starter agents to enforce ONE default agent
+    # Prune legacy starter agents to enforce single primary agent from agent.yaml
     for ag in existing_agents:
         if ag.name in LEGACY_STARTER_NAMES:
-            logger.info("Pruning legacy multi-agent starter record: %s (%s)", ag.name, ag.id)
+            logger.info("Pruning legacy starter agent record: %s (%s)", ag.name, ag.id)
             await db.execute(delete(AgentVersion).where(AgentVersion.agent_id == ag.id))
             await db.execute(delete(Agent).where(Agent.id == ag.id))
 
