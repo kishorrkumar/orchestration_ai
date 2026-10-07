@@ -714,11 +714,11 @@ async def voice_v2_endpoint(
             while not stop_event.is_set():
                 next_deadline += frame_interval
 
-                # Bound check: if audio_frame_queue > 6 frames, drop oldest frames to preserve real-time lockstep
+                # Bound check: if audio_frame_queue > 2 frames (160ms), drop oldest frames to preserve real-time lockstep
                 q_size = audio_frame_queue.qsize()
-                if q_size > 6:
+                if q_size > 2:
                     dropped = 0
-                    while audio_frame_queue.qsize() > 6:
+                    while audio_frame_queue.qsize() > 2:
                         try:
                             audio_frame_queue.get_nowait()
                             dropped += 1
@@ -764,6 +764,9 @@ async def voice_v2_endpoint(
                     )
 
                 now = time.monotonic()
+                if next_deadline < now - frame_interval:
+                    # Prevent catch-up bursts if loop execution fell behind
+                    next_deadline = now
                 sleep_time = max(0.0, next_deadline - now)
                 await asyncio.sleep(sleep_time)
         except asyncio.CancelledError:

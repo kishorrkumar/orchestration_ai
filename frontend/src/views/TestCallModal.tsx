@@ -331,7 +331,9 @@ export const TestCallModal: React.FC<TestCallModalProps> = ({ agent, onClose }) 
             // Interruption & Barge-in detection
             if (data.rms > 0.035) {
               userSpeechConsecutive++
-              if (userSpeechConsecutive >= 3 && isAgentSpeakingRef.current) {
+              // Re-sync playback cursor to current audio context time to prevent turn delay buildup
+              nextPlayTimeRef.current = audioCtx.currentTime
+              if (userSpeechConsecutive >= 2 && isAgentSpeakingRef.current) {
                 // User is speaking over agent: flush playback jitter buffer immediately
                 flushPlaybackBuffer()
                 setIsAgentSpeaking(false)
@@ -508,12 +510,21 @@ export const TestCallModal: React.FC<TestCallModalProps> = ({ agent, onClose }) 
     source.connect(audioCtx.destination)
 
     const now = audioCtx.currentTime
-    // Target 120 ms jitter buffer: if next play time is in the past, prime buffer ahead
-    const targetBufferDelay = 0.12
-    const startAt =
-      nextPlayTimeRef.current < now
-        ? now + targetBufferDelay
-        : nextPlayTimeRef.current
+    // Adaptive ultra-low-latency jitter buffer:
+    // Minimum buffer: 25ms (0.025s) for smooth click-free onset (saves ~95ms vs 120ms)
+    // Maximum lookahead: 85ms (0.085s) to strictly prevent buffer bloat across turns
+    const minBufferDelay = 0.025
+    const maxLookahead = 0.085
+
+    let startAt: number
+    if (nextPlayTimeRef.current < now) {
+      startAt = now + minBufferDelay
+    } else if (nextPlayTimeRef.current > now + maxLookahead) {
+      // Buffer bloat / packet burst detected: clamp to maxLookahead to prevent latency accumulation
+      startAt = now + maxLookahead
+    } else {
+      startAt = nextPlayTimeRef.current
+    }
 
     source.start(startAt)
     nextPlayTimeRef.current = startAt + audioBuffer.duration
