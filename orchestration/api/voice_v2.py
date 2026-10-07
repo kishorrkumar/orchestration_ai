@@ -431,7 +431,7 @@ async def voice_v2_endpoint(
 
     def trigger_stop(reason: str):
         nonlocal disconnect_reason
-        logger.debug(f"Triggering voice session stop: {reason}")
+        logger.warning(f"[VoiceSession {call_session_id}] Triggering voice session stop: {reason}")
         disconnect_reason = reason
         stop_event.set()
 
@@ -448,7 +448,8 @@ async def voice_v2_endpoint(
             while not stop_event.is_set():
                 raw = await websocket.receive()
                 if raw.get("type") == "websocket.disconnect":
-                    trigger_stop("ws_disconnect_message")
+                    logger.warning(f"[VoiceSession {call_session_id}] Client WebSocket disconnected: code={raw.get('code')}")
+                    trigger_stop(f"ws_disconnect_{raw.get('code', 1000)}")
                     break
 
                 if "bytes" in raw and raw["bytes"]:
@@ -489,6 +490,7 @@ async def voice_v2_endpoint(
                         msg_json = json.loads(raw["text"])
                         mtype = msg_json.get("type", "")
                         if mtype == "hangup":
+                            logger.info(f"[VoiceSession {call_session_id}] User clicked hangup in client")
                             trigger_stop("user_hangup")
                             break
                         elif mtype == "ping":
@@ -499,12 +501,13 @@ async def voice_v2_endpoint(
                             telemetry["client_audio_context_state"] = msg_json.get("audio_context_state", "unknown")
                     except json.JSONDecodeError:
                         pass
-        except WebSocketDisconnect:
-            trigger_stop("client_disconnected_exception")
+        except WebSocketDisconnect as wsd:
+            logger.warning(f"[VoiceSession {call_session_id}] WebSocketDisconnect: code={wsd.code}")
+            trigger_stop(f"client_disconnected_{wsd.code}")
         except asyncio.CancelledError:
             pass
         except Exception as e:
-            logger.debug(f"client_to_queue_loop exception: {e}")
+            logger.error(f"[VoiceSession {call_session_id}] client_to_queue_loop error: {e}", exc_info=True)
             trigger_stop(f"client_loop_exc_{e}")
 
     async def queue_to_worker_pacer():
@@ -539,7 +542,7 @@ async def voice_v2_endpoint(
         except asyncio.CancelledError:
             pass
         except Exception as e:
-            logger.debug(f"queue_to_worker_pacer exception: {e}")
+            logger.error(f"[VoiceSession {call_session_id}] queue_to_worker_pacer error: {e}", exc_info=True)
             trigger_stop(f"pacer_exc_{e}")
 
     async def worker_to_client_loop():
@@ -618,11 +621,11 @@ async def voice_v2_endpoint(
         except asyncio.CancelledError:
             pass
         except Exception as e:
-            logger.debug(f"worker_to_client_loop exception: {e}")
+            logger.error(f"[VoiceSession {call_session_id}] worker_to_client_loop error: {e}", exc_info=True)
             trigger_stop(f"worker_loop_exc_{e}")
         else:
             if not stop_event.is_set():
-                logger.warning("worker_client message stream ended unexpectedly")
+                logger.warning(f"[VoiceSession {call_session_id}] Upstream worker_client message stream ended")
                 trigger_stop("worker_stream_ended")
                 try:
                     await websocket.send_json({
@@ -652,6 +655,13 @@ async def voice_v2_endpoint(
         except asyncio.CancelledError:
             pass
 
+    # Flush any stale frames queued prior to session start
+    while not audio_frame_queue.empty():
+        try:
+            audio_frame_queue.get_nowait()
+        except asyncio.QueueEmpty:
+            break
+
     # Run tasks concurrently
     tasks = [
         asyncio.create_task(client_to_queue_loop()),
@@ -671,9 +681,9 @@ async def voice_v2_endpoint(
 
     for d in done:
         if d.exception():
-            logger.error(f"Voice task exception: {d.exception()}", exc_info=d.exception())
+            logger.error(f"[VoiceSession {call_session_id}] Voice task exception: {d.exception()}", exc_info=d.exception())
         else:
-            logger.debug(f"Voice task finished normally: {d}")
+            logger.info(f"[VoiceSession {call_session_id}] Voice task finished: {d}, disconnect_reason: {disconnect_reason}")
 
     for p in pending:
         p.cancel()

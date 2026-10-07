@@ -143,6 +143,28 @@ try:
         src = src.replace(old_fnf, new_fnf)
         modified = True
 
+    # Fix 4: Log crashes and close diagnostics in worker task loops
+    old_wait = 'done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)\n                # Force-kill remaining tasks'
+    new_wait = '''done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+                for task in done:
+                    if task.exception():
+                        import traceback
+                        clog.log(\"error\", f\"CRASH in worker task {task}: {task.exception()}\")
+                        clog.log(\"error\", \"\".join(traceback.format_exception(type(task.exception()), task.exception(), task.exception().__traceback__)))
+                    else:
+                        clog.log(\"info\", f\"Worker task finished normally: {task}\")
+                # Force-kill remaining tasks'''
+    if old_wait in src:
+        src = src.replace(old_wait, new_wait)
+        modified = True
+
+    # Fix 5: Log client close frame codes in recv_loop
+    old_close = 'elif message.type == aiohttp.WSMsgType.CLOSED:\n                        break\n                    elif message.type == aiohttp.WSMsgType.CLOSE:\n                        break'
+    new_close = 'elif message.type == aiohttp.WSMsgType.CLOSED:\n                        clog.log(\"info\", f\"ws CLOSED by client (code={ws.close_code})\")\n                        break\n                    elif message.type == aiohttp.WSMsgType.CLOSE:\n                        clog.log(\"info\", f\"ws CLOSE received from client (code={ws.close_code})\")\n                        break'
+    if old_close in src:
+        src = src.replace(old_close, new_close)
+        modified = True
+
     if modified:
         with open(server_path, 'w', encoding='utf-8') as f:
             f.write(src)

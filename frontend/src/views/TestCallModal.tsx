@@ -115,8 +115,10 @@ export const TestCallModal: React.FC<TestCallModalProps> = ({ agent, onClose }) 
   const activeSourcesRef = useRef<AudioBufferSourceNode[]>([])
   const recognitionRef = useRef<any>(null)
   const resetUserTurnRef = useRef<(() => void) | null>(null)
+  const callStatusRef = useRef<'connecting' | 'priming' | 'connected' | 'ended' | 'error'>('connecting')
 
   // Sync refs for audio callbacks
+  callStatusRef.current = callStatus
   isAgentSpeakingRef.current = isAgentSpeaking
   muteWhileSpeakingRef.current = muteWhileSpeaking
   isMutedRef.current = isMuted
@@ -345,6 +347,7 @@ export const TestCallModal: React.FC<TestCallModalProps> = ({ agent, onClose }) 
             }
           } else if (data.type === 'pcm16' && data.data) {
             if (
+              callStatusRef.current !== 'connected' ||
               isMutedRef.current ||
               (muteWhileSpeakingRef.current && isAgentSpeakingRef.current) ||
               ws.readyState !== WebSocket.OPEN
