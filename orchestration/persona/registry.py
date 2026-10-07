@@ -29,6 +29,27 @@ OFFICIAL_VOICE_PRESETS = [
     "VARM0.pt", "VARM1.pt", "VARM2.pt", "VARM3.pt", "VARM4.pt",
 ]
 
+import os
+from pathlib import Path
+
+
+def get_existing_voice_files() -> list[str]:
+    """Return all voice preset filenames actually present on disk."""
+    dirs_to_check = [
+        Path("voices"),
+        Path(os.environ.get("HF_HOME", "/workspace/huggingface")) / "voices",
+        Path.home() / ".cache" / "huggingface" / "voices",
+    ]
+    voices = set()
+    for d in dirs_to_check:
+        if d.is_dir():
+            for p in d.glob("*.pt"):
+                voices.add(p.name)
+            for p in d.glob("*.wav"):
+                voices.add(p.name)
+    return sorted(voices) if voices else list(OFFICIAL_VOICE_PRESETS)
+
+
 PRESET_METADATA = {
     "NATF0.pt": {"gender": "female", "style": "natural", "description": "Natural conversational female (balanced, articulate)"},
     "NATF1.pt": {"gender": "female", "style": "natural", "description": "Natural conversational female (warm, empathetic)"},

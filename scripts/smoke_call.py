@@ -48,6 +48,7 @@ async def run_smoke_call(
     output_wav: str,
     sample_rate: int = 16000,
     max_wait_sec: float = 30.0,
+    token: str | None = None,
 ):
     print(f"\n=======================================================")
     print(f" Starting PersonaPlex Voice Smoke Call")
@@ -282,6 +283,7 @@ def main():
             output_wav=args.output_wav,
             sample_rate=args.sample_rate,
             max_wait_sec=args.max_wait,
+            token=args.token,
         )
     )
     sys.exit(0 if success else 1)

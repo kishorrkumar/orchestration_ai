@@ -227,11 +227,22 @@ async def voice_v2_endpoint(
     resolved_audio_topk = audio_topk if audio_topk is not None else pipeline_cfg.get("audio_topk", 250)
     resolved_text_topk = text_topk if text_topk is not None else pipeline_cfg.get("text_topk", 25)
     resolved_voice = voice_prompt or pipeline_cfg.get("voice_id") or voice_id
-    if not resolved_voice or (resolved_voice not in OFFICIAL_VOICE_PRESETS and f"{resolved_voice}.pt" not in OFFICIAL_VOICE_PRESETS and not str(resolved_voice).endswith(".wav")):
-        logger.warning(f"Requested voice '{resolved_voice}' not found in official presets. Defaulting to 'NATF2.pt'")
-        resolved_voice = "NATF2.pt"
-    elif not str(resolved_voice).endswith(".pt") and not str(resolved_voice).endswith(".wav"):
-        resolved_voice = f"{resolved_voice}.pt"
+
+    from ..persona.registry import OFFICIAL_VOICE_PRESETS, get_existing_voice_files
+    available_voices = get_existing_voice_files()
+    norm_voice = str(resolved_voice) if resolved_voice else "NATF0.pt"
+    if not norm_voice.endswith(".pt") and not norm_voice.endswith(".wav"):
+        norm_voice = f"{norm_voice}.pt"
+
+    if norm_voice not in available_voices and not norm_voice.endswith(".wav"):
+        logger.error(f"Requested voice '{resolved_voice}' not found on disk. Available: {available_voices}")
+        await websocket.send_json({
+            "type": "error",
+            "message": f"voice '{resolved_voice}' not found, available: {', '.join(available_voices)}",
+        })
+        await websocket.close(code=status.WS_1008_POLICY_VIOLATION, reason=f"voice {resolved_voice} not found")
+        return
+    resolved_voice = norm_voice
 
     # 2. Compile prompt with dynamic local time and caller interpolation
     compiled = compile_prompt(
@@ -298,12 +309,13 @@ async def voice_v2_endpoint(
     SESSION_DEBUG_LOGS[call_session_id] = telemetry
 
     # 4. Initialize EndOfCallDetector
-    # Set silence timeout to at least 120 seconds for interactive testing so caller is never cut off
-    effective_silence_sec = max(120.0, float(end_silence_sec)) if end_silence_sec else 120.0
+    # Set default silence timeout and max duration to 1800.0s (30 minutes) so call stays open until Stop is pressed
+    effective_silence_sec = max(1800.0, float(end_silence_sec)) if end_silence_sec else 1800.0
+    effective_max_duration = max(1800.0, float(max_duration_sec)) if max_duration_sec else 1800.0
     detector = EndOfCallDetector(
         ending_text=ending_text,
         silence_timeout_sec=effective_silence_sec,
-        max_duration_sec=max_duration_sec,
+        max_duration_sec=effective_max_duration,
     )
 
     # 5. Initialize Resamplers
@@ -332,7 +344,7 @@ async def voice_v2_endpoint(
                     "type": "status",
                     "status": "priming",
                     "elapsed_ms": elapsed_ms,
-                    "message": f"Priming voice model ({round(elapsed_ms / 1000, 1)}s)...",
+                    "message": f"Getting ready, about 10 seconds ({round(elapsed_ms / 1000, 1)}s)...",
                 })
             except Exception:
                 priming_stop.set()
@@ -342,7 +354,7 @@ async def voice_v2_endpoint(
 
     priming_ticker = asyncio.create_task(priming_heartbeat())
 
-    # 7. Acquire Worker from Pool
+    # 7. Acquire Worker from Pool (with health probe)
     worker_client: PersonaPlexWorkerClient | None = None
     try:
         worker_client = await worker_pool.acquire_worker(session_id=call_session_id, timeout=15.0)
@@ -352,7 +364,7 @@ async def voice_v2_endpoint(
         logger.error(f"Failed to acquire worker for session {call_session_id}: {e}")
         telemetry["closed_by"] = "gateway"
         telemetry["close_reason"] = f"Worker acquire failed: {e}"
-        await websocket.send_json({"type": "error", "message": "All inference workers are busy. Please retry."})
+        await websocket.send_json({"type": "error", "message": f"All inference workers are busy or unhealthy. Please retry: {e}"})
         await websocket.close(code=status.WS_1013_TRY_AGAIN_LATER)
         return
 
@@ -375,7 +387,7 @@ async def voice_v2_endpoint(
         logger.info("Worker connect cancelled due to early client disconnect.")
         telemetry["closed_by"] = "client"
         telemetry["close_reason"] = "client_disconnected_during_priming"
-        await worker_pool.release_worker(worker_client.worker_id)
+        await worker_pool.release_worker(worker_client.worker_id, success=True)
         return
     except Exception as e:
         priming_stop.set()
@@ -383,10 +395,10 @@ async def voice_v2_endpoint(
         logger.error(f"Failed to connect worker client: {e}")
         telemetry["closed_by"] = "gateway"
         telemetry["close_reason"] = f"Worker connection failed: {e}"
-        await worker_pool.release_worker(worker_client.worker_id)
+        await worker_pool.release_worker(worker_client.worker_id, success=False)
         try:
             await websocket.send_json({"type": "error", "message": f"Worker connection failed: {e}"})
-            await websocket.close(code=status.WS_1011_INTERNAL_ERROR)
+            await websocket.close(code=status.WS_1011_INTERNAL_ERROR, reason=f"Worker connection failed: {e}")
         except Exception:
             pass
         return
@@ -441,11 +453,24 @@ async def voice_v2_endpoint(
     current_agent_turn_text = []
     current_agent_turn_start = 0.0
 
-    # Decoupled audio queue: client microphone chunks -> resampled 24kHz frames -> worker
+    is_pcm_client = (codec == "pcm16" or codec == "g711_ulaw")
+
+    # Inbound Opus encoder and outbound Opus reader for PCM clients (tests / telephony)
+    server_opus_writer = None
+    server_opus_reader = None
+    if is_pcm_client:
+        try:
+            import sphn
+            server_opus_writer = sphn.OpusStreamWriter(MODEL_SAMPLE_RATE)
+            server_opus_reader = sphn.OpusStreamReader(MODEL_SAMPLE_RATE)
+        except Exception as e:
+            logger.warning(f"sphn library unavailable on gateway: {e}")
+
+    # Decoupled audio queue for PCM clients: chunks -> resampled 24kHz frames -> worker
     audio_frame_queue: asyncio.Queue[np.ndarray] = asyncio.Queue()
 
     async def client_to_queue_loop():
-        """Receives incoming audio & control frames from client WebSocket and queues them."""
+        """Receives incoming audio & control frames from client WebSocket and relays upstream."""
         try:
             while not stop_event.is_set():
                 raw = await websocket.receive()
@@ -456,36 +481,45 @@ async def voice_v2_endpoint(
 
                 if "bytes" in raw and raw["bytes"]:
                     data = raw["bytes"]
-                    # Handle optional 0x01 prefix
-                    if len(data) > 0 and data[0] == 0x01:
-                        data = data[1:]
-
                     if len(data) == 0:
                         continue
 
                     telemetry["traffic"]["browser_to_gateway"]["bytes"] += len(data)
                     telemetry["traffic"]["browser_to_gateway"]["frames"] += 1
 
-                    # Decode audio according to codec
-                    if codec == "g711_ulaw":
-                        pcm16 = decode_ulaw(data)
-                        f32_samples = int16_to_float32(pcm16)
+                    if not is_pcm_client:
+                        # 100% Transparent Binary Relay path for browser and official client
+                        telemetry["traffic"]["gateway_to_worker"]["bytes"] += len(data)
+                        telemetry["traffic"]["gateway_to_worker"]["frames"] += 1
+                        if data[0] in (0x01, 0x02, 0x03):
+                            await worker_client.send_raw(data)
+                        elif data.startswith(b"OggS"):
+                            await worker_client.send_raw(b"\x01" + data)
+                        else:
+                            await worker_client.send_raw(b"\x01" + data)
                     else:
-                        pcm16 = np.frombuffer(data, dtype=np.int16)
-                        f32_samples = int16_to_float32(pcm16)
+                        # PCM16 transcoding path for tests or telephony
+                        if len(data) > 0 and data[0] == 0x01:
+                            data = data[1:]
+                        if len(data) == 0:
+                            continue
 
-                    # Speech energy detection for silence reset & barge-in
-                    rms = compute_rms(f32_samples)
-                    if rms > 0.012:
-                        detector.on_user_speech(time.time())
-                        if current_agent_turn_text:
-                            # User interrupted assistant speech
-                            await worker_client.send_control(ControlAction.PAUSE)
+                        if codec == "g711_ulaw":
+                            pcm16 = decode_ulaw(data)
+                            f32_samples = int16_to_float32(pcm16)
+                        else:
+                            pcm16 = np.frombuffer(data, dtype=np.int16)
+                            f32_samples = int16_to_float32(pcm16)
 
-                    # Resample to 24 kHz model rate in exact 1920-sample frames
-                    frames_24k = in_buffer.push_chunk(f32_samples)
-                    for frame_24k in frames_24k:
-                        await audio_frame_queue.put(frame_24k)
+                        rms = compute_rms(f32_samples)
+                        if rms > 0.012:
+                            detector.on_user_speech(time.time())
+                            if current_agent_turn_text:
+                                await worker_client.send_raw(b"\x03\x02")
+
+                        frames_24k = in_buffer.push_chunk(f32_samples)
+                        for frame_24k in frames_24k:
+                            await audio_frame_queue.put(frame_24k)
 
                 elif "text" in raw and raw["text"]:
                     try:
@@ -498,7 +532,7 @@ async def voice_v2_endpoint(
                         elif mtype == "ping":
                             await websocket.send_json({"type": "pong", "time": time.time()})
                         elif mtype == "interrupt":
-                            await worker_client.send_control(ControlAction.PAUSE)
+                            await worker_client.send_raw(b"\x03\x02")
                         elif mtype == "client_info":
                             telemetry["client_audio_context_state"] = msg_json.get("audio_context_state", "unknown")
                     except json.JSONDecodeError:
@@ -514,9 +548,8 @@ async def voice_v2_endpoint(
 
     async def queue_to_worker_pacer():
         """
-        Clocks the PersonaPlex worker at continuous 12.5 Hz (every 80ms) cadence.
-        If user is silent or waiting for greeting, transmits 1920-sample zero frames
-        so the neural model's inference loop never starves.
+        Clocks the PersonaPlex worker at continuous 12.5 Hz (every 80ms) cadence for PCM clients.
+        Sends proper stream headers and treats initial 0-byte reads from sphn as normal buffering.
         """
         frame_interval = 0.080  # 80ms = 12.5 Hz
         try:
@@ -525,7 +558,6 @@ async def voice_v2_endpoint(
                 try:
                     frame_to_send = audio_frame_queue.get_nowait()
                 except asyncio.QueueEmpty:
-                    # Provide silence frame to keep S2S inference stepping
                     frame_to_send = np.zeros(1920, dtype=np.float32)
 
                 frms = compute_rms(frame_to_send)
@@ -536,10 +568,19 @@ async def voice_v2_endpoint(
                 telemetry["audio_levels"]["gateway_to_worker_peak"] = round(
                     max(telemetry["audio_levels"]["gateway_to_worker_peak"], fpeak), 4
                 )
-                telemetry["traffic"]["gateway_to_worker"]["bytes"] += frame_to_send.nbytes
-                telemetry["traffic"]["gateway_to_worker"]["frames"] += 1
 
-                await worker_client.send_audio(frame_to_send)
+                if server_opus_writer is not None:
+                    server_opus_writer.append_pcm(frame_to_send)
+                    payload = server_opus_writer.read_bytes()
+                    if payload and len(payload) > 0:
+                        telemetry["traffic"]["gateway_to_worker"]["bytes"] += len(payload)
+                        telemetry["traffic"]["gateway_to_worker"]["frames"] += 1
+                        await worker_client.send_raw(b"\x01" + payload)
+                else:
+                    telemetry["traffic"]["gateway_to_worker"]["bytes"] += frame_to_send.nbytes
+                    telemetry["traffic"]["gateway_to_worker"]["frames"] += 1
+                    await worker_client.send_audio(frame_to_send)
+
                 await asyncio.sleep(frame_interval)
         except asyncio.CancelledError:
             pass
@@ -551,74 +592,84 @@ async def voice_v2_endpoint(
         nonlocal disconnect_reason, turn_counter, current_agent_turn_text, current_agent_turn_start
         nonlocal first_agent_audio_emitted, ttfa_greeting_ms
         try:
-            async for msg in worker_client.recv_messages():
+            async for raw in worker_client.recv_raw_frames():
                 if stop_event.is_set():
                     break
+                if len(raw) == 0:
+                    continue
 
-                if isinstance(msg, TextMessage):
-                    token = msg.text
+                opcode = raw[0]
+                if opcode == 0x00:
+                    # Handshake byte
+                    continue
+
+                elif opcode == 0x01:
+                    # Audio payload (Ogg-Opus page from worker)
+                    if not first_agent_audio_emitted:
+                        first_agent_audio_emitted = True
+                        ttfa_greeting_ms = round((time.time() - call_start_time) * 1000.0, 1)
+                        telemetry["ttfa_greeting_ms"] = ttfa_greeting_ms
+
+                    telemetry["traffic"]["worker_to_gateway"]["bytes"] += len(raw)
+                    telemetry["traffic"]["worker_to_gateway"]["frames"] += 1
+
+                    if not is_pcm_client:
+                        # Transparent binary forward directly to client
+                        telemetry["traffic"]["gateway_to_browser"]["bytes"] += len(raw)
+                        telemetry["traffic"]["gateway_to_browser"]["frames"] += 1
+                        await websocket.send_bytes(raw)
+                    else:
+                        # Decode via sphn for PCM test clients
+                        if server_opus_reader is not None:
+                            try:
+                                server_opus_reader.append_bytes(raw[1:])
+                                pcm = server_opus_reader.read_pcm()
+                                if len(pcm) > 0:
+                                    resampled = out_resampler.resample_chunk(pcm, last=False)
+                                    clipped = soft_clip(resampled, threshold=0.92)
+                                    if codec == "g711_ulaw":
+                                        pcm_bytes = encode_ulaw(clipped)
+                                    else:
+                                        pcm_bytes = float32_to_int16(clipped).tobytes()
+                                    telemetry["traffic"]["gateway_to_browser"]["bytes"] += len(pcm_bytes)
+                                    telemetry["traffic"]["gateway_to_browser"]["frames"] += 1
+                                    await websocket.send_bytes(pcm_bytes)
+                            except Exception as opus_err:
+                                logger.debug(f"Opus decode note: {opus_err}")
+
+                elif opcode == 0x02:
+                    # Text token
+                    token = raw[1:].decode("utf-8", errors="replace")
                     telemetry["tokens_received"] += 1
                     if not current_agent_turn_text:
                         current_agent_turn_start = (time.time() - call_start_time) * 1000.0
                     current_agent_turn_text.append(token)
 
-                    # Stream text token to client
+                    # Stream text token to client as JSON transcript and forward raw frame
                     await websocket.send_json({
                         "type": "transcript",
                         "role": "assistant",
                         "text": token,
                     })
+                    if not is_pcm_client:
+                        await websocket.send_bytes(raw)
 
                     # Feed to EndOfCallDetector
                     matched = detector.on_agent_token(token, time.time())
                     if matched:
                         detector.on_agent_speaking_stopped(time.time())
 
-                elif isinstance(msg, AudioMessage):
-                    raw_audio = msg.data
-                    if len(raw_audio) == 0:
-                        continue
+                elif opcode in (0x03, 0x04):
+                    if not is_pcm_client:
+                        await websocket.send_bytes(raw)
 
-                    f32_worker = (
-                        np.frombuffer(raw_audio, dtype=np.float32)
-                        if isinstance(raw_audio, bytes)
-                        else (raw_audio if raw_audio.dtype == np.float32 else raw_audio.astype(np.float32))
-                    )
-                    if len(f32_worker) == 0:
-                        continue
-
-                    if not first_agent_audio_emitted:
-                        first_agent_audio_emitted = True
-                        ttfa_greeting_ms = round((time.time() - call_start_time) * 1000.0, 1)
-                        telemetry["ttfa_greeting_ms"] = ttfa_greeting_ms
-
-                    telemetry["traffic"]["worker_to_gateway"]["bytes"] += len(raw_audio)
-                    telemetry["traffic"]["worker_to_gateway"]["frames"] += 1
-                    mrms = compute_rms(f32_worker)
-                    mpeak = float(np.max(np.abs(f32_worker)))
-                    telemetry["audio_levels"]["worker_to_gateway_rms"] = round(
-                        telemetry["audio_levels"]["worker_to_gateway_rms"] * 0.9 + mrms * 0.1, 4
-                    )
-                    telemetry["audio_levels"]["worker_to_gateway_peak"] = round(
-                        max(telemetry["audio_levels"]["worker_to_gateway_peak"], mpeak), 4
-                    )
-
-                    # Resample 24k -> client rate (16k or 8k)
-                    resampled = out_resampler.resample_chunk(f32_worker, last=False)
-                    if len(resampled) == 0:
-                        continue
-
-                    # Soft clip limiter to prevent speaker distortion
-                    clipped_f32 = soft_clip(resampled, threshold=0.92)
-
-                    if codec == "g711_ulaw":
-                        pcm_bytes = encode_ulaw(clipped_f32)
-                    else:
-                        pcm_bytes = float32_to_int16(clipped_f32).tobytes()
-
-                    telemetry["traffic"]["gateway_to_browser"]["bytes"] += len(pcm_bytes)
-                    telemetry["traffic"]["gateway_to_browser"]["frames"] += 1
-                    await websocket.send_bytes(pcm_bytes)
+                elif opcode == 0x05:
+                    err_text = raw[1:].decode("utf-8", errors="replace")
+                    logger.warning(f"Worker emitted error: {err_text}")
+                    await websocket.send_json({"type": "error", "message": f"Worker error: {err_text}"})
+                    if not is_pcm_client:
+                        await websocket.send_bytes(raw)
+                    break
 
         except asyncio.CancelledError:
             pass
@@ -632,7 +683,7 @@ async def voice_v2_endpoint(
                 try:
                     await websocket.send_json({
                         "type": "error",
-                        "message": "PersonaPlex worker stream closed unexpectedly. Ensure HF_TOKEN is exported and worker on 127.0.0.1:8998 is running.",
+                        "message": "PersonaPlex worker stream closed unexpectedly. Ensure worker on 127.0.0.1:8998 is running.",
                     })
                 except Exception:
                     pass
@@ -668,10 +719,11 @@ async def voice_v2_endpoint(
     # Run tasks concurrently
     tasks = [
         asyncio.create_task(client_to_queue_loop()),
-        asyncio.create_task(queue_to_worker_pacer()),
         asyncio.create_task(worker_to_client_loop()),
         asyncio.create_task(lifecycle_heartbeat()),
     ]
+    if is_pcm_client:
+        tasks.append(asyncio.create_task(queue_to_worker_pacer()))
 
     stop_task = asyncio.create_task(stop_event.wait())
     all_tasks = [stop_task, *tasks]
@@ -722,7 +774,8 @@ async def voice_v2_endpoint(
 
     # 10. Clean up worker & connection
     if worker_client:
-        await worker_pool.release_worker(worker_client.worker_id)
+        call_success = disconnect_reason in ("normal", "user_hangup", "duration_limit", "silence_timeout", "agent_closed")
+        await worker_pool.release_worker(worker_client.worker_id, success=call_success)
 
     try:
         close_code = status.WS_1000_NORMAL_CLOSURE

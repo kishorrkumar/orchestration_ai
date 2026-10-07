@@ -232,6 +232,31 @@ class PersonaPlexWorkerClient:
         await self._ws.send(msg_bytes)
         self.frames_sent += 1
 
+    async def send_raw(self, raw_bytes: bytes) -> None:
+        """Send raw binary frame directly upstream to worker with zero transcoding."""
+        if self._ws is None or self._status != WorkerStatus.BUSY:
+            raise WorkerConnectionError(f"Worker {self.worker_id} is not connected")
+        await self._ws.send(raw_bytes)
+        self.frames_sent += 1
+
+    async def recv_raw_frames(self) -> AsyncGenerator[bytes, None]:
+        """Yield raw untouched binary frames from upstream worker."""
+        if self._ws is None:
+            raise WorkerConnectionError("Worker not connected")
+        try:
+            async for raw in self._ws:
+                if isinstance(raw, bytes):
+                    self.frames_received += 1
+                    yield raw
+        except websockets.ConnectionClosedOK:
+            logger.info(f"Worker {self.worker_id} connection closed cleanly (1000 OK)")
+        except websockets.ConnectionClosedError as ce:
+            logger.warning(f"Worker {self.worker_id} connection closed with code {ce.code}: {ce.reason}")
+        except websockets.ConnectionClosed as cc:
+            logger.info(f"Worker {self.worker_id} connection closed: {cc.code}")
+        finally:
+            await self.close(mark_idle=False)
+
     async def send_control(self, action: ControlAction) -> None:
         """Send control action upstream (Kind 0x03)."""
         if self._ws is None:
@@ -295,15 +320,30 @@ class PersonaPlexWorkerClient:
         finally:
             await self.close()
 
-    async def close(self) -> None:
-        """Close connection and reset worker state to IDLE."""
+    async def probe_health(self) -> bool:
+        """Probe if upstream worker host and port is open and accepting TCP connections."""
+        try:
+            reader, writer = await asyncio.wait_for(
+                asyncio.open_connection(self.host, self.port),
+                timeout=1.0,
+            )
+            writer.close()
+            await writer.wait_closed()
+            return True
+        except Exception as e:
+            logger.warning(f"Worker {self.worker_id} ({self.host}:{self.port}) health probe failed: {e}")
+            return False
+
+    async def close(self, mark_idle: bool = True) -> None:
+        """Close connection and reset worker state to IDLE if requested."""
         if self._ws is not None:
             try:
                 await self._ws.close()
             except Exception:
                 pass
             self._ws = None
-        self._status = WorkerStatus.IDLE
+        if mark_idle:
+            self._status = WorkerStatus.IDLE
         self._active_session_id = None
         if self.use_opus:
             try:

@@ -17,7 +17,10 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import HTTPException
-import sentencepiece
+try:
+    import sentencepiece
+except ImportError:
+    sentencepiece = None  # type: ignore
 
 from ..protocol.prompt import (
     IDEAL_SYSTEM_PROMPT_TOKENS,
@@ -79,9 +82,11 @@ def _find_tokenizer_path() -> Path | None:
     return None
 
 
-def get_tokenizer() -> sentencepiece.SentencePieceProcessor | None:
+def get_tokenizer() -> Any | None:
     """Returns the cached SentencePiece tokenizer if available, else None."""
     global _SP_TOKENIZER, _TOKENIZER_CHECKED
+    if sentencepiece is None:
+        return None
     if not _TOKENIZER_CHECKED:
         _TOKENIZER_CHECKED = True
         model_path = _find_tokenizer_path()
@@ -152,8 +157,8 @@ def sanitize_prompt_text(text: str) -> tuple[str, list[str]]:
         warnings.append("Removed numbered list markers")
 
     # 5. Rigid scripted quotes (e.g. Start: Open the call by saying: "..." or Close: When the conversation is done, say: "...")
-    if re.search(r"(?:Start|Close):\s*(?:Open the call by saying|When the conversation is done, say)?[:\s]*\"[^\"]*\"", cleaned, flags=re.IGNORECASE):
-        cleaned = re.sub(r"(?:Start|Close):\s*(?:Open the call by saying|When the conversation is done, say)?[:\s]*\"([^\"]*)\"", r"\1", cleaned, flags=re.IGNORECASE)
+    if re.search(r"(?:Start|Close):\s*(?:Open the call by saying|When the conversation is done, say)?[:\s]*['\"][^'\"]*['\"]", cleaned, flags=re.IGNORECASE):
+        cleaned = re.sub(r"(?:Start|Close):\s*(?:Open the call by saying|When the conversation is done, say)?[:\s]*['\"]([^'\"]*)['\"]", r"\1", cleaned, flags=re.IGNORECASE)
         warnings.append("Removed scripted quotation commands ('Start:' / 'Close:')")
 
     # Restore placeholders
@@ -176,7 +181,10 @@ def get_local_time_context(tz_name: str = "Asia/Kolkata", dt: datetime.datetime 
     try:
         tz = zoneinfo.ZoneInfo(tz_name)
     except Exception:
-        tz = zoneinfo.ZoneInfo("UTC")
+        try:
+            tz = zoneinfo.ZoneInfo("UTC")
+        except Exception:
+            tz = datetime.timezone.utc
 
     now = dt.astimezone(tz) if dt else datetime.datetime.now(tz)
     weekday = now.strftime("%A")
@@ -378,17 +386,13 @@ def compile_prompt(
         missing = unrendered if unrendered else ["unresolved_template_variable"]
         raise TemplateResolutionError(missing)
 
-    # 4. Assemble natural conversational scenario in plain prose (no scripted Start:/Close: quotes)
-    body_lines: list[str] = [rendered_system, time_ctx["time_line"]]
+    # 4. Assemble natural conversational scenario in plain prose (no scripted commands)
+    body_lines: list[str] = [rendered_system]
+    if time_ctx.get("time_line"):
+        body_lines.append(time_ctx["time_line"])
 
     if greeting_mode == "user_first":
         body_lines.append("The caller will speak first. Listen before responding.")
-    elif greeting_mode == "agent_first":
-        if rendered_greeting and rendered_greeting.lower() not in rendered_system.lower() and "greet" not in rendered_system.lower():
-            body_lines.append(f"When the call connects, greet the caller warmly: {rendered_greeting}")
-
-    if rendered_ending and rendered_ending.lower() not in rendered_system.lower() and "goodbye" not in rendered_system.lower():
-        body_lines.append(f"When concluding the call: {rendered_ending}")
 
     compiled_body = "\n\n".join([line for line in body_lines if line])
     final_prompt = wrap_system_prompt(compiled_body)

@@ -232,27 +232,76 @@ async def run_direct_test(
     print(f"Full Text:       {full_text.strip()}")
     print("=" * 60)
 
+    return {
+        "voice": voice_prompt,
+        "success": (len(received_audio_pcm) > 0 and rms > 0.005),
+        "duration_sec": duration_sec,
+        "rms": rms,
+        "priming_ms": (handshake_time - t_connect_start) * 1000.0 if handshake_time else 0.0,
+        "tokens": len(received_text_tokens),
+        "text": full_text.strip(),
+        "out_path": out_path,
+    }
+
 
 def main():
     parser = argparse.ArgumentParser(description="Test upstream PersonaPlex worker directly")
     parser.add_argument("--url", default="ws://127.0.0.1:8998/api/chat", help="Worker WebSocket URL")
     parser.add_argument("--wav", default="test_fem.wav", help="Input audio WAV file")
     parser.add_argument("--out", default="eval_out/direct_reply.wav", help="Output WAV path")
-    parser.add_argument("--voice", default="NATM1.pt", help="Voice prompt filename (.pt or .wav)")
+    parser.add_argument("--voice", default="NATM1.pt", help="Single voice prompt (.pt or .wav)")
+    parser.add_argument("--voices", default=None, help="Comma-separated list of voices to test (e.g. NATF1.pt,NATM1.pt,NATF2.pt)")
     parser.add_argument("--prompt", default="You are a helpful and concise voice assistant.", help="Text prompt")
     parser.add_argument("--silence-sec", type=float, default=6.0, help="Seconds of silence to stream after WAV")
     args = parser.parse_args()
 
-    asyncio.run(
-        run_direct_test(
-            url=args.url,
-            wav_path=args.wav,
-            out_path=args.out,
-            voice_prompt=args.voice,
-            text_prompt=args.prompt,
-            silence_after_sec=args.silence_sec,
-        )
-    )
+    voice_list = [v.strip() for v in args.voices.split(",")] if args.voices else [args.voice]
+
+    results = []
+    for idx, v in enumerate(voice_list):
+        out_file = args.out
+        if len(voice_list) > 1:
+            stem = Path(args.out).stem
+            suffix = Path(args.out).suffix
+            out_file = str(Path(args.out).parent / f"{stem}_{Path(v).stem}{suffix}")
+            # Also write the first one or last one to direct_reply.wav
+            if idx == 0:
+                out_file = args.out
+
+        print(f"\n>>> Running direct test for voice: {v} -> {out_file}")
+        try:
+            res = asyncio.run(
+                run_direct_test(
+                    url=args.url,
+                    wav_path=args.wav,
+                    out_path=out_file,
+                    voice_prompt=v,
+                    text_prompt=args.prompt,
+                    silence_after_sec=args.silence_sec,
+                )
+            )
+            results.append(res)
+        except Exception as err:
+            results.append({
+                "voice": v,
+                "success": False,
+                "error": str(err),
+            })
+
+    if len(results) > 1:
+        print("\n" + "=" * 70)
+        print(" MULTI-VOICE DIRECT TEST SUMMARY")
+        print("=" * 70)
+        for r in results:
+            if r.get("success"):
+                print(f" Voice {r['voice']:<12}: SUCCESS | Priming: {r['priming_ms']:.1f}ms | Dur: {r['duration_sec']:.2f}s | RMS: {r['rms']:.5f}")
+            else:
+                err_msg = r.get("error", "No audio returned or silent")
+                print(f" Voice {r['voice']:<12}: FAILED  | Error: {err_msg}")
+        print("=" * 70)
+
+    all_passed = all(r.get("success", False) for r in results)
+    sys.exit(0 if all_passed else 1)
 
 
 if __name__ == "__main__":

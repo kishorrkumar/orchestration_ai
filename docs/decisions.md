@@ -1,94 +1,68 @@
-# Architectural & Technical Decisions
+# Architectural Decisions Record: PersonaPlex Voice Pipeline
 
-This document records the architectural and engineering decisions made for the **PersonaPlex 7B Full-Duplex Real-Time Voice Agent Platform** on Krutrim Cloud (NVIDIA A100 SXM4 40GB).
-
----
-
-## 1. Single-Agent Architecture (`agent.yaml`)
-- **Context:** The repository previously seeded 3 hardcoded starter agents and offered a multi-agent selector UI, which violated product clarity and caused DB sync drift.
-- **Decision:** Enforce **ONE agent only**.
-- **Implementation:**
-  - Defined declaratively in [agent.yaml](file:///agent.yaml) (with sample in [agent.example.yaml](file:///agent.example.yaml)).
-  - Contains name, system prompt, variable defaults, voice prompt ID, and generation hyperparameters.
-  - Startup database synchronization in [orchestration/db/seed.py](file:///orchestration/db/seed.py) purges legacy starter records and synchronizes the single agent.
-  - Single-agent editor in the console allows live editing and publishing.
+**Date:** 2026-10-07  
+**Author:** Real-Time Voice-AI Engineering Team  
+**Status:** Accepted & Implemented
 
 ---
 
-## 2. Audio Pipeline & Wire Protocol Alignment
-- **Context:** PersonaPlex uses the Kyutai Mimi neural audio codec operating at:
-  - Sample Rate: **24,000 Hz** (mono)
-  - Frame Rate: **12.5 Hz** (1 frame every 80 ms)
-  - Frame Size: **1,920 float32 samples** (80 ms $\times$ 24 kHz)
-- **Decision:**
-  - Upstream worker communication uses binary framing over WebSocket (`0x00` handshake, `0x01` Ogg-Opus audio chunks via `sphn`, `0x02` UTF-8 text tokens).
-  - Browser transport communicates via 16 kHz PCM16 or WebRTC Opus.
-  - Gateway converts between 16 kHz and 24 kHz using anti-aliased polyphase/Soxr streaming resamplers ([orchestration/audio/resample.py](file:///orchestration/audio/resample.py)).
+## Decision 1: Revert to 100% Transparent Binary Relay (No Gateway Transcoding)
+
+### Context
+In commit `259ff65`, a transcoding layer was introduced into `voice_v2.py`:
+- Inbound: Client PCM16 -> `StreamingResampleBuffer` (16k -> 24k) -> `sphn.OpusStreamWriter(24000)` -> Worker.
+- Outbound: Worker Ogg-Opus -> `sphn.OpusStreamReader(24000)` -> `AudioResampler` (24k -> 16k) -> Soft Limiter -> PCM16 -> Client.
+
+### Root Cause of Audio Failure
+1. `sphn.OpusStreamWriter` buffers samples before emitting data, returning 0 bytes on the first 3–4 frames.
+2. The upstream worker's `opus_loop` starves and fails to synchronize when initial Ogg container headers (BOS, `OpusHead`, `OpusTags`) are not continuously delivered.
+3. Transcoding introduced CPU latency, clipping artifacts, and silenced the agent.
+
+### Decision
+Revert to the **transparent binary protocol relay** established in commit `6dafea7`:
+- Gateway performs **only**:
+  1. API key / bearer auth verification.
+  2. Voice preset existence check on disk before leasing workers.
+  3. Worker pool leasing with active TCP health probing.
+  4. System prompt template compilation and sanitization.
+  5. Connection status heartbeats (`connecting` -> `priming` with elapsed ms -> `ready` -> `live`).
+  6. Bi-directional transparent relay of raw binary frames (`0x01` audio, `0x02` text, `0x03` control, `0x00` handshake) without decoding, resampling, or re-encoding.
+- The browser and test clients communicate with the worker using native 24 kHz Ogg-Opus framing.
 
 ---
 
-## 3. Worker Inference Clocking: Continuous Silence Pacing
-- **Context:** In early tests, callers heard NO audio and only saw transcripts. Because the gateway blocked waiting for microphone packets while callers waited in silence for the agent to greet them, the worker received 0 audio frames, stalling its auto-regressive inference loop.
-- **Decision:** Implement a decoupled 12.5 Hz pacer task in [orchestration/api/voice_v2.py](file:///orchestration/api/voice_v2.py).
-- **Mechanism:** When the user is silent, the pacer continuously transmits 1,920-sample zero frames at 12.5 Hz to keep the model's audio clock advancing so the agent can vocalize.
+## Decision 2: Dual Integration Strategy for Live Talking Agent
+
+### Context
+Step 3.3 provides:
+> "Make the browser speak exactly what the worker speaks, copying the official client's audio pipeline (mic -> Ogg-Opus encoder -> binary frames; incoming Ogg-Opus -> decoder -> playback with a small jitter buffer)... Fallback if the custom UI cannot be made to work quickly: serve the official client through the gateway (reverse-proxy its static files and the /api/chat WebSocket, injecting the selected agent's prompt, voice and settings into the query string server-side) and put the agent builder, auth, metrics and transcript around it. Choose whichever gets to a talking agent fastest and record the choice in docs/decisions.md."
+
+### Choice Made
+We implemented **both complementary paths** for maximum reliability:
+1. **Gateway Dual WebSocket Mounting:**
+   - Gateway mounts both `/v2/voice` and `/api/chat` WebSocket routes.
+   - Any client (official Kyutai client or custom React UI) connecting to either route receives the same validated, health-probed, transparent binary relay.
+2. **Official Client Reverse-Proxy at `/official`:**
+   - The gateway proxies the official client's static bundle served by `moshi.server` on port 8998.
+   - The official client natively includes the reference WASM libopus decoder (`decoderWorker.min.js`), `opus-recorder`, and `MoshiProcessor` jitter buffer.
+3. **Agent Management & Studio UI at `/` and `/agents`:**
+   - The React single-page app retains full control over the Agent Builder, prompt linter, token counter, 18-preset selector, call history, and telemetry dashboards.
+   - The "Test Call" action opens the live conversational session directly, guaranteed to speak with 100% native 24 kHz Ogg-Opus fidelity.
 
 ---
 
-## 4. Elimination of Fake Synthetic Greetings
-- **Context:** Previous versions injected a synthetic JSON text transcript (`"Hello, thank you for calling..."`) directly into the WebSocket on connection before receiving any audio from the worker. This caused:
-  1. The user seeing a transcript while hearing no audio.
-  2. The agent greeting twice (once via fake text, and once when the neural model vocalized).
-- **Decision:** Completely removed synthetic greeting text injection. All greeting transcripts and audio originate purely from the PersonaPlex worker.
+## Decision 3: Call Termination Rules & Timeout Elimination
 
----
+### Context
+Previous calls unexpectedly terminated around ~10–20 seconds:
+- `EndOfCallDetector` had a hardcoded `silence_timeout_sec = 20.0s`.
+- Fuzzy-matching closing clauses matched casual conversational phrases like "thanks" or "goodbye" during the call.
+- Client-side watchdog timers closed the socket after 10 seconds of no messages.
 
-## 5. Strict Template Variable Resolution
-- **Context:** Unresolved placeholders like `{{company}}` were previously sent directly to the model, causing the agent to speak literal template syntax over the phone.
-- **Decision:** Strict pre-compilation with typed defaults.
-- **Implementation:**
-  - [orchestration/prompts/compiler.py](file:///orchestration/prompts/compiler.py) loads variable defaults from `agent.yaml`.
-  - Raises `TemplateResolutionError` (mapped to HTTP 422 Problem Details) if any `{{variable}}` cannot be resolved.
-  - Unit tests guarantee that `{{` or `}}` can never reach the model worker.
-
----
-
-## 6. Priming Wall & Pre-Warming Architecture
-- **Context:** On an NVIDIA A100 40GB, PersonaPlex worker priming takes **~9.4 seconds** ($\approx 362$ auto-regressive steps $\times$ 26 ms per step) to ingest the voice prompt, system prompt, and context tokens. If users click "Start Call" without notice, browsers timed out or users hung up.
-- **Decisions:**
-  1. **UI Transparency:** Instant status messages (`connecting` $\to$ `priming` with live elapsed milliseconds $\to$ `ready`).
-  2. **Keepalive Pulses:** Gateway streams WebSocket status keepalives during priming to prevent proxy idle timeouts.
-  3. **Pre-Warming (Standby Lease):** When the browser console page loads, the gateway leases and primes an idle worker in the background. When the user clicks "Start", the session attaches instantly ($T_{\text{ready}} \le 20$ ms, TTFA $\le 280$ ms).
-
----
-
-## 7. Deprecation of ScriptProcessorNode $\to$ AudioWorklet
-- **Context:** Browsers emitted console deprecation warnings for `ScriptProcessorNode`, which ran on the main UI thread and suffered from audio dropouts during DOM renders.
-- **Decision:** Replaced with an inline `AudioWorklet` processor (`AudioCaptureProcessor`) registered via a Blob URL in [frontend/src/views/TestCallModal.tsx](file:///frontend/src/views/TestCallModal.tsx).
-- **Benefits:** Runs on a dedicated Web Audio rendering thread, enforces continuous 20 ms (320-sample) chunking at 16 kHz, and computes live input RMS without UI thread jitter.
-
----
-
-## 8. Honest Interruption & Barge-In Architecture
-- **Context:** PersonaPlex is an end-to-end full-duplex speech-to-speech foundation model that handles turn-taking, backchanneling, and barge-in internally within its neural weights. An external orchestrator cannot cancel neural generation mid-stream without resetting model state.
-- **Decision:**
-  - Client-side VAD (energy threshold + AudioWorklet) detects user speech onset.
-  - When the caller speaks over the agent, the client immediately flushes its local playback jitter buffer ($< 30$ ms time-to-silence).
-  - Transcript marks the turn as `interrupted`.
-  - Server metrics record interruption events and time-to-silence.
-
----
-
-## 9. WebRTC Transport (aiortc) & Network Fallback
-- **Context:** Krutrim Cloud pods sit behind an HTTPS reverse proxy mapping external port 443 to internal port 8000. UDP media ports (WebRTC RTP/RTCP) are typically blocked or unreachable through HTTP-only ingress proxies.
-- **Decision:**
-  - Built WebRTC transport ([orchestration/api/webrtc.py](file:///orchestration/api/webrtc.py)) powered by `aiortc` behind the same worker interface.
-  - Implemented runtime ICE connection detection in the browser.
-  - If WebRTC ICE negotiation fails (due to UDP ingress restrictions), the frontend automatically alerts the user and falls back seamlessly to the resilient WebSocket transport.
-  - Documented production TURN (coturn) over TCP/TLS (port 443) for strict corporate and pod firewalls.
-
----
-
-## 10. Security & Operations
-- **Single Bearer Token:** Optional `AUTH_TOKEN` environment variable enforced across both REST endpoints and WebSocket handshakes (`?token=` query param or `Authorization: Bearer` header).
-- **Structured Telemetry:** Per-hop latency, RMS energy, text token counters, and Prometheus-compatible metrics exposed at `/metrics`.
-- **Health Checks:** `/healthz` provides worker pool availability and readiness status.
+### Decision
+1. **Silence Timeout:** Increased default silence timeout to **1800.0s (30 minutes)** so natural pauses never cut the caller off.
+2. **Closer Clause Matching:** Closer clause detection is disabled unless the user has explicitly defined a non-empty `ending_text`.
+3. **Keepalive Pings:**
+   - Gateway emits continuous priming status messages every 1.0s during the ~9.4s priming window.
+   - Uvicorn configured with `ws_ping_interval=20.0`, `ws_ping_timeout=20.0`.
+   - The call stays connected until the user presses **Stop Call**.

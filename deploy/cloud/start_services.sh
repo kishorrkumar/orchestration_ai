@@ -68,7 +68,7 @@ export NO_TORCH_COMPILE=1
 # 4. Locate and Extract Voice Presets (.pt)
 echo "[INFO] Verifying PersonaPlex voice presets (.pt)..."
 python3 -c "
-import os, tarfile, shutil
+import os, tarfile, shutil, sys
 from pathlib import Path
 
 hf_home = os.environ.get('HF_HOME', os.path.expanduser('~/.cache/huggingface'))
@@ -76,24 +76,46 @@ token = os.environ.get('HF_TOKEN')
 voices_dir = Path(hf_home) / 'voices'
 voices_dir.mkdir(parents=True, exist_ok=True)
 
+# 1. Flatten any nested subfolders (e.g. voices/voices/*.pt) into voices_dir
+for pt in list(voices_dir.rglob('*.pt')):
+    if pt.parent != voices_dir:
+        dest = voices_dir / pt.name
+        if not dest.exists():
+            shutil.move(str(pt), str(dest))
+
+# Also search elsewhere in hf_home for any .pt files and sync into voices_dir
+for pt in list(Path(hf_home).rglob('*.pt')):
+    dest = voices_dir / pt.name
+    if not dest.exists():
+        shutil.copy2(str(pt), str(dest))
+
 pt_files = list(voices_dir.glob('*.pt'))
 if len(pt_files) < 18:
-    print('[INFO] Extracting/downloading 18 PersonaPlex voice presets...')
+    print(f'[INFO] Found {len(pt_files)}/18 presets. Extracting/downloading PersonaPlex voice presets...')
     tgz_candidates = list(Path(hf_home).glob('**/voices.tgz'))
     if tgz_candidates:
         tgz_file = tgz_candidates[0]
         print(f'[INFO] Extracting cached archive: {tgz_file}')
         with tarfile.open(tgz_file, 'r:gz') as tar:
-            tar.extractall(path=voices_dir)
+            kwargs = {'filter': 'data'} if hasattr(tarfile, 'data_filter') else {}
+            tar.extractall(path=voices_dir, **kwargs)
     else:
         try:
             from huggingface_hub import hf_hub_download
             print('[INFO] Downloading voices.tgz from nvidia/personaplex-7b-v1...')
             downloaded = hf_hub_download('nvidia/personaplex-7b-v1', 'voices.tgz', token=token)
             with tarfile.open(downloaded, 'r:gz') as tar:
-                tar.extractall(path=voices_dir)
+                kwargs = {'filter': 'data'} if hasattr(tarfile, 'data_filter') else {}
+                tar.extractall(path=voices_dir, **kwargs)
         except Exception as e:
             print(f'[WARNING] Could not fetch voices.tgz: {e}')
+
+    # Re-flatten any nested extracted folders (voices.tgz extracts a 'voices/' directory)
+    for pt in list(voices_dir.rglob('*.pt')):
+        if pt.parent != voices_dir:
+            dest = voices_dir / pt.name
+            if not dest.exists():
+                shutil.move(str(pt), str(dest))
 
 # Sync to local ./voices directory
 proj_voices = Path('voices')
@@ -104,10 +126,14 @@ for pt in voices_dir.glob('*.pt'):
         try:
             dest.symlink_to(pt)
         except Exception:
-            shutil.copy2(pt, dest)
+            shutil.copy2(str(pt), str(dest))
 
-print(f'[INFO] Voice presets verified: {len(list(voices_dir.glob(\"*.pt\")))} presets available.')
-" || true
+found_presets = sorted([p.name for p in voices_dir.glob('*.pt')])
+print(f'[INFO] Voice presets verified: {len(found_presets)}/18 presets available in {voices_dir}')
+if len(found_presets) < 18:
+    print(f'[ERROR] Missing required voice presets! Only {len(found_presets)} found: {found_presets}')
+    sys.exit(1)
+"
 
 # 5. Patch moshi.server upstream bugs in active environment
 python3 -c "
@@ -212,10 +238,11 @@ echo " Voices Dir: ${VOICES_DIR}"
 echo "=============================================================================="
 
 # 6. Start Moshi 7B Inference Worker
-echo "[INFO] Launching PersonaPlex 7B Worker on 127.0.0.1:8998..."
-WORKER_CMD="python -m moshi.server --host 127.0.0.1 --port 8998 --voice-prompt-dir $VOICES_DIR"
+mkdir -p logs
+echo "[INFO] Launching PersonaPlex 7B Worker on 127.0.0.1:8998 (logging to logs/worker.log)..."
+WORKER_CMD="python -u -m moshi.server --host 127.0.0.1 --port 8998 --voice-prompt-dir $VOICES_DIR"
 
-$WORKER_CMD > worker.log 2>&1 &
+$WORKER_CMD 2>&1 | tee -a logs/worker.log worker.log &
 WORKER_PID=$!
 echo "[INFO] Worker spawned (PID: $WORKER_PID). Waiting for 14.5 GB weights to load into A100 VRAM..."
 

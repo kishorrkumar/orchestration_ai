@@ -13,7 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ..db.models import Agent, AgentVersion
 from ..db.service import AgentService
 from ..db.session import get_db
-from ..persona.registry import OFFICIAL_VOICE_PRESETS
+from ..persona.registry import OFFICIAL_VOICE_PRESETS, get_existing_voice_files
 from .schemas import (
     AgentPublishRequest,
 )
@@ -86,11 +86,12 @@ async def list_agents(
     service = AgentService(db)
     agents, total = await service.list_agents(status=status, search=search, limit=limit, offset=offset)
     serialized = [_agent_to_dict(a) for a in agents]
+    available_voices = get_existing_voice_files()
     return {
         "items": serialized,
         "agents": serialized,
         "personas": serialized,
-        "voice_presets": OFFICIAL_VOICE_PRESETS,
+        "voice_presets": available_voices,
         "total": total,
         "limit": limit,
         "offset": offset,
@@ -107,6 +108,13 @@ async def create_agent(
 
     name = payload.get("name") or "New Agent"
     voice_id = payload.get("voice_id") or payload.get("voice_prompt") or "NATF0.pt"
+    available_voices = get_existing_voice_files()
+    if voice_id not in available_voices and f"{voice_id}.pt" not in available_voices and not str(voice_id).endswith(".wav"):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"voice '{voice_id}' not found, available: {', '.join(available_voices)}",
+        )
+
     greeting_text = payload.get("greeting_text") or ""
     greeting_mode = payload.get("greeting_mode") or "agent_first"
     system_prompt = payload.get("system_prompt") or payload.get("text_prompt") or ""
@@ -170,6 +178,13 @@ async def update_agent(
 
     name = payload.get("name")
     voice_id = payload.get("voice_id") or payload.get("voice_prompt")
+    if voice_id is not None:
+        available_voices = get_existing_voice_files()
+        if voice_id not in available_voices and f"{voice_id}.pt" not in available_voices and not str(voice_id).endswith(".wav"):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"voice '{voice_id}' not found, available: {', '.join(available_voices)}",
+            )
     greeting_text = payload.get("greeting_text")
     greeting_mode = payload.get("greeting_mode")
     system_prompt = payload.get("system_prompt") or payload.get("text_prompt")

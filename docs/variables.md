@@ -1,59 +1,52 @@
-# PersonaPlex Orchestration Variables & Settings Directory
+# Configuration Variables Reference: PersonaPlex Voice Orchestrator
 
-This document provides a single reference of all system, audio, networking, and agent configuration variables across the platform.
-
----
-
-## 1. Core Model & DSP Variables (Protocol Invariants)
-
-These constants are bit-exact with NVIDIA PersonaPlex / Kyutai Moshi upstream specifications.
-
-| Variable | Where Defined | Type & Unit | Default Value | PersonaPlex / Moshi Counterpart | Description |
-|---|---|---|---|---|---|
-| `SAMPLE_RATE` | `orchestration/settings.py` | `int` (Hz) | `24000` | `moshi.models.loaders.SAMPLE_RATE` | Native sampling rate of the Mimi neural audio codec. |
-| `FRAME_SAMPLES` | `orchestration/settings.py` | `int` (samples) | `1920` | `moshi.server.ServerState.frame_size` | Number of audio samples per forward inference step ($24000 \times 0.08$). |
-| `FRAME_RATE_HZ` | `orchestration/settings.py` | `float` (Hz) | `12.5` | `moshi.models.loaders.FRAME_RATE` | Frame rate of the Mimi codec and LMGen model steps. |
-| `FRAME_MS` | `orchestration/settings.py` | `float` (ms) | `80.0` | `1000 / FRAME_RATE` | Duration of one audio chunk in milliseconds. |
-| `CLIENT_SAMPLE_RATE` | `orchestration/settings.py` | `int` (Hz) | `16000` | N/A (Gateway resampler target) | Audio sample rate exchanged with browser web clients. |
-| `CLIENT_CAPTURE_RATE` | `orchestration/settings.py` | `int` (Hz) | `16000` | N/A (AudioWorklet output) | Audio capture rate from client microphone. |
-| `CLIENT_CODEC` | `orchestration/settings.py` | `str` | `"pcm16"` | N/A | Wire audio format with browser (`pcm16` or `g711_ulaw`). |
-| `WIRE_ENCODING` | `orchestration/settings.py` | `str` | `"ogg_opus"` | `sphn.OpusStreamWriter(24000)` | Worker binary wire encoding (Ogg-Opus container @ 24 kHz). |
+**Module:** `orchestration/settings.py` (backed by `pydantic-settings` `BaseSettings`)  
+**Configuration Sources:** Environment variables, `.env` file, and `agent.yaml`
 
 ---
 
-## 2. Worker & Gateway Networking Settings
+## 1. System & Protocol Invariants
 
-| Variable | Where Defined | Type & Unit | Default Value | PersonaPlex / Moshi Counterpart | Description |
-|---|---|---|---|---|---|
-| `WORKER_HOST` | `orchestration/settings.py`, `.env` | `str` (IP/Host) | `"127.0.0.1"` | `--host` in `moshi.server` | Upstream PersonaPlex inference worker host. |
-| `WORKER_PORT` | `orchestration/settings.py`, `.env` | `int` (Port) | `8998` | `--port` in `moshi.server` | Upstream PersonaPlex worker listening port. |
-| `GATEWAY_HOST` | `orchestration/settings.py`, `.env` | `str` (IP/Host) | `"0.0.0.0"` | N/A | FastAPI gateway bind host. |
-| `GATEWAY_PORT` | `orchestration/settings.py`, `.env` | `int` (Port) | `8000` | N/A | FastAPI gateway bind port (exposed to cloud HTTPS proxy). |
-| `AUTH_TOKEN` | `orchestration/settings.py`, `.env` | `str \| None` | `None` | N/A | Optional Bearer authentication token for REST and WebSocket calls. |
-| `CONNECT_TIMEOUT_SEC`| `orchestration/settings.py` | `float` (seconds) | `15.0` | N/A | Maximum wait for TCP connection to worker socket. |
-| `HANDSHAKE_TIMEOUT_SEC`| `orchestration/settings.py` | `float` (seconds) | `60.0` | System prompt priming loop | Maximum wait for worker priming and initial `0x00` handshake byte. |
-| `JITTER_BUFFER_MS` | `orchestration/settings.py`, `agent.yaml` | `int` (ms) | `120` | N/A | Audio playback jitter buffer window in browser client to prevent underruns. |
-| `ENABLE_PREWARM` | `orchestration/settings.py` | `bool` | `True` | Standby session lease | Automatically connect and prime worker on page load to eliminate TTFA latency. |
-| `PREWARM_IDLE_TIMEOUT_SEC` | `orchestration/settings.py` | `float` (seconds) | `120.0` | N/A | Inactivity timeout after which an unattached pre-warmed worker lease is released. |
+| Variable Name | Defined In | Type / Unit | Default Value | PersonaPlex Counterpart / Note |
+|---|---|---|---|---|
+| `SAMPLE_RATE` | `Settings` | `int` (Hz) | `24000` | Native Mimi neural codec sample rate (24 kHz mono). Non-configurable. |
+| `FRAME_SAMPLES` | `Settings` | `int` (samples) | `1920` | Mimi frame size (80 ms at 24 kHz). Non-configurable. |
+| `FRAME_RATE_HZ` | `Settings` | `float` (Hz) | `12.5` | S2S stepping frequency (1 / 0.080s). Non-configurable. |
+| `FRAME_MS` | `Settings` | `float` (ms) | `80.0` | S2S frame duration in milliseconds. Non-configurable. |
+| `CLIENT_SAMPLE_RATE` | `Settings` | `int` (Hz) | `16000` | Default sample rate for web clients (can be 16000 or 8000). |
+| `WIRE_ENCODING` | `Settings` | `string` | `"ogg_opus"` | Ogg containerized Opus frames over WebSocket (`0x01`). |
 
 ---
 
-## 3. Single Agent Configuration (`agent.yaml`)
+## 2. Network & Server Endpoints
 
-| Variable | Where Defined | Type | Default Value | PersonaPlex / Moshi Counterpart | Description |
-|---|---|---|---|---|---|
-| `name` | `agent.yaml` | `str` | `"Alex"` | Template variable `{{agent_name}}` | Name of the voice persona. |
-| `timezone` | `agent.yaml` | `str` | `"Asia/Kolkata"` | ZoneInfo context | IANA timezone used for greeting time-of-day resolution. |
-| `voice_prompt` | `agent.yaml` | `str` | `"NATF2.pt"` | `request.query["voice_prompt"]` | Voice reference file (.pt embedding or .wav in voices directory). |
-| `greeting_mode` | `agent.yaml` | `str` | `"agent_first"` | Model prompt instruction | Turn sequence: `"agent_first"` (speaks first) or `"user_first"` (listens first). |
-| `greeting_text` | `agent.yaml` | `str` | `"Hello! This is Alex..."` | Model prompt instruction | Opening sentence for the agent. |
-| `ending_text` | `agent.yaml` | `str` | `"Thank you for calling..."` | End-of-call detector regex | Concluding line used by termination detector. |
-| `system_prompt` | `agent.yaml` | `str` | *(prose)* | `request.query["text_prompt"]` | Persona role, background, scenario, and speaking style. |
-| `variables` | `agent.yaml` | `dict[str, str]` | `company`, `caller_name`, ... | Template substitution values | Strict default values for all `{{variable}}` template placeholders. |
-| `audio_temperature`| `agent.yaml` | `float` | `0.8` | `LMGen.temp` | Audio sampling temperature. |
-| `text_temperature` | `agent.yaml` | `float` | `0.7` | `LMGen.temp_text` | Text token sampling temperature. |
-| `audio_topk` | `agent.yaml` | `int` | `250` | `LMGen.top_k` | Top-K sampling for audio codebooks. |
-| `text_topk` | `agent.yaml` | `int` | `25` | `LMGen.top_k_text` | Top-K sampling for text generation. |
-| `seed` | `agent.yaml` | `int \| None` | `-1` | `torch.manual_seed` | Generation seed (-1 for random). |
-| `max_duration_sec` | `agent.yaml` | `int` (seconds) | `600` | Session timer | Hard call duration cutoff. |
-| `end_silence_sec` | `agent.yaml` | `int` (seconds) | `20` | Silence watchdog | Disconnect call if silence exceeds this duration. |
+| Variable Name | Defined In | Type / Unit | Default Value | PersonaPlex Counterpart / Note |
+|---|---|---|---|---|
+| `WORKER_HOST` | `Settings` | `string` | `"127.0.0.1"` | Upstream `moshi.server` host. |
+| `WORKER_PORT` | `Settings` | `int` (port) | `8998` | Upstream `moshi.server` port. |
+| `GATEWAY_HOST` | `Settings` | `string` | `"0.0.0.0"` | FastAPI gateway bind address. |
+| `GATEWAY_PORT` | `Settings` | `int` (port) | `8000` | FastAPI gateway bind port (exposed to Cloud HTTPS proxy). |
+| `AUTH_TOKEN` | `Settings` | `string | None` | `None` | Optional Bearer authentication token. |
+| `CONNECT_TIMEOUT_SEC`| `Settings` | `float` (s) | `15.0` | Maximum wait for TCP connection to worker. |
+| `HANDSHAKE_TIMEOUT_SEC`| `Settings` | `float` (s) | `60.0` | Maximum wait for model priming and handshake (`0x00`). |
+
+---
+
+## 3. Agent & Persona Parameters
+
+| Variable Name | Defined In | Type / Unit | Default Value | PersonaPlex Counterpart / Note |
+|---|---|---|---|---|
+| `name` | `AgentConfig` | `string` | `"Alex"` | Agent display name. |
+| `timezone` | `AgentConfig` | `string` | `"Asia/Kolkata"` | Timezone for dynamic local time prompt injection. |
+| `voice_prompt` | `AgentConfig` | `string` | `"NATF2.pt"` | Voice embedding filename in `--voice-prompt-dir`. Maps to `/api/chat?voice_prompt=...`. |
+| `greeting_mode` | `AgentConfig` | `string` | `"agent_first"` | `"agent_first"` (agent speaks upon connect) or `"user_first"` (agent listens). |
+| `greeting_text` | `AgentConfig` | `string` | `""` | Optional opening greeting scenario statement. |
+| `ending_text` | `AgentConfig` | `string` | `""` | Optional closing statement for natural call termination. |
+| `system_prompt` | `AgentConfig` | `string` | `""` | Persona definition wrapped in `<system> ... <system>`. |
+| `audio_temperature`| `AgentConfig` | `float` (0.0-2.0)| `0.8` | Maps to `moshi.server` query param `audio_temperature`. |
+| `text_temperature` | `AgentConfig` | `float` (0.0-2.0)| `0.7` | Maps to `moshi.server` query param `text_temperature`. |
+| `audio_topk` | `AgentConfig` | `int` | `250` | Maps to `moshi.server` query param `audio_topk`. |
+| `text_topk` | `AgentConfig` | `int` | `25` | Maps to `moshi.server` query param `text_topk`. |
+| `seed` | `AgentConfig` | `int` | `-1` | Maps to `moshi.server` query param `seed` (`-1` = randomized). |
+| `max_duration_sec` | `AgentConfig` | `int` (s) | `1800` (30 min) | Maximum session duration before automatic closure. |
+| `end_silence_sec` | `AgentConfig` | `int` (s) | `1800` (30 min) | Silence timeout before automatic closure. |

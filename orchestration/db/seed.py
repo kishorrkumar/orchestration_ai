@@ -31,9 +31,15 @@ LEGACY_STARTER_NAMES = {
 
 
 async def seed_database(db: AsyncSession) -> None:
-    """Seeds default workspace and synchronizes the single agent defined in agent.yaml."""
+    """Seeds default workspace and synchronizes agent.yaml if present."""
     service = AgentService(db)
     workspace = await service.get_or_create_default_workspace()
+
+    from pathlib import Path
+    if not Path("agent.yaml").exists():
+        logger.info("No agent.yaml found. Starting with clean empty agent catalog.")
+        await db.commit()
+        return
 
     agent_cfg = app_settings.agent
     pipeline_data = {

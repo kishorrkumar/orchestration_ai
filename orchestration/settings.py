@@ -11,9 +11,20 @@ import re
 from pathlib import Path
 from typing import Any
 
-import yaml
+try:
+    import yaml
+except ImportError:
+    yaml = None  # type: ignore
+
 from pydantic import BaseModel, Field
-from pydantic_settings import BaseSettings, SettingsConfigDict
+
+try:
+    from pydantic_settings import BaseSettings, SettingsConfigDict
+except ImportError:
+    from pydantic import BaseModel as BaseSettings  # type: ignore
+
+    def SettingsConfigDict(**kwargs: Any) -> Any:  # type: ignore
+        return kwargs
 
 logger = logging.getLogger("orchestration.settings")
 
@@ -80,6 +91,10 @@ def find_agent_yaml_path(custom_path: str | Path | None = None) -> Path:
 
 def load_agent_yaml(yaml_path: Path) -> AgentConfig:
     """Loads agent configuration from YAML file."""
+    if yaml is None:
+        logger.info("yaml module not available; using default AgentConfig.")
+        return AgentConfig()
+
     if not yaml_path.is_file():
         logger.warning(f"Agent YAML file not found at {yaml_path}, using built-in defaults.")
         return AgentConfig()
