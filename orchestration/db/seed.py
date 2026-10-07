@@ -1,11 +1,7 @@
 """
 Database Seeder for Lean S2S Voice Agent Platform.
-Populates:
-- Default Workspace
-- 3 Production S2S Starter Agents:
-  1. Friendly Caller (Blank Template)
-  2. Clinic Appointment Assistant
-  3. Support Agent (Alex)
+Enforces the SINGLE-AGENT invariant loaded from agent.yaml.
+Removes legacy multi-agent starter records.
 """
 
 from __future__ import annotations
@@ -13,136 +9,95 @@ from __future__ import annotations
 import json
 import logging
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from .models import Agent
+from ..settings import app_settings
+from .models import Agent, AgentVersion
 from .service import AgentService
 
 logger = logging.getLogger("orchestration.db.seed")
 
-# 3 PersonaPlex S2S Starter Agents in natural conversational prose
-STARTER_AGENTS = [
-    {
-        "name": "Aarav",
-        "voice_id": "NATM1.pt",
-        "timezone": "Asia/Kolkata",
-        "system_prompt": (
-            "You are Aarav, a warm, cheerful young man from India having a relaxed phone conversation. "
-            "You speak natural, colloquial Indian English, in short sentences, the way friends talk on a call. "
-            "You are curious and easygoing, you laugh a little, and you react to what the other person says before adding your own thoughts. "
-            "You say things like achha, haan, actually, no worries, and sure sure, but only now and then, never forced. "
-            "You answer the question that was asked in a sentence or two, then ask a simple follow-up. "
-            "You enjoy cricket, chai, music and movies. If you are not sure what the other person said, you politely ask them to repeat it."
-        ),
-        "greeting_text": "Hey, hello! Aarav here. How are you doing today?",
-        "greeting_mode": "agent_first",
-        "ending_text": "Great chatting with you! Take care, bye bye!",
-        "end_silence_sec": 20,
-        "max_duration_sec": 600,
-        "pipeline_json": json.dumps({
-            "company": "BrightNet",
-            "audio_temperature": 0.8,
-            "text_temperature": 0.7,
-            "audio_topk": 250,
-            "text_topk": 25,
-        }),
-    },
-    {
-        "name": "Support Agent (Alex)",
-        "voice_id": "NATF1.pt",
-        "timezone": "Asia/Kolkata",
-        "system_prompt": (
-            "You are Alex, a friendly and patient customer support agent at {{company}}, an internet service provider. "
-            "You are on a phone call with a customer who is having trouble with their service. "
-            "Greet the customer once, warmly, then listen. Ask what is going wrong, one simple question at a time, "
-            "and guide them through one small step at a time, checking that it worked before moving on. "
-            "When someone sounds frustrated, acknowledge it kindly first. "
-            "Speak in short, natural sentences like a real person on the phone. Keep a calm, warm tone."
-        ),
-        "greeting_text": "Hi, this is Alex from {{company}} support. What's going on today?",
-        "greeting_mode": "agent_first",
-        "ending_text": "Glad we got that sorted. Have a good one, bye!",
-        "end_silence_sec": 20,
-        "max_duration_sec": 600,
-        "pipeline_json": json.dumps({
-            "company": "BrightNet",
-            "audio_temperature": 0.8,
-            "text_temperature": 0.7,
-            "audio_topk": 250,
-            "text_topk": 25,
-        }),
-    },
-    {
-        "name": "Aarav - Support",
-        "voice_id": "NATM1.pt",
-        "timezone": "Asia/Kolkata",
-        "system_prompt": (
-            "You are Aarav, a warm and patient customer support agent at {{company}}, an internet service provider. "
-            "You speak natural, colloquial Indian English, in short sentences, the way friends talk on a call. "
-            "You are curious and easygoing, you react kindly when a customer sounds frustrated, "
-            "and you say things like achha, haan, no worries, and sure sure naturally. "
-            "Greet the customer once, warmly, then listen. Ask what is going wrong, one simple question at a time, "
-            "and guide them through one small step at a time, checking that it worked before moving on. "
-            "Keep a calm, friendly tone."
-        ),
-        "greeting_text": "Hello! Aarav here from {{company}} support. How can I help you today?",
-        "greeting_mode": "agent_first",
-        "ending_text": "Glad we could get that sorted out! Take care, bye bye!",
-        "end_silence_sec": 20,
-        "max_duration_sec": 600,
-        "pipeline_json": json.dumps({
-            "company": "BrightNet",
-            "audio_temperature": 0.8,
-            "text_temperature": 0.7,
-            "audio_topk": 250,
-            "text_topk": 25,
-        }),
-    },
-]
+
+LEGACY_STARTER_NAMES = {
+    "Friendly Caller (Blank Template)",
+    "Clinic Appointment Assistant",
+    "Support Agent (Alex)",
+    "Indian Tech Support (Arjun)",
+    "Wise Teacher (Dr. Elena)",
+    "Marcus (Sales Specialist)",
+    "Sam (Casual Friend)",
+}
 
 
 async def seed_database(db: AsyncSession) -> None:
-    """Seeds default workspace and the 3 PersonaPlex starter agents."""
+    """Seeds default workspace and synchronizes the single agent defined in agent.yaml."""
     service = AgentService(db)
-    await service.get_or_create_default_workspace()
+    workspace = await service.get_or_create_default_workspace()
 
-    for starter in STARTER_AGENTS:
-        stmt = select(Agent).where(Agent.name == starter["name"])
-        res = await db.execute(stmt)
-        existing = res.scalar_one_or_none()
-        if not existing:
-            await service.create_agent(
-                name=starter["name"],
-                voice_id=starter["voice_id"],
-                greeting_text=starter["greeting_text"],
-                greeting_mode=starter["greeting_mode"],
-                system_prompt=starter["system_prompt"],
-                ending_text=starter["ending_text"],
-                end_silence_sec=starter["end_silence_sec"],
-                max_duration_sec=starter["max_duration_sec"],
-                timezone=starter["timezone"],
-                pipeline_json=starter.get("pipeline_json", "{}"),
-                auto_publish=True,
-                change_note="Initial starter agent release",
-            )
-            logger.info("Seeded starter agent: %s", starter["name"])
-        else:
-            # Upgrade existing agent prompt to latest PersonaPlex format
-            existing.draft_voice_id = starter["voice_id"]
-            existing.draft_greeting_text = starter["greeting_text"]
-            existing.draft_greeting_mode = starter["greeting_mode"]
-            existing.draft_system_prompt = starter["system_prompt"]
-            existing.draft_ending_text = starter["ending_text"]
-            existing.draft_pipeline_json = starter.get("pipeline_json", "{}")
-            await service.publish_agent(
-                agent_id=existing.id,
-                change_note="Updated to PersonaPlex conversational prose",
-            )
-            logger.info("Upgraded existing starter agent: %s", starter["name"])
+    agent_cfg = app_settings.agent
+    pipeline_data = {
+        "audio_temperature": agent_cfg.audio_temperature,
+        "text_temperature": agent_cfg.text_temperature,
+        "audio_topk": agent_cfg.audio_topk,
+        "text_topk": agent_cfg.text_topk,
+        "seed": agent_cfg.seed,
+        **agent_cfg.variables,
+    }
+
+    # Fetch existing agents in workspace
+    stmt = select(Agent).where(Agent.workspace_id == workspace.id)
+    res = await db.execute(stmt)
+    existing_agents = list(res.scalars().all())
+
+    # Prune legacy starter agents to enforce ONE default agent
+    for ag in existing_agents:
+        if ag.name in LEGACY_STARTER_NAMES:
+            logger.info("Pruning legacy multi-agent starter record: %s (%s)", ag.name, ag.id)
+            await db.execute(delete(AgentVersion).where(AgentVersion.agent_id == ag.id))
+            await db.execute(delete(Agent).where(Agent.id == ag.id))
+
+    # Find or create the primary single agent defined in agent.yaml
+    stmt = select(Agent).where(Agent.workspace_id == workspace.id, Agent.name == agent_cfg.name)
+    res = await db.execute(stmt)
+    target_agent = res.scalar_one_or_none()
+
+    if target_agent is None:
+        target_agent = await service.create_agent(
+            name=agent_cfg.name,
+            voice_id=agent_cfg.voice_prompt,
+            greeting_text=agent_cfg.greeting_text,
+            greeting_mode=agent_cfg.greeting_mode,
+            system_prompt=agent_cfg.system_prompt,
+            ending_text=agent_cfg.ending_text,
+            end_silence_sec=agent_cfg.end_silence_sec,
+            max_duration_sec=agent_cfg.max_duration_sec,
+            timezone=agent_cfg.timezone,
+            pipeline_json=json.dumps(pipeline_data),
+            auto_publish=True,
+            change_note="Initial single agent from agent.yaml",
+        )
+        logger.info("Created single voice agent from agent.yaml: %s (%s)", target_agent.name, target_agent.id)
+    else:
+        # Update existing agent to match agent.yaml
+        target_agent.name = agent_cfg.name
+        target_agent.draft_voice_id = agent_cfg.voice_prompt
+        target_agent.draft_greeting_text = agent_cfg.greeting_text
+        target_agent.draft_greeting_mode = agent_cfg.greeting_mode
+        target_agent.draft_system_prompt = agent_cfg.system_prompt
+        target_agent.draft_ending_text = agent_cfg.ending_text
+        target_agent.draft_end_silence_sec = agent_cfg.end_silence_sec
+        target_agent.draft_max_duration_sec = agent_cfg.max_duration_sec
+        target_agent.draft_timezone = agent_cfg.timezone
+        target_agent.draft_pipeline_json = json.dumps(pipeline_data)
+        await service.publish_agent(
+            agent_id=target_agent.id,
+            change_note="Synchronized with agent.yaml",
+        )
+        logger.info("Synchronized active voice agent with agent.yaml: %s (%s)", target_agent.name, target_agent.id)
 
     await db.commit()
-    logger.info("Database seeding completed.")
+    logger.info("Single-agent database synchronization complete.")
 
 
 async def main() -> None:

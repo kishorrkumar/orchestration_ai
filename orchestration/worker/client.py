@@ -111,7 +111,9 @@ class PersonaPlexWorkerClient:
         if not voice.endswith(".pt"):
             voice = f"{voice}.pt"
 
-        # Upstream moshi.server accepts ONLY these exact parameters:
+        # Upstream moshi.server accepts ONLY text_prompt, voice_prompt, etc.
+        # Upstream moshi/server.py line 171 has a known bug: `request["seed"]` instead of `request.query["seed"]`,
+        # which raises KeyError in aiohttp if seed is present in the query string.
         query_params = {
             "text_prompt": clean_prompt,
             "voice_prompt": voice,
@@ -120,8 +122,6 @@ class PersonaPlexWorkerClient:
             "audio_topk": str(persona.top_k_audio),
             "text_topk": str(persona.top_k_text),
         }
-        if persona.seed is not None and persona.seed != -1:
-            query_params["seed"] = str(persona.seed)
 
         qs = urllib.parse.urlencode(query_params)
         return f"{protocol}://{self.host}:{self.port}/api/chat?{qs}"

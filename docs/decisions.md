@@ -1,61 +1,94 @@
-# Technical Decisions: Local Cascade Real-Time Voice Agent
+# Architectural & Technical Decisions
 
-Based on the audit ([docs/audit.md](file:///docs/audit.md)) and measured benchmarks on the Intel i7-11800H + NVIDIA RTX 3050 Ti Laptop GPU ([docs/benchmarks.md](file:///docs/benchmarks.md)), the following architectural and model decisions are implemented.
-
----
-
-## 1. Compute & VRAM Budget Partitioning
-- **Hardware constraints:** 4,096 MiB VRAM (RTX 3050 Ti), 15.77 GB RAM, ~7.7 GB free disk on C:.
-- **GPU Assignment:** Dedicated exclusively to the Ollama LLM (`qwen2.5:1.5b` or `qwen2.5:3b`). With `num_ctx 2048`, memory consumption is 1.65 GB to 2.60 GB, well within the 4 GB VRAM limit.
-- **CPU Assignment:**
-  - Silero VAD (ONNX runtime on CPU, < 2% CPU utilization).
-  - `faster-whisper` (base model, int8 quantization, 4 CPU threads): Benchmark shows 470.2 ms for 3s audio (RTF 0.157).
-  - Kokoro-82M TTS (ONNX runtime on CPU): First clause synthesizes in ~400 ms.
-- **Outcome:** Zero GPU VRAM thrashing or memory contention between models.
+This document records the architectural and engineering decisions made for the **PersonaPlex 7B Full-Duplex Real-Time Voice Agent Platform** on Krutrim Cloud (NVIDIA A100 SXM4 40GB).
 
 ---
 
-## 2. ASR Engine & Bias Configuration
-- **Model Choice:** `faster-whisper` `base` (int8) on CPU.
-- **Language & Biasing:** `language="en"`, `beam_size=1`, with an authoritative vocabulary prompt:
-  ```python
-  initial_prompt = (
-      "artificial intelligence, machine learning, Aarav, Bengaluru, Chennai, "
-      "Tamil, Hindi, cricket, Bollywood, UPI, Swiggy, Zomato, IPL, tech, phone"
-  )
-  ```
-- **Fixes:** Resolves the phonetic misrecognition of "artificial intelligence" as "artist intelligence".
-- **Execution Threading:** Whisper `transcribe` must run in `asyncio.to_thread` to prevent blocking the asyncio event loop and WebSocket pings.
+## 1. Single-Agent Architecture (`agent.yaml`)
+- **Context:** The repository previously seeded 3 hardcoded starter agents and offered a multi-agent selector UI, which violated product clarity and caused DB sync drift.
+- **Decision:** Enforce **ONE agent only**.
+- **Implementation:**
+  - Defined declaratively in [agent.yaml](file:///agent.yaml) (with sample in [agent.example.yaml](file:///agent.example.yaml)).
+  - Contains name, system prompt, variable defaults, voice prompt ID, and generation hyperparameters.
+  - Startup database synchronization in [orchestration/db/seed.py](file:///orchestration/db/seed.py) purges legacy starter records and synchronizes the single agent.
+  - Single-agent editor in the console allows live editing and publishing.
 
 ---
 
-## 3. Intelligent Turn Detection (Silero VAD + Linguistic Heuristics)
-- **Problem:** Fixed 450 ms silence timer was cutting callers off mid-thought (e.g. "Tell me a joke about... [460ms pause] ...cats").
-- **Solution:**
-  - Base silence hangover threshold: **650 ms**.
-  - **Linguistic Trailing Word Extension:** If the recognized transcript ends with a connective, preposition, or conjunction (`about`, `and`, `the`, `to`, `of`, `with`, `because`, `but`, `so`, `like`, `or`, `that`, `for`), or lacks a verb in a multi-word fragment:
-    - Grant an additional **700 ms** silence window.
-    - If the caller speaks again, prepend/concatenate the audio into a single unified turn.
+## 2. Audio Pipeline & Wire Protocol Alignment
+- **Context:** PersonaPlex uses the Kyutai Mimi neural audio codec operating at:
+  - Sample Rate: **24,000 Hz** (mono)
+  - Frame Rate: **12.5 Hz** (1 frame every 80 ms)
+  - Frame Size: **1,920 float32 samples** (80 ms $\times$ 24 kHz)
+- **Decision:**
+  - Upstream worker communication uses binary framing over WebSocket (`0x00` handshake, `0x01` Ogg-Opus audio chunks via `sphn`, `0x02` UTF-8 text tokens).
+  - Browser transport communicates via 16 kHz PCM16 or WebRTC Opus.
+  - Gateway converts between 16 kHz and 24 kHz using anti-aliased polyphase/Soxr streaming resamplers ([orchestration/audio/resample.py](file:///orchestration/audio/resample.py)).
 
 ---
 
-## 4. LLM Selection & Conversational Memory
-- **Model Choice:** `qwen2.5:1.5b` (default for sub-second latency) with `qwen2.5:3b` as high-quality selectable alternative.
-- **Endpoint:** Ollama `/api/chat` streaming HTTP API with `keep_alive: "30m"`.
-- **Context Management:** Rolling window of the last 10 conversational turns (`conversation_history[-10:]`). Discards raw string completion in favor of structured roles (`system`, `user`, `assistant`).
-- **Prompt:** `personas/aarav.md` defining natural Indian English phrasing, contractions, max 15-20 words per sentence, and banned call-center robotic phrases.
+## 3. Worker Inference Clocking: Continuous Silence Pacing
+- **Context:** In early tests, callers heard NO audio and only saw transcripts. Because the gateway blocked waiting for microphone packets while callers waited in silence for the agent to greet them, the worker received 0 audio frames, stalling its auto-regressive inference loop.
+- **Decision:** Implement a decoupled 12.5 Hz pacer task in [orchestration/api/voice_v2.py](file:///orchestration/api/voice_v2.py).
+- **Mechanism:** When the user is silent, the pacer continuously transmits 1,920-sample zero frames at 12.5 Hz to keep the model's audio clock advancing so the agent can vocalize.
 
 ---
 
-## 5. Streaming Clause Chunker & TTS Pipelining
-- **Chunking Strategy:**
-  - Chunk 1: Flushes at 4 to 8 words or first punctuation mark (`.`, `,`, `?`, `!`, `;`).
-  - Chunk N > 1: Flushes at 8 to 16 words.
-- **Concurrency:** Chunk N+1 is synthesized asynchronously while Chunk N is streaming over the WebSocket frame buffer.
-- **Audio Framing:** 1,920 float32 samples per frame (80 ms @ 24,000 Hz) paced at 12.5 Hz to match the PersonaPlex binary wire protocol.
+## 4. Elimination of Fake Synthetic Greetings
+- **Context:** Previous versions injected a synthetic JSON text transcript (`"Hello, thank you for calling..."`) directly into the WebSocket on connection before receiving any audio from the worker. This caused:
+  1. The user seeing a transcript while hearing no audio.
+  2. The agent greeting twice (once via fake text, and once when the neural model vocalized).
+- **Decision:** Completely removed synthetic greeting text injection. All greeting transcripts and audio originate purely from the PersonaPlex worker.
 
 ---
 
-## 6. Barge-in & Latency Masking
-- **Barge-in:** Sustained user speech (> 200 ms with energy above adaptive threshold) cancels in-flight LLM HTTP streaming and active TTS tasks within < 150 ms, flushes the audio frame buffer, and registers `"[interrupted]"` in conversational history.
-- **Thinking Filler:** If LLM TTFT exceeds 700 ms, play a natural short acoustic filler ("Hmm...", "One second...") to mask latency.
+## 5. Strict Template Variable Resolution
+- **Context:** Unresolved placeholders like `{{company}}` were previously sent directly to the model, causing the agent to speak literal template syntax over the phone.
+- **Decision:** Strict pre-compilation with typed defaults.
+- **Implementation:**
+  - [orchestration/prompts/compiler.py](file:///orchestration/prompts/compiler.py) loads variable defaults from `agent.yaml`.
+  - Raises `TemplateResolutionError` (mapped to HTTP 422 Problem Details) if any `{{variable}}` cannot be resolved.
+  - Unit tests guarantee that `{{` or `}}` can never reach the model worker.
+
+---
+
+## 6. Priming Wall & Pre-Warming Architecture
+- **Context:** On an NVIDIA A100 40GB, PersonaPlex worker priming takes **~9.4 seconds** ($\approx 362$ auto-regressive steps $\times$ 26 ms per step) to ingest the voice prompt, system prompt, and context tokens. If users click "Start Call" without notice, browsers timed out or users hung up.
+- **Decisions:**
+  1. **UI Transparency:** Instant status messages (`connecting` $\to$ `priming` with live elapsed milliseconds $\to$ `ready`).
+  2. **Keepalive Pulses:** Gateway streams WebSocket status keepalives during priming to prevent proxy idle timeouts.
+  3. **Pre-Warming (Standby Lease):** When the browser console page loads, the gateway leases and primes an idle worker in the background. When the user clicks "Start", the session attaches instantly ($T_{\text{ready}} \le 20$ ms, TTFA $\le 280$ ms).
+
+---
+
+## 7. Deprecation of ScriptProcessorNode $\to$ AudioWorklet
+- **Context:** Browsers emitted console deprecation warnings for `ScriptProcessorNode`, which ran on the main UI thread and suffered from audio dropouts during DOM renders.
+- **Decision:** Replaced with an inline `AudioWorklet` processor (`AudioCaptureProcessor`) registered via a Blob URL in [frontend/src/views/TestCallModal.tsx](file:///frontend/src/views/TestCallModal.tsx).
+- **Benefits:** Runs on a dedicated Web Audio rendering thread, enforces continuous 20 ms (320-sample) chunking at 16 kHz, and computes live input RMS without UI thread jitter.
+
+---
+
+## 8. Honest Interruption & Barge-In Architecture
+- **Context:** PersonaPlex is an end-to-end full-duplex speech-to-speech foundation model that handles turn-taking, backchanneling, and barge-in internally within its neural weights. An external orchestrator cannot cancel neural generation mid-stream without resetting model state.
+- **Decision:**
+  - Client-side VAD (energy threshold + AudioWorklet) detects user speech onset.
+  - When the caller speaks over the agent, the client immediately flushes its local playback jitter buffer ($< 30$ ms time-to-silence).
+  - Transcript marks the turn as `interrupted`.
+  - Server metrics record interruption events and time-to-silence.
+
+---
+
+## 9. WebRTC Transport (aiortc) & Network Fallback
+- **Context:** Krutrim Cloud pods sit behind an HTTPS reverse proxy mapping external port 443 to internal port 8000. UDP media ports (WebRTC RTP/RTCP) are typically blocked or unreachable through HTTP-only ingress proxies.
+- **Decision:**
+  - Built WebRTC transport ([orchestration/api/webrtc.py](file:///orchestration/api/webrtc.py)) powered by `aiortc` behind the same worker interface.
+  - Implemented runtime ICE connection detection in the browser.
+  - If WebRTC ICE negotiation fails (due to UDP ingress restrictions), the frontend automatically alerts the user and falls back seamlessly to the resilient WebSocket transport.
+  - Documented production TURN (coturn) over TCP/TLS (port 443) for strict corporate and pod firewalls.
+
+---
+
+## 10. Security & Operations
+- **Single Bearer Token:** Optional `AUTH_TOKEN` environment variable enforced across both REST endpoints and WebSocket handshakes (`?token=` query param or `Authorization: Bearer` header).
+- **Structured Telemetry:** Per-hop latency, RMS energy, text token counters, and Prometheus-compatible metrics exposed at `/metrics`.
+- **Health Checks:** `/healthz` provides worker pool availability and readiness status.

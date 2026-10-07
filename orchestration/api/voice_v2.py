@@ -12,7 +12,7 @@ import time
 from typing import Any
 
 import numpy as np
-from fastapi import APIRouter, HTTPException, Query, WebSocket, WebSocketDisconnect, status
+from fastapi import APIRouter, Header, HTTPException, Query, WebSocket, WebSocketDisconnect, status
 
 from ..audio.codecs import decode_ulaw, encode_ulaw
 from ..audio.dsp import compute_rms, float32_to_int16, int16_to_float32, soft_clip
@@ -47,29 +47,51 @@ SESSION_DEBUG_LOGS: dict[str, dict[str, Any]] = {}
 MAX_DEBUG_SESSIONS = 100
 
 
+from ..settings import app_settings
+
+@router.get("/debug/sessions/{session_id}")
 @router.get("/v2/debug/session/{session_id}")
 @router.get("/debug/session/{session_id}")
-async def get_session_debug(session_id: str):
-    """Retrieve detailed per-call debug diagnostics and audio metrics."""
+async def get_session_debug(
+    session_id: str,
+    token: str | None = Query(None),
+    authorization: str | None = Header(None),
+):
+    """Retrieve detailed per-call debug diagnostics and audio metrics (auth-protected)."""
+    if app_settings.AUTH_TOKEN:
+        auth_header = authorization.replace("Bearer ", "").strip() if authorization else None
+        provided = token or auth_header
+        if provided != app_settings.AUTH_TOKEN:
+            raise HTTPException(status_code=401, detail="Unauthorized: invalid or missing auth token")
+
     if session_id not in SESSION_DEBUG_LOGS:
         raise HTTPException(status_code=404, detail=f"Session '{session_id}' not found in debug logs")
     return SESSION_DEBUG_LOGS[session_id]
 
 
-@router.get("/v2/debug/sessions")
 @router.get("/debug/sessions")
-async def list_session_debugs():
-    """List recent debug sessions."""
+@router.get("/v2/debug/sessions")
+async def list_session_debugs(
+    token: str | None = Query(None),
+    authorization: str | None = Header(None),
+):
+    """List recent debug sessions (auth-protected)."""
+    if app_settings.AUTH_TOKEN:
+        auth_header = authorization.replace("Bearer ", "").strip() if authorization else None
+        provided = token or auth_header
+        if provided != app_settings.AUTH_TOKEN:
+            raise HTTPException(status_code=401, detail="Unauthorized: invalid or missing auth token")
     return list(SESSION_DEBUG_LOGS.values())
 
 
 @router.websocket("/v2/voice")
 async def voice_v2_endpoint(
     websocket: WebSocket,
-    agent_id: str = Query(..., description="ID of the voice agent to talk with"),
+    agent_id: str = Query("default", description="ID of the voice agent to talk with"),
     version: int | None = Query(None, description="Specific version number (defaults to published version)"),
     sample_rate: int = Query(CLIENT_SAMPLE_RATE, description="Client audio sample rate (16000 or 8000)"),
     codec: str = Query("pcm16", description="Client audio codec ('pcm16' or 'g711_ulaw')"),
+    token: str | None = Query(None, description="Optional authentication token"),
     caller_name: str | None = Query(None, description="Optional caller name for template interpolation"),
     customer_name: str | None = Query(None, description="Optional customer name for template interpolation"),
     phone_number: str | None = Query(None, description="Optional phone number for template interpolation"),
@@ -83,13 +105,28 @@ async def voice_v2_endpoint(
     Production S2S WebSocket endpoint.
     Streaming 16 kHz (web) or 8 kHz (telephony G.711) full-duplex conversational voice.
     """
+    # 0. Authentication Verification
+    if app_settings.AUTH_TOKEN:
+        header_auth = websocket.headers.get("Authorization", "").replace("Bearer ", "").strip()
+        auth_val = token or header_auth
+        if auth_val != app_settings.AUTH_TOKEN:
+            await websocket.close(code=status.WS_1008_POLICY_VIOLATION, reason="Unauthorized: Invalid auth token")
+            return
+
     await websocket.accept()
     session_factory = get_session_factory()
 
     # 1. Resolve Agent and Version snapshot from Database
     async with session_factory() as db:
         agent_svc = AgentService(db)
-        agent = await agent_svc.get_agent(agent_id)
+        agent = None
+        if agent_id and agent_id != "default":
+            agent = await agent_svc.get_agent(agent_id)
+        else:
+            agents_list, _ = await agent_svc.list_agents()
+            if agents_list:
+                agent = agents_list[0]
+
         if not agent:
             await websocket.send_json({"type": "error", "message": f"Agent '{agent_id}' not found"})
             await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
@@ -98,7 +135,7 @@ async def voice_v2_endpoint(
         # Resolve version snapshot
         target_ver: AgentVersion | None = None
         if version is not None:
-            target_ver = await agent_svc.get_version(agent_id, version)
+            target_ver = await agent_svc.get_version(agent.id, version)
         elif agent.published_version_id and agent.versions:
             target_ver = next((v for v in agent.versions if v.id == agent.published_version_id), None)
 
@@ -377,29 +414,15 @@ async def voice_v2_endpoint(
         "text_temperature": float(resolved_text_temp),
     })
 
-    # Greeting delivery if agent speaks first (strictly rendered variables)
-    if greeting_mode == "agent_first" and greeting_text.strip():
-        g_rendered = greeting_text
-        for k, v in {
-            "company": "BrightNet",
-            "customer_name": customer_name or "the caller",
-            "caller_name": caller_name or "the caller",
-            "agent_name": agent.name,
-            "day_part": compiled.day_part,
-        }.items():
-            g_rendered = g_rendered.replace(f"{{{{{k}}}}}", str(v))
-        await websocket.send_json({
-            "type": "transcript",
-            "role": "assistant",
-            "text": g_rendered,
-            "is_greeting": True,
-        })
-
     # 8. Full-Duplex Bi-Directional Streaming Engine
+    # Note: PersonaPlex S2S vocalizes its own opening turn / greeting naturally from prompt conditioning.
+    # We DO NOT send synthetic duplicate text transcripts prior to actual model vocalization.
     call_stream_start = time.time()
     detector.start_session(call_stream_start)
     stop_event = asyncio.Event()
     disconnect_reason = "normal"
+    first_agent_audio_emitted = False
+    ttfa_greeting_ms: float | None = None
 
     def trigger_stop(reason: str):
         nonlocal disconnect_reason
@@ -411,7 +434,11 @@ async def voice_v2_endpoint(
     current_agent_turn_text = []
     current_agent_turn_start = 0.0
 
-    async def client_to_worker_loop():
+    # Decoupled audio queue: client microphone chunks -> resampled 24kHz frames -> worker
+    audio_frame_queue: asyncio.Queue[np.ndarray] = asyncio.Queue()
+
+    async def client_to_queue_loop():
+        """Receives incoming audio & control frames from client WebSocket and queues them."""
         try:
             while not stop_event.is_set():
                 raw = await websocket.receive()
@@ -443,20 +470,14 @@ async def voice_v2_endpoint(
                     rms = compute_rms(f32_samples)
                     if rms > 0.012:
                         detector.on_user_speech(time.time())
-                        # If user interrupts assistant speech, send pause control
                         if current_agent_turn_text:
+                            # User interrupted assistant speech
                             await worker_client.send_control(ControlAction.PAUSE)
 
                     # Resample to 24 kHz model rate in exact 1920-sample frames
                     frames_24k = in_buffer.push_chunk(f32_samples)
                     for frame_24k in frames_24k:
-                        frms = compute_rms(frame_24k)
-                        fpeak = float(np.max(np.abs(frame_24k)))
-                        telemetry["audio_levels"]["gateway_to_worker_rms"] = round(telemetry["audio_levels"]["gateway_to_worker_rms"] * 0.9 + frms * 0.1, 4)
-                        telemetry["audio_levels"]["gateway_to_worker_peak"] = round(max(telemetry["audio_levels"]["gateway_to_worker_peak"], fpeak), 4)
-                        telemetry["traffic"]["gateway_to_worker"]["bytes"] += frame_24k.nbytes
-                        telemetry["traffic"]["gateway_to_worker"]["frames"] += 1
-                        await worker_client.send_audio(frame_24k)
+                        await audio_frame_queue.put(frame_24k)
 
                 elif "text" in raw and raw["text"]:
                     try:
@@ -478,12 +499,47 @@ async def voice_v2_endpoint(
         except asyncio.CancelledError:
             pass
         except Exception as e:
-            print(f"DEBUG_CLIENT_LOOP_EXC: {e}", flush=True)
-            logger.debug(f"client_to_worker_loop exception: {e}")
+            logger.debug(f"client_to_queue_loop exception: {e}")
             trigger_stop(f"client_loop_exc_{e}")
+
+    async def queue_to_worker_pacer():
+        """
+        Clocks the PersonaPlex worker at continuous 12.5 Hz (every 80ms) cadence.
+        If user is silent or waiting for greeting, transmits 1920-sample zero frames
+        so the neural model's inference loop never starves.
+        """
+        frame_interval = 0.080  # 80ms = 12.5 Hz
+        try:
+            while not stop_event.is_set():
+                frame_to_send: np.ndarray | None = None
+                try:
+                    frame_to_send = audio_frame_queue.get_nowait()
+                except asyncio.QueueEmpty:
+                    # Provide silence frame to keep S2S inference stepping
+                    frame_to_send = np.zeros(1920, dtype=np.float32)
+
+                frms = compute_rms(frame_to_send)
+                fpeak = float(np.max(np.abs(frame_to_send)))
+                telemetry["audio_levels"]["gateway_to_worker_rms"] = round(
+                    telemetry["audio_levels"]["gateway_to_worker_rms"] * 0.9 + frms * 0.1, 4
+                )
+                telemetry["audio_levels"]["gateway_to_worker_peak"] = round(
+                    max(telemetry["audio_levels"]["gateway_to_worker_peak"], fpeak), 4
+                )
+                telemetry["traffic"]["gateway_to_worker"]["bytes"] += frame_to_send.nbytes
+                telemetry["traffic"]["gateway_to_worker"]["frames"] += 1
+
+                await worker_client.send_audio(frame_to_send)
+                await asyncio.sleep(frame_interval)
+        except asyncio.CancelledError:
+            pass
+        except Exception as e:
+            logger.debug(f"queue_to_worker_pacer exception: {e}")
+            trigger_stop(f"pacer_exc_{e}")
 
     async def worker_to_client_loop():
         nonlocal disconnect_reason, turn_counter, current_agent_turn_text, current_agent_turn_start
+        nonlocal first_agent_audio_emitted, ttfa_greeting_ms
         try:
             async for msg in worker_client.recv_messages():
                 if stop_event.is_set():
@@ -521,12 +577,21 @@ async def voice_v2_endpoint(
                     if len(f32_worker) == 0:
                         continue
 
+                    if not first_agent_audio_emitted:
+                        first_agent_audio_emitted = True
+                        ttfa_greeting_ms = round((time.time() - call_start_time) * 1000.0, 1)
+                        telemetry["ttfa_greeting_ms"] = ttfa_greeting_ms
+
                     telemetry["traffic"]["worker_to_gateway"]["bytes"] += len(raw_audio)
                     telemetry["traffic"]["worker_to_gateway"]["frames"] += 1
                     mrms = compute_rms(f32_worker)
                     mpeak = float(np.max(np.abs(f32_worker)))
-                    telemetry["audio_levels"]["worker_to_gateway_rms"] = round(telemetry["audio_levels"]["worker_to_gateway_rms"] * 0.9 + mrms * 0.1, 4)
-                    telemetry["audio_levels"]["worker_to_gateway_peak"] = round(max(telemetry["audio_levels"]["worker_to_gateway_peak"], mpeak), 4)
+                    telemetry["audio_levels"]["worker_to_gateway_rms"] = round(
+                        telemetry["audio_levels"]["worker_to_gateway_rms"] * 0.9 + mrms * 0.1, 4
+                    )
+                    telemetry["audio_levels"]["worker_to_gateway_peak"] = round(
+                        max(telemetry["audio_levels"]["worker_to_gateway_peak"], mpeak), 4
+                    )
 
                     # Resample 24k -> client rate (16k or 8k)
                     resampled = out_resampler.resample_chunk(f32_worker, last=False)
@@ -573,7 +638,8 @@ async def voice_v2_endpoint(
 
     # Run tasks concurrently
     tasks = [
-        asyncio.create_task(client_to_worker_loop()),
+        asyncio.create_task(client_to_queue_loop()),
+        asyncio.create_task(queue_to_worker_pacer()),
         asyncio.create_task(worker_to_client_loop()),
         asyncio.create_task(lifecycle_heartbeat()),
     ]

@@ -297,6 +297,14 @@ def lint_prompt(
     if unrendered_vars:
         warnings.append(f"Unfilled variables detected: {', '.join(unrendered_vars)}. Fill them or remove braces before testing.")
 
+    # 7. Rigid scripted quotes
+    if re.search(r"\b(say exactly|repeat word for word|respond word for word)\b", full_text, flags=re.IGNORECASE):
+        warnings.append("Avoid scripted quotes ('say exactly...'); PersonaPlex performs better with conversational role descriptions than rigid verbatim scripts.")
+
+    # 8. Step counts / numbered sequences
+    if re.search(r"\b(step\s*\d+|phase\s*\d+)\b", full_text, flags=re.IGNORECASE):
+        warnings.append("Avoid rigid step-by-step numbers ('Step 1, Step 2'); describe the persona's conversational flow in natural prose.")
+
     return warnings
 
 
@@ -329,7 +337,10 @@ def compile_prompt(
     collected_warnings = list(dict.fromkeys(sys_warn + greet_warn + end_warn))
 
     # 2. Build full variable dictionary starting from defaults
+    from ..settings import app_settings
     var_dict = DEFAULT_VARIABLE_VALUES.copy()
+    if hasattr(app_settings, "agent") and app_settings.agent.variables:
+        var_dict.update(app_settings.agent.variables)
     var_dict["agent_name"] = agent_name
     var_dict["current_time"] = time_ctx["current_time"]
     var_dict["weekday"] = time_ctx["weekday"]
@@ -387,6 +398,12 @@ def compile_prompt(
         raise TemplateResolutionError(["unresolved_template_variable"])
 
     token_cnt = count_tokens(final_prompt)
+    if strict and token_cnt > MAX_SYSTEM_PROMPT_TOKENS:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Prompt exceeds model token limit ({token_cnt}/{MAX_SYSTEM_PROMPT_TOKENS} tokens). Please shorten the prompt to prevent connection timeouts.",
+        )
+
     linter_warnings = lint_prompt(
         system_prompt=rendered_system,
         greeting_text=rendered_greeting,

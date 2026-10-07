@@ -42,6 +42,7 @@ COMMON_TIMEZONES = [
 
 
 @router.post("/prompts/compile", response_model=CompilePromptResponse)
+@router.post("/prompts/lint", response_model=CompilePromptResponse)
 async def compile_prompt_endpoint(req: CompilePromptRequest):
     """
     Compiles an agent prompt, resolves time and variables, counts tokens

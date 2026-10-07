@@ -1,146 +1,228 @@
 # PersonaPlex Voice Agent Platform
 
-> A production-grade, multi-agent speech-to-speech voice platform designed for **NVIDIA PersonaPlex 7B**.  
-> Features an interface designed with **Apple HIG precision** and the **warmth and calm of Anthropic's Claude app** — zero AI tropes.
+> Full-duplex speech-to-speech voice agent powered by **NVIDIA PersonaPlex-7B-v1** running on an NVIDIA A100 GPU.
+> Features a single-agent declarative architecture (`agent.yaml`), AudioWorklet streaming, pre-warmed priming, and WebRTC/WebSocket transports.
 
-[![CI](https://github.com/kishorrkumar/orchestration_ai/actions/workflows/ci.yml/badge.svg)](https://github.com/kishorrkumar/orchestration_ai/actions/workflows/ci.yml)
-[![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
-[![Python](https://img.shields.io/badge/Python-3.11+-blue.svg)](https://python.org)
-[![TypeScript](https://img.shields.io/badge/TypeScript-Strict-blue.svg)](https://www.typescriptlang.org)
+[![Python](https://img.shields.io/badge/Python-3.11%20%7C%203.13-blue.svg)](https://python.org)
 [![FastAPI](https://img.shields.io/badge/FastAPI-v2-green.svg)](https://fastapi.tiangolo.com)
-[![Vite](https://img.shields.io/badge/Vite-React_18-purple.svg)](https://vitejs.dev)
+[![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
 ---
 
-## 1. Product & Design Philosophy
-
-The platform provides a calm, focused environment where users can create, configure, version, and talk to speech-to-speech agents in real time.
-
-- **Apple HIG Deference:** Clean 1px structural hairlines, crisp tactile controls, predictable tab ordering, and zero decorative noise.
-- **Claude Editorial Warmth:** Warm stone and linen canvas (`#FAF9F5` light, `#1A1918` dark), generous typography line height, and honest microcopy.
-- **Anti-AI Design Discipline:** Zero glowing neon orbs, zero purple-blue gradient soup, zero sparkle emojis, and zero cartoon chat bubbles. Spoken audio is represented by a calm, monochrome concentric circle scaling subtly with live speech RMS energy.
-
-Visit the **Living Style Guide** at [`http://localhost:8000/design-system`](http://localhost:8000/design-system).
-
----
-
-## 2. Core Architecture
-
-The codebase enforces strict boundary separation across five decoupled layers:
+## 1. System Architecture
 
 ```
-orchestration/
-├── domain/                  # 1. Pure Domain Layer (Entities, Rules, Protocols)
-│   ├── agent.py             # Agent aggregate (6 lean fields + 18 presets)
-│   ├── session.py           # CallSession and CallTurn entities
-│   ├── prompt.py            # System prompt compilation & voice linter
-│   └── detector.py          # EndOfCallDetector state machine & quiet-window drain
-│
-├── application/             # 2. Use Cases Layer
-│   ├── agents/              # Create, Update, Publish, Revert use cases
-│   ├── calls/               # Call session persistence & turn logging
-│   └── prompts/             # PromptCompilerUseCase with token limit enforcement
-│
-├── infrastructure/          # 3. Adapters & Persistence
-│   ├── db/repositories/     # SQLAlchemy 2.0 async repositories (SQLite & Neon Postgres)
-│   ├── clock/               # SystemClock and FrozenClock (deterministic time testing)
-│   └── tokenizer/           # SentencePieceTokenizerAdapter
-│
-├── interfaces/              # 4. HTTP & WebSocket Delivery
-│   └── http/                # REST endpoints, Pydantic v2 DTOs, RFC 9457 Problem Details
-│
-└── shared/                  # 5. Cross-Cutting Utilities
-    ├── errors.py            # DomainError hierarchy + RFC 9457 ProblemDetail
-    ├── logging.py           # Structlog with correlation IDs & credential redaction
-    ├── settings.py          # Pydantic-settings 12-factor configuration
-    └── ids.py               # Type-safe prefixed ID generators (agt_, ses_, ver_, trn_)
+                                      ┌─────────────────────────────────────────────────────────────┐
+                                      │                      FastAPI Gateway                        │
+                                      │                        (Port 8000)                          │
+                                      │                                                             │
+┌───────────────────────┐             │  ┌──────────────────────┐      ┌─────────────────────────┐  │      ┌──────────────────────────┐
+│     Browser Mic       │             │  │   Transport Ingress  │      │     Continuous Pacer    │  │      │   PersonaPlex 7B S2S     │
+│  (16 kHz PCM / Opus)  │ ──────────> │  │ WebSocket / WebRTC   │ ───> │  (12.5 Hz, 1920 frames) │ ────> │   Worker (Port 8998)     │
+└───────────────────────┘             │  └──────────────────────┘      └─────────────────────────┘  │      │  (Kyutai Mimi, 24 kHz)   │
+                                      │             │                               │               │      └──────────────────────────┘
+                                      │             ▼                               ▼               │                    │
+┌───────────────────────┐             │  ┌──────────────────────┐      ┌─────────────────────────┐  │                    │
+│    Browser Speaker    │ <────────── │  │ Jitter Buffer / VAD  │ <─── │   Binary Wire Decoder   │ <──────────────────┘
+│  (16 kHz / WebRTC)    │             │  │   Barge-In Flush     │      │  (0x00 / 0x01 / 0x02)   │  │    (Ogg-Opus / UTF-8 tokens)
+└───────────────────────┘             │  └──────────────────────┘      └─────────────────────────┘  │
+                                      └─────────────────────────────────────────────────────────────┘
 ```
 
-For complete technical specifications, see:
-- [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — System design and audio DSP pipelines.
-- [`docs/HOW_THE_MODEL_WORKS.md`](docs/HOW_THE_MODEL_WORKS.md) — PersonaPlex 7B dual-decoder architecture.
-- [`docs/PROMPTING_GUIDE.md`](docs/PROMPTING_GUIDE.md) — S2S prompting rules, token budgets, and 5 copy-paste templates.
-- [`docs/VOICE_PRESETS.md`](docs/VOICE_PRESETS.md) — Catalog of all 18 official upstream voice conditioning embeddings.
-- [`docs/adr/`](docs/adr/) — Architecture Decision Records.
+PersonaPlex 7B handles listening, turn-taking, backchanneling, and speech generation in a single neural loop. The gateway orchestrator owns session state, audio resampling, silence clocking, template interpolation, VAD metrics, and transport negotiation.
 
 ---
 
-## 3. The 6-Field Lean Agent Model
+## 2. Quickstart on Krutrim Cloud Pod (A100 40GB)
 
-Every agent is defined by six focused, intentional fields:
+### 2.1 Pod Environment
+- **OS:** Linux Ubuntu (NVIDIA A100 SXM4 40GB)
+- **Python:** Python 3.13 venv at `/home/jovyan/personaplex_env`
+- **Hugging Face Cache:** `HF_HOME=/workspace/huggingface`
+- **Inference Worker:** `127.0.0.1:8998`
+- **FastAPI Gateway:** `0.0.0.0:8000` (externally reachable via HTTPS reverse proxy)
 
-| Field | Description | Invariant & Validation |
-| :--- | :--- | :--- |
-| **Name** | Display name | Also interpolates into `{{agent_name}}`. |
-| **Voice** | Voice conditioning preset | One of 18 official PersonaPlex embeddings (`NATF0.pt` – `NATM8.pt`). |
-| **Greeting** | Spoken opening line | Delivered automatically when `agent_speaks_first` is enabled. |
-| **System Prompt** | Spoken persona instructions | Wrapped as `<system> {prompt} <system>`. Enforces `<135` token budget for fast start. |
-| **Ending** | Call concluding phrase | Triggers the `EndOfCallDetector` state machine with 1.5s quiet window drain. |
-| **Timezone** | Caller timezone | Calculates dynamic local time string (supports half-hour offsets like `Asia/Kolkata`). |
-
----
-
-## 4. Quickstart Guide
-
-### 4.1 Prerequisites
-- Python 3.11+
-- Node.js 18+ and npm
-- Windows PowerShell, macOS, or Linux bash
-
-### 4.2 Using the Universal Task Runner (`run.ps1`)
-
-The repository includes a PowerShell-native task runner for common developer workflows:
-
-```powershell
-# 1. Install dependencies
-.\scripts\run.ps1 setup
-
-# 2. Seed database with starter agents
-.\scripts\run.ps1 seed
-
-# 3. Start local platform (Gateway + React UI + Auto-Mock Worker)
-.\scripts\run.ps1 dev
-```
-
-Open [`http://127.0.0.1:8000/`](http://127.0.0.1:8000/) in your browser.
-
-### 4.3 Running Quality Gates
-
-```powershell
-# Run all gates (Ruff linter + Mypy strict + Pytest suite)
-.\scripts\run.ps1 check
-
-# Or individual gates:
-.\scripts\run.ps1 lint
-.\scripts\run.ps1 typecheck
-.\scripts\run.ps1 test
-```
-
----
-
-## 5. Docker Deployment
-
-Deploy the entire platform with Docker Compose:
+### 2.2 Start Services
 
 ```bash
-# Build and launch gateway and mock inference worker
-docker compose up --build -d
+# 1. Pull latest code
+git pull
 
-# View live gateway logs
-docker compose logs -f gateway
+# 2. Launch PersonaPlex worker and FastAPI gateway
+bash deploy/cloud/start_services.sh
+```
+
+### 2.3 Where to Click & How to Test
+1. Open the cloud proxy HTTPS URL (e.g. `https://<pod-subdomain>.krutrim.com/`) in Google Chrome.
+2. Put on **headphones** (essential to prevent acoustic bleed between mic and speakers).
+3. The console automatically initiates a **pre-warm** lease in the background.
+4. Click **"Test Call"** or **"Start Call"**.
+5. The session transitions from `connecting` $\to$ `ready` instantly ($\approx 20$ ms when pre-warmed).
+6. Speak naturally into your microphone: *"Hi, can you hear me?"*
+7. The agent listens and responds in full-duplex speech.
+
+---
+
+## 3. Single-Agent Configuration (`agent.yaml`)
+
+The platform is strictly **single-agent**. The active voice agent is configured declaratively in `agent.yaml`:
+
+```yaml
+name: "Alex"
+timezone: "Asia/Kolkata"
+voice_prompt: "NATF2.pt"
+
+# Spoken opening behavior
+greeting_mode: "agent_first"
+greeting_text: "Hello! This is Alex from {{company}}. How can I help you today?"
+ending_text: "Thank you for calling. Have a great day, goodbye!"
+
+# Persona system instructions
+system_prompt: >
+  You are Alex, a helpful and friendly voice assistant at {{company}}.
+  You are speaking with {{caller_name}} over the phone.
+  You speak in short, natural sentences, the way real people converse.
+  You listen carefully, answer concisely, and verify understanding before moving to the next point.
+
+# Template variable defaults (strictly validated; HTTP 422 if unresolved)
+variables:
+  company: "BrightNet"
+  caller_name: "the caller"
+  customer_name: "the customer"
+
+# Neural generation settings
+generation:
+  audio_temperature: 0.8
+  text_temperature: 0.7
+  audio_topk: 250
+  text_topk: 25
+  seed: -1
+
+# Session duration safeguards
+session:
+  max_duration_sec: 600
+  end_silence_sec: 20
+```
+
+To create a new configuration, copy `agent.example.yaml`:
+```bash
+cp agent.example.yaml agent.yaml
 ```
 
 ---
 
-## 6. Real-Time Audio DSP Pipeline
+## 4. How to Write a Good PersonaPlex System Prompt
 
-- **Web Clients (16 kHz):** Browser microphone streams 16 kHz Linear PCM 16-bit mono over WebSocket (`/v2/voice`).
-- **Model Invariant (24 kHz):** Polyphase FIR resampling via `scipy.signal.resample_poly` with exact 3:2 rational ratio into 480-sample frames (20ms) for Moshi Mimi.
-- **Telephony Invariant (8 kHz):** Hardware-accelerated G.711 μ-law companding with algebraic soft-clipping to prevent speaker distortion.
-- **Acoustic Barge-in:** When caller speech energy exceeds $RMS > 0.012$, the gateway dispatches `ControlAction.PAUSE` to immediately silence assistant playback.
+PersonaPlex 7B is an end-to-end speech-to-speech model. It behaves differently than text LLMs: **it mirrors spoken cadence, prosody, and brevity**.
+
+### Principles
+1. **Short plain prose:** Write role, background, and scenario in simple conversational sentences.
+2. **Keep it under 250 tokens:** Token limit is strictly budgeted. The linter warns above 300 tokens and hard-errors at model capacity.
+3. **No rigid scripts:** Avoid writing verbatim quotes (`Say: "..."`). The model will speak awkwardly or talk over itself.
+4. **No numbered lists or bullet rules:** The model is not a text formatter. Bullet points degrade spoken prosody.
+5. **Describe how the agent talks:** Use phrasing like *"You speak in short, casual sentences"*, *"You pause and ask one question at a time"*.
+
+### Before & After Examples
+
+#### ❌ BAD (Text-LLM Style — Do NOT use)
+```
+You are an AI customer support bot for BrightNet.
+Follow these rules strictly:
+1. Always say: "Thank you for calling BrightNet, my name is Alex, how may I direct your call today?"
+2. Never make assumptions.
+3. If the user asks about billing, refer to section 4.2 of the billing guide.
+4. Output your answer in 3 numbered bullet points.
+```
+*Why this fails:* Long token count increases priming delay; numbered rules make the model sound robotic; script quotes conflict with natural turn-taking.
+
+####  GOOD (Conversational Speech Style — Recommended)
+```
+You are Alex, a friendly customer support specialist at BrightNet internet.
+You are on a phone call with a customer who needs help.
+You speak casually and warmly, like a helpful friend.
+Keep each response under two sentences and ask one simple question at a time.
+Verify that each step worked before moving on.
+```
+*Why this works:* Low token count (~50 tokens), primes in minimal time, guides natural conversational turn-taking, and produces fluent speech.
 
 ---
 
-## 7. License
+## 5. Adding a Custom Voice Prompt
 
-Licensed under the Apache License, Version 2.0. See [`LICENSE`](LICENSE) for details.
+PersonaPlex uses voice prompts (`.pt` embeddings or clean audio WAV files) to condition the speaker's vocal timbre, pitch, and accent.
+
+### Audio Requirements
+- **Format:** Clean mono WAV (16-bit PCM or 32-bit Float).
+- **Sample Rate:** `24,000 Hz` native (16,000 Hz acceptable; gateway resamples automatically).
+- **Duration:** **10 to 20 seconds** optimal. Avoid files longer than 30 seconds (excessive tokens/VRAM).
+- **Acoustic Quality:** Zero background music, zero room reverb/echo, single speaker speaking continuously and clearly.
+
+### How to Apply
+1. Place your WAV file in `data/voices/<name>.wav`.
+2. Convert to PersonaPlex `.pt` tensor using Moshi tools or specify in `agent.yaml`:
+   ```yaml
+   voice_prompt: "my_custom_voice.pt"
+   ```
+
+---
+
+## 6. Transports: WebSocket vs. WebRTC
+
+| Feature | WebSocket (`/v2/voice`) | WebRTC (`/v2/webrtc/offer`) |
+| :--- | :--- | :--- |
+| **Status** | **Default / Recommended** | Supported via `aiortc` |
+| **Port / Protocol** | TCP port 8000 (HTTP/WSS) | HTTP signaling + UDP media RTP |
+| **Cloud Proxy Compatibility** | 100% works through all HTTPS proxies | Requires UDP or TURN over TCP/TLS |
+| **Automatic Fallback** | N/A | **Yes** (falls back to WS on ICE failure) |
+
+### WebRTC behind Cloud Pod Proxies (TURN Setup)
+Krutrim Cloud pods route incoming traffic through an HTTPS reverse proxy on port 443 $\to$ 8000. Inbound UDP packets for WebRTC media ports are blocked by default. 
+
+To enable WebRTC over restrictive firewalls, deploy an open-source **coturn** server with TURN over TLS:
+```bash
+# Install coturn
+sudo apt-get install coturn
+
+# /etc/turnserver.conf snippet:
+listening-port=3478
+tls-listening-port=443
+realm=voice.example.com
+user=agent:secretpassword
+cert=/etc/letsencrypt/live/voice.example.com/fullchain.pem
+pkey=/etc/letsencrypt/live/voice.example.com/privkey.pem
+```
+When configured, the browser traverses firewall restrictions over TCP port 443.
+
+---
+
+## 7. Troubleshooting Guide
+
+### 1. Silent Audio (Transcript appears, but no sound)
+- **Cause:** Upstream worker starved of audio packets.
+- **Verification:** Check gateway logs for `queue_to_worker_pacer`. The pacer must send 1,920-sample silence frames at 12.5 Hz when the user is silent.
+- **Browser Check:** Verify browser AudioContext state is `running`. In Chrome, AudioContext requires a user gesture (clicking "Start Call").
+
+### 2. Echo / Agent Talks to Itself
+- **Cause:** Microphone picking up speaker output (acoustic loop).
+- **Fix 1 (Mandatory):** **Use headphones** while testing.
+- **Fix 2:** The gateway UI routes the microphone input through an `AudioWorklet` with a zero-gain destination node (`muteGain.gain.value = 0.0`) so mic audio is never looped back into your speakers locally.
+
+### 3. Slow Priming (~9.4 seconds)
+- **Cause:** PersonaPlex processes the voice prompt and system prompt sequentially through its autoregressive transformer before the first audio frame can be produced ($\approx 362$ steps $\times$ 26 ms = 9.4s on A100).
+- **Fix:** Enable **Pre-warming** in `.env` (`ENABLE_PREWARM=true`). The gateway pre-primes a standby worker when the browser console loads, reducing click-to-speech time to $< 300$ ms.
+
+---
+
+## 8. Verification & Test Suite
+
+Run the full automated test suite:
+```bash
+# Run unit and integration tests
+pytest tests/ -v
+
+# Run direct worker wire test
+python scripts/worker_direct_test.py --url ws://127.0.0.1:8998/api/chat
+
+# Run end-to-end smoke call
+python scripts/smoke_call.py --url ws://127.0.0.1:8000/v2/voice
+```

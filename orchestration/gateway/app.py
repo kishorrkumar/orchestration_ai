@@ -184,9 +184,11 @@ def create_app(
     from ..api.agents import router as agents_router
     from ..api.prompts import router as prompts_router
     from ..api.voice_v2 import router as voice_v2_router
+    from ..api.webrtc import router as webrtc_router
     app.include_router(agents_router)
     app.include_router(prompts_router)
     app.include_router(voice_v2_router)
+    app.include_router(webrtc_router)
 
     # Mount V2 Clean Architecture routers & RFC 9457 Problem Details error handlers
     from ..interfaces.http.error_handlers import register_error_handlers

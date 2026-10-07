@@ -82,19 +82,27 @@ async def run_smoke_call(
 
     t_connect_start = time.perf_counter()
     t_primed = 0.0
+    t_first_greeting_audio = 0.0
     t_user_speech_ended = 0.0
-    t_first_agent_audio = 0.0
+    t_first_reply_audio = 0.0
 
     agent_audio_chunks: list[np.ndarray] = []
     transcripts: list[dict] = []
     current_agent_text = []
+    all_assistant_tokens: list[str] = []
 
-    full_ws_url = f"{url}?agent_id={agent_id}&sample_rate={sample_rate}&codec=pcm16"
+    auth_param = f"&token={token}" if token else ""
+    full_ws_url = f"{url}?agent_id={agent_id}&sample_rate={sample_rate}&codec=pcm16{auth_param}"
     print(f"Connecting WebSocket to {full_ws_url}...")
+
+    extra_headers = {}
+    if token:
+        extra_headers["Authorization"] = f"Bearer {token}"
 
     try:
         async with websockets.connect(
             full_ws_url,
+            additional_headers=extra_headers,
             ping_interval=20,
             ping_timeout=15,
             max_size=10 * 1024 * 1024,
@@ -131,8 +139,12 @@ async def run_smoke_call(
                     if isinstance(res, str):
                         data = json.loads(res)
                         if data.get("type") == "transcript":
-                            current_agent_text.append(data.get("text", ""))
+                            tok = data.get("text", "")
+                            current_agent_text.append(tok)
+                            all_assistant_tokens.append(tok)
                     elif isinstance(res, bytes) and len(res) > 0:
+                        if t_first_greeting_audio == 0.0:
+                            t_first_greeting_audio = time.perf_counter()
                         i16 = np.frombuffer(res, dtype=np.int16)
                         f32 = i16.astype(np.float32) / 32768.0
                         agent_audio_chunks.append(f32)
@@ -166,8 +178,8 @@ async def run_smoke_call(
                     now = time.perf_counter()
 
                     if isinstance(res, bytes) and len(res) > 0:
-                        if t_first_agent_audio == 0.0:
-                            t_first_agent_audio = now
+                        if t_first_reply_audio == 0.0:
+                            t_first_reply_audio = now
                         i16 = np.frombuffer(res, dtype=np.int16)
                         f32 = i16.astype(np.float32) / 32768.0
                         agent_audio_chunks.append(f32)
@@ -178,6 +190,7 @@ async def run_smoke_call(
                         if mtype == "transcript":
                             tok = data.get("text", "")
                             current_agent_text.append(tok)
+                            all_assistant_tokens.append(tok)
                             print(tok, end="", flush=True)
                         elif mtype == "call_ended":
                             print(f"\n[Call Ended] Reason: {data.get('reason')}")
@@ -217,24 +230,31 @@ async def run_smoke_call(
     if current_agent_text:
         transcripts.append({"role": "assistant", "text": "".join(current_agent_text).strip()})
 
+    full_transcript_str = " ".join(t["text"] for t in transcripts if t["role"] == "assistant")
+    unresolved_vars = full_transcript_str.count("{{")
+
     # Save transcript JSON
     transcript_file = out_dir / "reply_transcript.json"
     transcript_file.write_text(json.dumps(transcripts, indent=2), encoding="utf-8")
 
     # Metrics computation
     priming_ms = (t_primed - t_connect_start) * 1000 if t_primed else 0.0
-    ttfa_ms = (t_first_agent_audio - t_user_speech_ended) * 1000 if (t_first_agent_audio and t_user_speech_ended) else 0.0
+    ttfa_greeting_ms = (t_first_greeting_audio - t_connect_start) * 1000 if t_first_greeting_audio else 0.0
+    ttfa_reply_ms = (t_first_reply_audio - t_user_speech_ended) * 1000 if (t_first_reply_audio and t_user_speech_ended) else 0.0
 
     print("\n=======================================================")
     print(" SMOKE CALL RESULTS SUMMARY")
     print("=======================================================")
-    print(f" Priming Time:             {priming_ms:.1f} ms")
-    print(f" Time to First Audio (TTFA): {ttfa_ms:.1f} ms")
-    print(f" Agent Reply Duration:     {audio_dur:.2f} seconds")
-    print(f" Agent Audio Level RMS:    {audio_rms:.4f}")
-    print(f" Agent Audio Level Peak:   {audio_peak:.4f}")
-    print(f" Audio Recorded To:        {output_wav}")
-    print(f" Transcript Saved To:      {transcript_file}")
+    print(f" Priming Time:               {priming_ms:.1f} ms")
+    print(f" TTFA Greeting:              {ttfa_greeting_ms:.1f} ms")
+    print(f" TTFA Reply:                 {ttfa_reply_ms:.1f} ms")
+    print(f" Agent Reply Duration:       {audio_dur:.2f} seconds")
+    print(f" Agent Audio Level RMS:      {audio_rms:.4f}")
+    print(f" Agent Audio Level Peak:     {audio_peak:.4f}")
+    print(f" Assistant Text Tokens:      {len(all_assistant_tokens)}")
+    print(f" Unresolved '{{{{' Leaks:      {unresolved_vars}")
+    print(f" Audio Recorded To:          {output_wav}")
+    print(f" Transcript Saved To:        {transcript_file}")
     print(f" Transcript Turns:")
     for turn in transcripts:
         print(f"   [{turn['role'].upper()}]: {turn['text']}")
@@ -246,7 +266,8 @@ async def run_smoke_call(
 def main():
     parser = argparse.ArgumentParser(description="PersonaPlex WebSocket Voice Smoke Test")
     parser.add_argument("--url", default="ws://127.0.0.1:8000/v2/voice", help="WebSocket gateway URL")
-    parser.add_argument("--agent-id", default="support_agent", help="Target voice agent ID")
+    parser.add_argument("--agent-id", default="default", help="Target voice agent ID (defaults to 'default' single agent)")
+    parser.add_argument("--token", default=os.environ.get("AUTH_TOKEN"), help="Optional authentication bearer token")
     parser.add_argument("--input-wav", default=None, help="Optional user input WAV path")
     parser.add_argument("--output-wav", default="eval_out/reply.wav", help="Output reply WAV path")
     parser.add_argument("--sample-rate", type=int, default=16000, help="Sample rate (16000 or 8000)")

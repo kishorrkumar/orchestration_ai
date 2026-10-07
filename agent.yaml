@@ -1,0 +1,47 @@
+# ==============================================================================
+# PersonaPlex Single Voice Agent Configuration (agent.yaml)
+# ==============================================================================
+
+# Agent Identity
+name: "Alex"
+timezone: "Asia/Kolkata"
+
+# Voice Reference File (.pt embedding or .wav in voices directory)
+voice_prompt: "NATF2.pt"
+
+# Turn Taking & Greeting Mode
+# - "agent_first": The agent speaks first upon connection.
+# - "user_first":  The agent listens silently until the user speaks.
+greeting_mode: "agent_first"
+
+# Optional greeting line
+greeting_text: "Hello! This is Alex from {{company}}. How can I help you today?"
+
+# Closing statement
+ending_text: "Thank you for calling. Have a great day, goodbye!"
+
+# Persona System Prompt
+system_prompt: >
+  You are Alex, a helpful and friendly voice assistant at {{company}}.
+  You are speaking with {{caller_name}} over the phone.
+  You speak in short, natural sentences, the way real people converse.
+  You listen carefully, answer concisely, and verify understanding before moving to the next point.
+
+# Template Variables & Defaults
+variables:
+  company: "BrightNet"
+  caller_name: "the caller"
+  customer_name: "the customer"
+
+# PersonaPlex Generation Settings
+generation:
+  audio_temperature: 0.8
+  text_temperature: 0.7
+  audio_topk: 250
+  text_topk: 25
+  seed: -1
+
+# Call Session Limits
+session:
+  max_duration_sec: 600
+  end_silence_sec: 20
