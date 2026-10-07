@@ -72,13 +72,19 @@ async def run_direct_test(
     voice_prompt: str,
     text_prompt: str,
     silence_after_sec: float = 6.0,
+    silence_only: bool = False,
 ):
     out_dir = Path(out_path).parent
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    input_audio = create_or_load_wav(wav_path)
-    total_input_duration = len(input_audio) / SAMPLE_RATE
-    print(f"[INFO] Loaded input audio: {len(input_audio)} samples ({total_input_duration:.2f}s)")
+    if silence_only:
+        input_audio = np.zeros(0, dtype=np.float32)
+        total_input_duration = 0.0
+        print(f"[INFO] Running in --silence-only mode. Streaming {silence_after_sec:.1f}s of pure silence frames.")
+    else:
+        input_audio = create_or_load_wav(wav_path)
+        total_input_duration = len(input_audio) / SAMPLE_RATE
+        print(f"[INFO] Loaded input audio: {len(input_audio)} samples ({total_input_duration:.2f}s)")
 
     # Prepare URL query parameters
     cleaned_prompt = text_prompt.strip()
@@ -252,7 +258,8 @@ def main():
     parser.add_argument("--voice", default="NATM1.pt", help="Single voice prompt (.pt or .wav)")
     parser.add_argument("--voices", default=None, help="Comma-separated list of voices to test (e.g. NATF1.pt,NATM1.pt,NATF2.pt)")
     parser.add_argument("--prompt", default="You are a helpful and concise voice assistant.", help="Text prompt")
-    parser.add_argument("--silence-sec", type=float, default=6.0, help="Seconds of silence to stream after WAV")
+    parser.add_argument("--silence-sec", type=float, default=6.0, help="Seconds of silence to stream")
+    parser.add_argument("--silence-only", action="store_true", help="Send only pure silence frames at 12.5 Hz (no input audio)")
     args = parser.parse_args()
 
     voice_list = [v.strip() for v in args.voices.split(",")] if args.voices else [args.voice]
@@ -278,6 +285,7 @@ def main():
                     voice_prompt=v,
                     text_prompt=args.prompt,
                     silence_after_sec=args.silence_sec,
+                    silence_only=args.silence_only,
                 )
             )
             results.append(res)

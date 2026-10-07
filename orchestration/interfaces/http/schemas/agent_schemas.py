@@ -17,7 +17,7 @@ class VoicePresetResponse(BaseModel):
 
 
 class CreateAgentRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="ignore")
 
     name: str = Field(..., min_length=1, max_length=128, json_schema_extra={"example": "Friendly Caller"})
     voice_id: str = Field(..., json_schema_extra={"example": "natural_calm"})
@@ -35,7 +35,7 @@ class CreateAgentRequest(BaseModel):
 
 
 class UpdateAgentRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="ignore")
 
     name: str | None = Field(default=None, min_length=1, max_length=128)
     voice_id: str | None = None
@@ -54,7 +54,7 @@ class UpdateAgentRequest(BaseModel):
 
 
 class PublishVersionRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="ignore")
     change_note: str | None = Field(default=None, max_length=256, json_schema_extra={"example": "Production release v2"})
 
 

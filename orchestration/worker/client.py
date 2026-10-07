@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import time
 import urllib.parse
 from collections.abc import AsyncGenerator
@@ -147,14 +148,33 @@ class PersonaPlexWorkerClient:
         url = self.build_url(persona)
 
         # Fresh Opus codecs per session to guarantee valid Ogg container headers
-        if self.use_opus:
-            try:
-                import sphn
-                self._opus_writer = sphn.OpusStreamWriter(self.sample_rate)
-                self._opus_reader = sphn.OpusStreamReader(self.sample_rate)
-            except Exception as e:
-                logger.warning(f"sphn library unavailable. Opus transcoding disabled: {e}")
+        allow_raw_pcm = os.environ.get("WORKER_ALLOW_RAW_PCM", "0") == "1"
+        try:
+            import sphn
+            self._opus_writer = sphn.OpusStreamWriter(self.sample_rate)
+            self._opus_reader = sphn.OpusStreamReader(self.sample_rate)
+            self.use_opus = True
+            logger.info(
+                f"Worker {self.worker_id}: sphn Opus codec initialized at {self.sample_rate} Hz "
+                f"(version: {getattr(sphn, '__version__', 'installed')})"
+            )
+        except Exception as e:
+            if allow_raw_pcm:
+                logger.warning(
+                    f"Worker {self.worker_id}: sphn unavailable ({e}). "
+                    f"Using raw PCM fallback because WORKER_ALLOW_RAW_PCM=1 is set."
+                )
                 self.use_opus = False
+            else:
+                logger.error(
+                    f"Worker {self.worker_id}: sphn library required for PersonaPlex Opus audio streaming, but import failed: {e}. "
+                    "Fail-fast triggered to prevent sending raw PCM to Opus-only worker."
+                )
+                raise WorkerConnectionError(
+                    f"sphn library is required for PersonaPlex Opus audio streaming, but import failed: {e}. "
+                    "Install sphn (`pip install sphn`) or run inside the Linux environment. "
+                    "For unit tests only, set WORKER_ALLOW_RAW_PCM=1."
+                ) from e
 
         t0 = time.perf_counter()
         try:
@@ -208,12 +228,18 @@ class PersonaPlexWorkerClient:
             err_desc = f"{type(e).__name__}: {e!s}" if str(e).strip() else type(e).__name__
             raise WorkerConnectionError(f"Failed to connect worker {self.worker_id}: {err_desc}") from e
 
-    async def send_audio(self, audio_data: bytes | np.ndarray) -> None:
-        """Send audio frame upstream (Kind 0x01)."""
+    async def send_audio(self, audio_data: bytes | np.ndarray) -> int:
+        """
+        Send audio frame upstream (Kind 0x01).
+        Single codec owner: transcode PCM to Opus if use_opus=True, else send raw PCM.
+        Returns the number of audio payload bytes transmitted (0 if buffered by Opus encoder).
+        """
         if self._ws is None or self._status != WorkerStatus.BUSY:
             raise WorkerConnectionError(f"Worker {self.worker_id} is not connected")
 
-        if self.use_opus and self._opus_writer is not None:
+        if self.use_opus:
+            if self._opus_writer is None:
+                raise WorkerConnectionError("OpusStreamWriter not initialized on worker client")
             if isinstance(audio_data, bytes):
                 samples = np.frombuffer(audio_data, dtype=np.float32)
             elif audio_data.dtype != np.float32:
@@ -223,7 +249,8 @@ class PersonaPlexWorkerClient:
             self._opus_writer.append_pcm(samples)
             payload = self._opus_writer.read_bytes()
             if not payload:
-                return
+                # sphn buffers initial frames before emitting first Ogg page; normal behavior
+                return 0
         else:
             if isinstance(audio_data, np.ndarray):
                 if audio_data.dtype == np.float32 or audio_data.dtype == np.int16:
@@ -236,6 +263,7 @@ class PersonaPlexWorkerClient:
         msg_bytes = encode_message(AudioMessage(data=payload))
         await self._ws.send(msg_bytes)
         self.frames_sent += 1
+        return len(payload)
 
     async def send_raw(self, raw_bytes: bytes) -> None:
         """Send raw binary frame directly upstream to worker with zero transcoding."""

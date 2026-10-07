@@ -48,7 +48,7 @@ SESSION_DEBUG_LOGS: dict[str, dict[str, Any]] = {}
 MAX_DEBUG_SESSIONS = 100
 
 
-from ..settings import app_settings
+from ..settings import MODEL_FRAME_SAMPLES, MODEL_SAMPLE_RATE, app_settings
 
 @router.get("/debug/sessions/{session_id}")
 @router.get("/v2/debug/session/{session_id}")
@@ -555,16 +555,27 @@ async def voice_v2_endpoint(
 
     is_pcm_client = (codec == "pcm16" or codec == "g711_ulaw")
 
-    # Inbound Opus encoder and outbound Opus reader for PCM clients (tests / telephony)
-    server_opus_writer = None
+    # Inbound / Outbound Opus Transcoding:
+    # WorkerClient is the ONE codec owner for outbound worker streaming (PCM -> Opus).
+    # server_opus_reader is used here ONLY to decode incoming worker Opus into PCM for browser/telephony clients.
     server_opus_reader = None
-    if is_pcm_client:
-        try:
-            import sphn
-            server_opus_writer = sphn.OpusStreamWriter(MODEL_SAMPLE_RATE)
+    sphn_installed = False
+    sphn_version = "not_found"
+    try:
+        import sphn
+        sphn_installed = True
+        sphn_version = getattr(sphn, "__version__", "installed")
+        if is_pcm_client:
             server_opus_reader = sphn.OpusStreamReader(MODEL_SAMPLE_RATE)
-        except Exception as e:
-            logger.warning(f"sphn library unavailable on gateway: {e}")
+            logger.info(f"[VoiceSession {call_session_id}] Initialized server_opus_reader @ {MODEL_SAMPLE_RATE} Hz")
+    except Exception as e:
+        logger.warning(f"[VoiceSession {call_session_id}] sphn OpusStreamReader unavailable on gateway: {e}")
+
+    logger.info(
+        f"[VoiceSession {call_session_id}] Audio runtime configured: client_codec={codec}, "
+        f"is_pcm_client={is_pcm_client}, sphn_available={sphn_installed} ({sphn_version}), "
+        f"worker_use_opus={getattr(worker_client, 'use_opus', False)}"
+    )
 
     # Decoupled audio queue for PCM clients: chunks -> resampled 24kHz frames -> worker
     audio_frame_queue: asyncio.Queue[np.ndarray] = asyncio.Queue()
@@ -687,16 +698,43 @@ async def voice_v2_endpoint(
     async def queue_to_worker_pacer():
         """
         Clocks the PersonaPlex worker at continuous 12.5 Hz (every 80ms) cadence for PCM clients.
-        Sends proper stream headers and adapts to both Opus-encoded and raw PCM workers.
+        Uses a monotonic deadline clock: next_deadline += 0.080; sleep(max(0, next_deadline - now)).
+        Sends EXACTLY one 1920-sample float32 frame per tick (real frame from queue if available, else zeros).
+        WorkerClient is the single codec owner for Opus transcoding via send_audio().
         """
         frame_interval = 0.080  # 80ms = 12.5 Hz
+        next_deadline = time.monotonic()
+        pacer_ticks = 0
+        pacer_start_time = time.monotonic()
+        pacer_frames_sent = 0
+        pacer_bytes_sent = 0
+
+        logger.info(f"[VoiceSession {call_session_id}] queue_to_worker_pacer started with monotonic deadline clock (12.5 Hz)")
         try:
             while not stop_event.is_set():
+                next_deadline += frame_interval
+
+                # Bound check: if audio_frame_queue > 6 frames, drop oldest frames to preserve real-time lockstep
+                q_size = audio_frame_queue.qsize()
+                if q_size > 6:
+                    dropped = 0
+                    while audio_frame_queue.qsize() > 6:
+                        try:
+                            audio_frame_queue.get_nowait()
+                            dropped += 1
+                        except asyncio.QueueEmpty:
+                            break
+                    if dropped > 0:
+                        logger.warning(
+                            f"[VoiceSession {call_session_id}] Audio queue backlog ({q_size} frames): "
+                            f"dropped {dropped} oldest frames to preserve real-time lockstep"
+                        )
+
                 frame_to_send: np.ndarray | None = None
                 try:
                     frame_to_send = audio_frame_queue.get_nowait()
                 except asyncio.QueueEmpty:
-                    frame_to_send = np.zeros(1920, dtype=np.float32)
+                    frame_to_send = np.zeros(MODEL_FRAME_SAMPLES, dtype=np.float32)
 
                 frms = compute_rms(frame_to_send)
                 fpeak = float(np.max(np.abs(frame_to_send)))
@@ -709,22 +747,25 @@ async def voice_v2_endpoint(
 
                 cur_worker = active_worker_holder[0]
                 if cur_worker is not None and cur_worker.is_connected:
-                    if getattr(cur_worker, "use_opus", True) and server_opus_writer is not None:
-                        server_opus_writer.append_pcm(frame_to_send)
-                        payload = server_opus_writer.read_bytes()
-                        if payload and len(payload) > 0:
-                            telemetry["traffic"]["gateway_to_worker"]["bytes"] += len(payload)
-                            telemetry["traffic"]["gateway_to_worker"]["frames"] += 1
-                            await cur_worker.send_raw(b"\x01" + payload)
-                    else:
-                        telemetry["traffic"]["gateway_to_worker"]["bytes"] += frame_to_send.nbytes
+                    payload_bytes = await cur_worker.send_audio(frame_to_send)
+                    if payload_bytes > 0:
+                        pacer_bytes_sent += payload_bytes
+                        pacer_frames_sent += 1
+                        telemetry["traffic"]["gateway_to_worker"]["bytes"] += payload_bytes
                         telemetry["traffic"]["gateway_to_worker"]["frames"] += 1
-                        await cur_worker.send_audio(frame_to_send)
 
-                # Dynamically pace: drain quickly if frames accumulated, else 80ms
-                q_size = audio_frame_queue.qsize()
-                sleep_interval = 0.040 if q_size > 3 else frame_interval
-                await asyncio.sleep(sleep_interval)
+                pacer_ticks += 1
+                if pacer_ticks % 50 == 0:  # Every ~4s
+                    elapsed = time.monotonic() - pacer_start_time
+                    fps = pacer_ticks / elapsed if elapsed > 0 else 0.0
+                    logger.info(
+                        f"[VoiceSession {call_session_id}] Pacer tick #{pacer_ticks}: {fps:.2f} ticks/s (target 12.5), "
+                        f"frames_sent={pacer_frames_sent}, bytes_sent={pacer_bytes_sent}, queue={audio_frame_queue.qsize()}"
+                    )
+
+                now = time.monotonic()
+                sleep_time = max(0.0, next_deadline - now)
+                await asyncio.sleep(sleep_time)
         except asyncio.CancelledError:
             pass
         except Exception as e:
@@ -734,6 +775,8 @@ async def voice_v2_endpoint(
     async def worker_to_client_loop():
         nonlocal disconnect_reason, turn_counter, current_agent_turn_text, current_agent_turn_start
         nonlocal first_agent_audio_emitted, ttfa_greeting_ms, last_agent_token_time
+        worker_audio_frame_count = 0
+        decode_err_count = 0
         try:
             while not stop_event.is_set():
                 try:
@@ -752,13 +795,19 @@ async def voice_v2_endpoint(
                 elif opcode == 0x01:
                     # Audio payload from worker
                     last_agent_token_time = time.time()
-                    if not first_agent_audio_emitted:
-                        first_agent_audio_emitted = True
-                        ttfa_greeting_ms = round((time.time() - call_start_time) * 1000.0, 1)
-                        telemetry["ttfa_greeting_ms"] = ttfa_greeting_ms
-
+                    worker_audio_frame_count += 1
+                    payload = raw[1:]
+                    telemetry["worker_opus_bytes_in"] = telemetry.get("worker_opus_bytes_in", 0) + len(payload)
                     telemetry["traffic"]["worker_to_gateway"]["bytes"] += len(raw)
                     telemetry["traffic"]["worker_to_gateway"]["frames"] += 1
+
+                    # Log the first 5 payload headers for immediate wire diagnostics
+                    if worker_audio_frame_count <= 5:
+                        header_hex = payload[:16].hex() if len(payload) >= 16 else payload.hex()
+                        logger.info(
+                            f"[VoiceSession {call_session_id}] Worker frame #{worker_audio_frame_count}: "
+                            f"len={len(payload)}B, header={header_hex}"
+                        )
 
                     if not is_pcm_client:
                         # Transparent binary forward directly to client
@@ -766,9 +815,8 @@ async def voice_v2_endpoint(
                         telemetry["traffic"]["gateway_to_browser"]["frames"] += 1
                         await websocket.send_bytes(raw)
                     else:
-                        # Decode for PCM test / browser clients
+                        # Decode Opus / raw PCM for PCM browser / test clients
                         pcm = None
-                        payload = raw[1:]
                         if len(payload) == 1920 * 4 and not payload.startswith(b"OggS"):
                             # Raw PCM from mock worker in unit tests
                             try:
@@ -780,14 +828,42 @@ async def voice_v2_endpoint(
                                 server_opus_reader.append_bytes(payload)
                                 pcm = server_opus_reader.read_pcm()
                             except Exception as opus_err:
-                                logger.debug(f"Opus decode note: {opus_err}")
+                                decode_err_count += 1
+                                telemetry["decode_errors"] = telemetry.get("decode_errors", 0) + 1
+                                if decode_err_count <= 10:
+                                    logger.warning(
+                                        f"[VoiceSession {call_session_id}] Opus decode exception #{decode_err_count}: {opus_err}",
+                                        exc_info=True,
+                                    )
                         elif len(payload) > 1:
                             try:
                                 pcm = np.frombuffer(payload, dtype=np.float32)
                             except Exception as pcm_err:
                                 logger.debug(f"Raw PCM decode note: {pcm_err}")
 
+                        # Only proceed if we received actual decoded audio samples
                         if pcm is not None and len(pcm) > 0:
+                            telemetry["decoded_pcm_frames"] = telemetry.get("decoded_pcm_frames", 0) + 1
+                            rms_val = compute_rms(pcm)
+                            peak_val = float(np.max(np.abs(pcm)))
+                            telemetry["audio_levels"]["worker_to_gateway_rms"] = round(
+                                telemetry["audio_levels"]["worker_to_gateway_rms"] * 0.9 + rms_val * 0.1, 4
+                            )
+                            telemetry["audio_levels"]["worker_to_gateway_peak"] = round(
+                                max(telemetry["audio_levels"]["worker_to_gateway_peak"], peak_val), 4
+                            )
+
+                            if not first_agent_audio_emitted:
+                                first_agent_audio_emitted = True
+                                first_audio_ms = round((time.time() - call_start_time) * 1000.0, 1)
+                                ttfa_greeting_ms = first_audio_ms
+                                telemetry["ttfa_greeting_ms"] = ttfa_greeting_ms
+                                telemetry["first_audio_to_browser_ms"] = first_audio_ms
+                                logger.info(
+                                    f"[VoiceSession {call_session_id}] FIRST AUDIBLE AUDIO EMITTED: "
+                                    f"samples={len(pcm)}, rms={rms_val:.4f}, ttfa={ttfa_greeting_ms}ms"
+                                )
+
                             resampled = out_resampler.resample_chunk(pcm, last=False)
                             clipped = soft_clip(resampled, threshold=0.92)
                             if codec == "g711_ulaw":
@@ -803,6 +879,10 @@ async def voice_v2_endpoint(
                     last_agent_token_time = time.time()
                     token = raw[1:].decode("utf-8", errors="replace")
                     telemetry["tokens_received"] += 1
+                    if "first_token_ms" not in telemetry:
+                        telemetry["first_token_ms"] = round((time.time() - call_start_time) * 1000.0, 1)
+                        logger.info(f"[VoiceSession {call_session_id}] First text token received at {telemetry['first_token_ms']}ms: '{token}'")
+
                     if not current_agent_turn_text:
                         current_agent_turn_start = (time.time() - call_start_time) * 1000.0
                     current_agent_turn_text.append(token)
@@ -1001,14 +1081,40 @@ async def voice_v2_endpoint(
         except asyncio.QueueEmpty:
             break
 
-    # Run tasks concurrently
-    tasks = [
-        asyncio.create_task(client_to_queue_loop()),
-        asyncio.create_task(worker_to_client_loop()),
-        asyncio.create_task(lifecycle_heartbeat()),
-    ]
+    def make_task_logger(task_name: str):
+        def _done_cb(t: asyncio.Task):
+            try:
+                if not t.cancelled():
+                    exc = t.exception()
+                    if exc:
+                        logger.error(
+                            f"[VoiceSession {call_session_id}] Background task '{task_name}' failed: {exc}",
+                            exc_info=exc,
+                        )
+                        trigger_stop(f"task_{task_name}_failed_{exc}")
+            except asyncio.CancelledError:
+                pass
+            except Exception as e:
+                logger.error(f"[VoiceSession {call_session_id}] Task inspector error ({task_name}): {e}")
+        return _done_cb
+
+    # Run tasks concurrently with error tracking
+    t_client = asyncio.create_task(client_to_queue_loop())
+    t_client.add_done_callback(make_task_logger("client_to_queue_loop"))
+
+    t_worker = asyncio.create_task(worker_to_client_loop())
+    t_worker.add_done_callback(make_task_logger("worker_to_client_loop"))
+
+    t_heartbeat = asyncio.create_task(lifecycle_heartbeat())
+    t_heartbeat.add_done_callback(make_task_logger("lifecycle_heartbeat"))
+
+    worker_stream_task.add_done_callback(make_task_logger("stream_worker_frames"))
+
+    tasks = [worker_stream_task, t_client, t_worker, t_heartbeat]
     if is_pcm_client:
-        tasks.append(asyncio.create_task(queue_to_worker_pacer()))
+        t_pacer = asyncio.create_task(queue_to_worker_pacer())
+        t_pacer.add_done_callback(make_task_logger("queue_to_worker_pacer"))
+        tasks.append(t_pacer)
 
     stop_task = asyncio.create_task(stop_event.wait())
     all_tasks = [stop_task, *tasks]
