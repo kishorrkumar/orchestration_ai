@@ -9,6 +9,7 @@ import asyncio
 import json
 import logging
 import time
+import uuid
 from typing import Any
 
 import numpy as np
@@ -342,7 +343,7 @@ async def voice_v2_endpoint(
 
     # 3. Create CallSession in Database
     call_start_time = time.time()
-    call_session_id = f"call_{int(call_start_time)}_{agent.id[:8]}"
+    call_session_id = f"call_{int(call_start_time)}_{uuid.uuid4().hex[:6]}_{agent.id[:8]}"
     async with session_factory() as db:
         call_svc = CallSessionService(db)
         await call_svc.create_session(
