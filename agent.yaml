@@ -31,9 +31,6 @@ system_prompt: >
   User: "How much does it cost?"
   Ananya: "It depends on your monthly volume. I can have our team send over exact pricing if you'd like a quick 10-minute demo?"
 
-greeting_text: "Hi, thanks for calling Snapserve, this is Ananya. What can I help you with?"
-greeting_mode: "agent_speaks_first"
-
 # PersonaPlex Generation Settings
 generation:
   audio_temperature: 0.8

@@ -32,7 +32,6 @@ from ..protocol.messages import (
     decode_message,
     encode_message,
 )
-from ..worker.local_cascade import CascadedLocalWorkerServer, LocalCascadeWorkerServer
 from ..worker.mock_worker import PersonaPlexMockServer
 from ..worker.pool import WorkerNodeConfig, WorkerPool
 
@@ -47,23 +46,20 @@ async def _run_gateway_cmd(args):
     pool = WorkerPool()
     spawned_servers = []
 
-    worker_type = getattr(args, "worker_type", "local_cascade")
+    worker_type = getattr(args, "worker_type", "mock")
 
-    # If local_cascade or cascaded workers requested
-    if worker_type in ("local_cascade", "cascaded"):
+    # If mock workers requested
+    if worker_type == "mock":
         base_port = args.mock_port_start
         count = getattr(args, "mock_workers", 1) or 1
         for i in range(count):
-            c_port = base_port + i
-            c_id = f"local-cascade-worker-{i}"
-            server = LocalCascadeWorkerServer(host="127.0.0.1", port=c_port)
+            m_port = base_port + i
+            m_id = f"mock-worker-{i}"
+            server = PersonaPlexMockServer(host="127.0.0.1", port=m_port)
             await server.start()
             spawned_servers.append(server)
-            pool.register_worker(WorkerNodeConfig(id=c_id, host="127.0.0.1", port=c_port))
-            logger.info(f"Attached Local Cascade Worker {c_id} on port {c_port}")
-
-    # If mock workers requested
-    elif worker_type == "mock":
+            pool.register_worker(WorkerNodeConfig(id=m_id, host="127.0.0.1", port=m_port))
+            logger.info(f"Attached Mock Worker {m_id} on port {m_port}")
         base_port = args.mock_port_start
         count = getattr(args, "mock_workers", 1) or 1
         for i in range(count):
@@ -117,17 +113,6 @@ async def _run_gateway_cmd(args):
     finally:
         for s in spawned_servers:
             await s.stop()
-
-
-async def _run_cascaded_worker_cmd(args):
-    server = CascadedLocalWorkerServer(host=args.host, port=args.port)
-    await server.start()
-    logger.info(f"Cascaded Local Worker running on ws://{args.host}:{args.port}/api/chat")
-    try:
-        while True:
-            await asyncio.sleep(3600)
-    except (asyncio.CancelledError, KeyboardInterrupt):
-        await server.stop()
 
 
 async def _run_mock_worker_cmd(args):
@@ -305,31 +290,26 @@ def main():
     gw.add_argument("--port", type=int, default=8000, help="Gateway bind port")
     gw.add_argument(
         "--worker-type",
-        choices=["local_cascade", "cascaded", "mock", "personaplex"],
-        default="local_cascade",
-        help="Worker type: local_cascade (default local STT/LLM/TTS), mock (simulated), or personaplex (remote GPU)",
+        choices=["mock", "personaplex"],
+        default="mock",
+        help="Worker type: mock (simulated) or personaplex (remote GPU)",
     )
     gw.add_argument("--mock-workers", type=int, default=1, help="Number of local workers to auto-spawn")
     gw.add_argument("--mock-port-start", type=int, default=8998, help="Starting port for workers")
     gw.add_argument("--worker", action="append", help="Register real worker (id:host:port[:gpu_id])")
 
     # run-local
-    local_p = subparsers.add_parser("run-local", help="One-command local run: gateway + local cascaded worker on port 8000")
+    local_p = subparsers.add_parser("run-local", help="One-command local run: gateway + mock worker on port 8000")
     local_p.add_argument("--host", default="127.0.0.1", help="Gateway bind host")
     local_p.add_argument("--port", type=int, default=8000, help="Gateway bind port")
     local_p.add_argument(
         "--worker-type",
-        choices=["local_cascade", "cascaded", "mock", "personaplex"],
-        default="local_cascade",
+        choices=["mock", "personaplex"],
+        default="mock",
         help="Worker type",
     )
     local_p.add_argument("--mock-workers", type=int, default=1, help="Number of local workers")
     local_p.add_argument("--mock-port-start", type=int, default=8998, help="Starting port for workers")
-
-    # run-cascaded-worker
-    casc = subparsers.add_parser("run-cascaded-worker", help="Run standalone Cascaded Local Worker")
-    casc.add_argument("--host", default="127.0.0.1")
-    casc.add_argument("--port", type=int, default=8998)
 
     # run-mock-worker
     mock = subparsers.add_parser("run-mock-worker", help="Run standalone PersonaPlex mock worker")
@@ -352,8 +332,6 @@ def main():
         if not hasattr(args, "worker"):
             args.worker = None
         asyncio.run(_run_gateway_cmd(args))
-    elif args.subcommand == "run-cascaded-worker":
-        asyncio.run(_run_cascaded_worker_cmd(args))
     elif args.subcommand == "run-mock-worker":
         asyncio.run(_run_mock_worker_cmd(args))
     elif args.subcommand == "test-call":

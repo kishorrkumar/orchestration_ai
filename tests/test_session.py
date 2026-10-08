@@ -50,6 +50,10 @@ async def test_session_lifecycle_and_barge_in():
         assert session.metrics.user_frames_in == 1
         assert session.state == SessionState.ACTIVE
 
+        # Wait a moment for initial agent frames while ACTIVE
+        await asyncio.sleep(0.1)
+        assert len(received_client_messages) > 0
+
         # Push high-energy frame (user interruption / barge-in)
         loud_frame = (np.ones(FRAME_SIZE, dtype=np.float32) * 0.5)
         raw_loud_msg = encode_message(AudioMessage(data=loud_frame.tobytes()))
@@ -57,10 +61,6 @@ async def test_session_lifecycle_and_barge_in():
         assert session.metrics.user_frames_in == 2
         assert session.metrics.barge_in_events == 1
         assert session.state == SessionState.INTERRUPTED
-
-        # Wait a moment for agent frames to arrive
-        await asyncio.sleep(0.15)
-        assert len(received_client_messages) > 0
 
         # End session
         metrics = await manager.end_session("test-session-lifecycle")

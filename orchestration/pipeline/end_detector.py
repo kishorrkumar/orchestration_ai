@@ -48,12 +48,14 @@ class EndOfCallDetector:
         silence_timeout_sec: float = 1800.0,
         max_duration_sec: float = 1800.0,
         fuzzy_threshold: float = 0.80,
+        min_call_duration_sec: float = 0.0,
     ):
         self.ending_text = ending_text
         self.quiet_window_sec = quiet_window_sec
         self.silence_timeout_sec = silence_timeout_sec
         self.max_duration_sec = max_duration_sec
         self.fuzzy_threshold = fuzzy_threshold
+        self.min_call_duration_sec = min_call_duration_sec
 
         # Extract target closing clauses from ending text
         self.target_clauses = self._extract_target_clauses(ending_text)
@@ -101,8 +103,8 @@ class EndOfCallDetector:
         if not self.is_active:
             return False
 
-        # Guard: Ignore closer detection during initial greeting / opening turn (first 15s)
-        if (now - self.session_start_time) < 15.0:
+        # Guard: Ignore closer detection during initial opening turn if configured
+        if (now - self.session_start_time) < self.min_call_duration_sec:
             return False
 
         self.last_speech_time = now

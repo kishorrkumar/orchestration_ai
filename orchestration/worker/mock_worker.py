@@ -345,6 +345,13 @@ class PersonaPlexMockServer:
 
             loop = asyncio.get_running_loop()
 
+            opus_reader = None
+            try:
+                import sphn
+                opus_reader = sphn.OpusStreamReader(SAMPLE_RATE)
+            except Exception:
+                pass
+
             async def queue_agent_utterance(reply_text: str):
                 nonlocal outbound_audio_frames, outbound_tokens
                 words = reply_text.strip().split()
@@ -412,14 +419,30 @@ class PersonaPlexMockServer:
 
                         elif msg.type == MessageType.AUDIO:
                             self.total_frames_received += 1
-                            raw_samples = (
-                                np.frombuffer(msg.data, dtype=np.float32)
-                                if len(msg.data) >= FRAME_SIZE * 4
-                                else np.zeros(FRAME_SIZE, dtype=np.float32)
-                            )
+                            raw_samples = None
+                            if len(msg.data) >= 4 and msg.data[:4] == b"OggS":
+                                if opus_reader is not None:
+                                    try:
+                                        opus_reader.append_bytes(msg.data)
+                                        pcm = opus_reader.read_pcm()
+                                        if pcm is not None and len(pcm) > 0:
+                                            raw_samples = pcm if pcm.ndim == 1 else pcm.mean(axis=1)
+                                    except Exception:
+                                        pass
+                                if raw_samples is None:
+                                    if len(msg.data) > 60:
+                                        raw_samples = np.ones(FRAME_SIZE, dtype=np.float32) * 0.1
+                                    else:
+                                        raw_samples = np.zeros(FRAME_SIZE, dtype=np.float32)
+                            elif len(msg.data) >= FRAME_SIZE * 4:
+                                raw_samples = np.frombuffer(msg.data, dtype=np.float32)
+                            else:
+                                raw_samples = np.zeros(FRAME_SIZE, dtype=np.float32)
+
                             # Noise Cancellation Layer
+                            raw_rms = compute_rms(raw_samples)
                             clean_samples = noise_canceller.clean_frame(raw_samples)
-                            rms = compute_rms(clean_samples)
+                            rms = max(compute_rms(clean_samples), raw_rms if raw_rms > 0.03 else 0.0)
 
                             # Turn-taking VAD with sensitive onset debounce for laptop microphones
                             if rms > 0.008:

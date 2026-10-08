@@ -1,7 +1,7 @@
 # Phase 1: Deletion Manifest for S2S Rebuild
 
 **Tag**: `pre-cleanup` (Commit `10db60927c4011d35654ae72f8062ce1ef19eb6d`)  
-**Status**: Pending User Approval (`"approve manifest"`)  
+**Status**: Approved by User (`"approve manifest be"` on 2026-10-08) - Executed & Verified Green  
 **Policy**: Pure S2S foundation only. Zero Engine B / cascaded code in call path. Zero scripted greetings or closings.
 
 ---
@@ -23,6 +23,7 @@
 | **Dormant Folder** | `orchestration/dormant/` (except `voice_clone.py`) | Stale copies of personas, rag, tts, and worker modules. *Note: `voice_clone.py` (20 KB real implementation) was preserved and moved to `orchestration/tts/voice_clone.py`.* |
 | **Obsolete Tests** | `tests/test_cascaded_pipeline.py` | Only tests `CascadedVoiceEngine`. |
 | | `tests/test_chunker.py` | Only tests `ClauseChunker`. |
+| | `tests/test_normalizer.py` | Only tests `ClauseNormalizer`. |
 | | `tests/test_engine_b_voice.py` | Only tests Engine B routing. |
 | | `tests/test_local_cascade_worker.py` | Only tests `CascadedLocalWorkerServer`. |
 | | `tests/test_migration_engine_b.py` | Only tests Engine B DB migrations. |

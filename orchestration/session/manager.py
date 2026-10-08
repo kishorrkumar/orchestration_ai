@@ -281,8 +281,10 @@ class VoiceSession:
             self.metrics.handshake_time_sec = round(t_handshake, 3)
             logger.info(f"Session {self.session_id} worker handshake complete in {t_handshake:.2f}s")
 
-            # Drop any audio frames accumulated during the priming wait (prevents burst to model)
-            self.inbound_buffer.clear()
+            # Preserve early caller audio frames accumulated during handshake/priming (Defect 10.4 fix)
+            # Cap to at most 20 frames (1.6s) to prevent memory burst while preserving opening words
+            while self.inbound_buffer.available_frames > 20:
+                self.inbound_buffer.pop_frame()
 
             self.set_state(SessionState.ACTIVE)
             self.metrics.connected_at = time.time()

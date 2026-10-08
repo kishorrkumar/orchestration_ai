@@ -31,9 +31,10 @@ async def test_mock_worker_handshake_and_stream():
         await client.connect(session_id="sess-100", persona=persona)
         assert client.status == WorkerStatus.BUSY
 
-        # Stream user audio
+        # Stream user speech / utterance (pure S2S user-first)
         test_frame = np.zeros(FRAME_SIZE, dtype=np.float32)
         await client.send_audio(test_frame)
+        await client.send_text("Hello, is anyone there?")
 
         # Receive a few messages
         received_audio = 0

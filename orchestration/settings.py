@@ -40,7 +40,7 @@ class AgentConfig(BaseModel):
     name: str = "Aarav"
     timezone: str = "Asia/Kolkata"
     voice_prompt: str = "NATM1.pt"
-    greeting_mode: str = "agent_first"
+    greeting_mode: str = "user_first"
     greeting_text: str = ""
     ending_text: str = ""
     system_prompt: str = (
@@ -107,7 +107,7 @@ def load_agent_yaml(yaml_path: Path) -> AgentConfig:
             "name": data.get("name", "Alex"),
             "timezone": data.get("timezone", "Asia/Kolkata"),
             "voice_prompt": data.get("voice_prompt", "NATF2.pt"),
-            "greeting_mode": data.get("greeting_mode", "agent_first"),
+            "greeting_mode": data.get("greeting_mode", "user_first"),
             "greeting_text": data.get("greeting_text", ""),
             "ending_text": data.get("ending_text", ""),
             "system_prompt": data.get("system_prompt", ""),
