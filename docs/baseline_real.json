@@ -1,0 +1,36 @@
+{
+  "timestamp": "2026-10-08T16:51:14Z",
+  "environment": {
+    "gpu_model": "NVIDIA GeForce RTX 3050 Laptop GPU",
+    "total_vram_mib": 4096,
+    "free_vram_mib": 4096,
+    "required_vram_mib": 18432,
+    "python_env": ".venv-gpu (Python 3.11.15, CUDA 12.4, PyTorch 2.6.0+cu124)"
+  },
+  "worker_status": "FAILED_TO_START",
+  "error_type": "huggingface_hub.errors.GatedRepoError",
+  "error_message": "401 Client Error: Cannot access gated repo for url https://huggingface.co/nvidia/personaplex-7b-v1/resolve/main/voices.tgz. Access to model nvidia/personaplex-7b-v1 is restricted. You must have access to it and be authenticated to access it. Please log in.",
+  "root_causes": [
+    "1. HuggingFace repository 'nvidia/personaplex-7b-v1' is gated and requires HF_TOKEN with accepted access license.",
+    "2. Local GPU hardware has 4,096 MiB (4.0 GB) VRAM, whereas PersonaPlex 7B bfloat16 + Mimi requires ~18-20 GB VRAM. Real model execution requires either the 80GB A100 pod or remote GPU node."
+  ],
+  "measurements": {
+    "real_gpu": {
+      "status": "BLOCKED_BY_AUTH_AND_VRAM",
+      "ready_to_talk_p50_ms": null,
+      "priming_time_ms": null,
+      "response_latency_p50_ms": null,
+      "rtf": null,
+      "output_rms": null
+    },
+    "mock_ci_baseline": {
+      "status": "MEASURED_MOCK",
+      "ready_to_talk_p50_ms": 147.36,
+      "ready_to_talk_p95_ms": 188.40,
+      "priming_time_ms": 100.0,
+      "response_latency_p50_ms": 0.57,
+      "rtf": 0.15,
+      "output_rms": 0.0
+    }
+  }
+}
