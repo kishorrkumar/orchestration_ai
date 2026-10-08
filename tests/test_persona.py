@@ -116,6 +116,7 @@ def test_custom_persona_registration():
 
 
 def test_persona_yaml_serialization():
+    pytest.importorskip("yaml")
     registry = PersonaRegistry()
     yaml_out = registry.to_yaml()
     assert "support_agent" in yaml_out

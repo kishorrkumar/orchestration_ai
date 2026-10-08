@@ -287,6 +287,10 @@ export const VoiceCloneModal: React.FC<VoiceCloneModalProps> = ({
       formData.append('file', audioPayload, filename)
       formData.append('name', voiceName.trim())
       formData.append('consent', 'true')
+      formData.append(
+        'consent_statement',
+        'I confirm that this is my own voice recording, or I have received explicit permission to use and clone this voice for AI conversational speech.'
+      )
       if (gender !== 'unspecified') {
         formData.append('gender', gender)
       }

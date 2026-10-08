@@ -854,9 +854,27 @@ export const AgentEditorView: React.FC<AgentEditorViewProps> = ({
                               <Volume2 className={`w-3.5 h-3.5 shrink-0 ${isSelected ? 'text-[#C2603F]' : 'text-[#6B6963]'}`} />
                               <span className="truncate">{v.name}</span>
                             </span>
-                            <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-[#C2603F]/10 text-[#C2603F] font-medium shrink-0">
-                              Cloned
-                            </span>
+                            <div className="flex items-center gap-1 shrink-0">
+                              {v.qa_score !== undefined && v.qa_score !== null ? (
+                                <span
+                                  className={`text-[9px] px-1.5 py-0.5 rounded-full font-mono font-medium ${
+                                    v.qa_passed
+                                      ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                                      : 'bg-amber-50 text-amber-700 border border-amber-200'
+                                  }`}
+                                  title={`Acoustic similarity: ${v.qa_score}. Route: ${v.recommended_engine || 'cascaded'}`}
+                                >
+                                  {v.qa_passed ? `QA ${v.qa_score}` : `Route: Cascaded`}
+                                </span>
+                              ) : (
+                                <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-stone-100 text-stone-600 font-mono">
+                                  Cascaded
+                                </span>
+                              )}
+                              <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-[#C2603F]/10 text-[#C2603F] font-medium shrink-0">
+                                Cloned
+                              </span>
+                            </div>
                           </div>
                           <div className="text-[12px] text-[#6B6963] truncate">
                             {v.duration_sec ? `${v.duration_sec}s sample` : v.speaking_style}

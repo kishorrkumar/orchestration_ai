@@ -8,7 +8,10 @@ import logging
 import sys
 from typing import Any
 
-import structlog
+try:
+    import structlog
+except ImportError:
+    structlog = None
 
 REDACTED_KEYS = {"password", "secret", "token", "api_key", "authorization", "hf_token"}
 
@@ -29,6 +32,9 @@ def setup_logging(log_level: str = "INFO", is_dev: bool = True) -> None:
     """Configure structured logging pipeline."""
     level = getattr(logging, log_level.upper(), logging.INFO)
     logging.basicConfig(format="%(message)s", stream=sys.stdout, level=level)
+
+    if structlog is None:
+        return
 
     shared_processors: list[Any] = [
         structlog.contextvars.merge_contextvars,
@@ -56,7 +62,8 @@ def setup_logging(log_level: str = "INFO", is_dev: bool = True) -> None:
     )
 
 
-def get_logger(name: str | None = None) -> structlog.stdlib.BoundLogger:
-    """Return a configured structlog logger."""
-    from typing import cast
-    return cast(structlog.stdlib.BoundLogger, structlog.get_logger(name))
+def get_logger(name: str | None = None) -> Any:
+    """Return a configured structlog logger or stdlib logging fallback."""
+    if structlog is not None:
+        return structlog.get_logger(name)
+    return logging.getLogger(name or "root")

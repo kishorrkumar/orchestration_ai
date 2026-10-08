@@ -181,6 +181,20 @@ class AgentApplicationService:
         # Enforces hard token limit
         self.compiler.validate_for_publish(agent)
 
+        # Enforces voice cloning QA verification
+        from ...tts.voice_clone import default_voice_cloner
+        clean_v = agent.voice_id.strip() if agent.voice_id else ""
+        if default_voice_cloner.has_voice(clean_v):
+            meta = default_voice_cloner.get_voice_metadata(clean_v)
+            if meta and not meta.get("qa_passed", False):
+                qa_score = meta.get("qa_score")
+                score_str = f" (current similarity: {qa_score})" if qa_score is not None else ""
+                raise ValidationError(
+                    f"Cannot publish agent with unverified cloned voice '{agent.voice_id}'{score_str}. "
+                    f"Cloned voices must pass acoustic QA verification (similarity >= 0.75). "
+                    f"Run 'python scripts/voice_clone_qa.py' to verify quality before publishing."
+                )
+
         agent.status = AgentStatus.PUBLISHED
         agent.published_version = agent.current_version
         agent.updated_at = self.clock.now_utc()
