@@ -89,3 +89,29 @@ def calculate_snr_db(signal: np.ndarray, reference: np.ndarray) -> float:
         return 0.0
 
     return float(10.0 * np.log10(sig_power / noise_power))
+
+
+def normalize_speech_loudness(
+    audio: np.ndarray,
+    target_rms: float = 0.12,
+    min_speech_rms: float = 0.0002,
+    max_gain_factor: float = 50.0,
+) -> np.ndarray:
+    """
+    Automatic Gain Control (AGC) and loudness normalizer for real-time speech frames.
+    Targets ~ -16 LUFS (speech RMS ~ 0.12 in float32 scale).
+    - If audio is below `min_speech_rms` (silence/ambient noise), leaves it untouched
+      to prevent boosting background noise floor.
+    - If speech is low (e.g. RMS 0.0005 - 0.04), boosts gain smoothly up to `max_gain_factor`.
+    - Always applies soft-knee limiting to eliminate harsh clipping on peaks.
+    """
+    if len(audio) == 0:
+        return audio
+
+    rms = compute_rms(audio)
+    if rms < min_speech_rms:
+        return audio
+
+    gain = min(max_gain_factor, max(0.5, target_rms / max(rms, 1e-6)))
+    amplified = audio.astype(np.float32) * gain
+    return soft_clip(amplified, threshold=0.92)

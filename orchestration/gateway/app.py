@@ -105,7 +105,7 @@ def create_app(
     import os
 
     from fastapi import Response
-    worker_pool = pool or WorkerPool()
+    worker_pool = pool or WorkerPool(probe_on_acquire=True)
     persona_registry = registry or default_registry
     mgr = session_manager or SessionManager(pool=worker_pool)
 
@@ -184,9 +184,11 @@ def create_app(
     from ..api.agents import router as agents_router
     from ..api.prompts import router as prompts_router
     from ..api.voice_v2 import router as voice_v2_router
+    from ..api.webrtc import router as webrtc_router
     app.include_router(agents_router)
     app.include_router(prompts_router)
     app.include_router(voice_v2_router)
+    app.include_router(webrtc_router)
 
     # Mount V2 Clean Architecture routers & RFC 9457 Problem Details error handlers
     from ..interfaces.http.error_handlers import register_error_handlers
@@ -836,6 +838,131 @@ def create_app(
                     pass
         finally:
             await mgr.end_session(session.session_id)
+
+    # ==========================================================
+    # Official Kyutai / PersonaPlex Client Reverse-Proxy & /api/chat
+    # ==========================================================
+    @app.get("/official", include_in_schema=False)
+    @app.get("/official/{file_path:path}", include_in_schema=False)
+    async def official_client_proxy(file_path: str = ""):
+        """Reverse-proxy official PersonaPlex web client static assets from port 8998."""
+        import httpx
+        from fastapi.responses import Response
+
+        worker_url = f"http://127.0.0.1:8998/{file_path}"
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                upstream_resp = await client.get(worker_url)
+                content_type = upstream_resp.headers.get("content-type", "application/octet-stream")
+                return Response(
+                    content=upstream_resp.content,
+                    status_code=upstream_resp.status_code,
+                    media_type=content_type,
+                )
+        except Exception as e:
+            return HTMLResponse(
+                content=f"<h3>Official client unreachable</h3><p>Could not connect to PersonaPlex worker on port 8998: {e}</p>",
+                status_code=502,
+            )
+
+    @app.websocket("/api/chat")
+    async def official_api_chat_proxy(
+        websocket: WebSocket,
+        text_prompt: str = Query("", description="System prompt"),
+        voice_prompt: str = Query("NATF2.pt", description="Voice preset"),
+        audio_temperature: float = Query(0.8),
+        text_temperature: float = Query(0.7),
+        audio_topk: int = Query(250),
+        text_topk: int = Query(25),
+        seed: int | None = Query(None),
+    ):
+        """
+        Transparent binary relay for official PersonaPlex web client connecting to /api/chat.
+        Enables official client to function through single public port 8000.
+        """
+        import websockets
+        import urllib.parse
+        from ..persona.registry import get_existing_voice_files
+
+        existing_voices = get_existing_voice_files()
+        if voice_prompt not in existing_voices:
+            alt_voice = f"{voice_prompt}.pt" if not voice_prompt.endswith((".pt", ".wav")) else voice_prompt
+            if alt_voice in existing_voices:
+                voice_prompt = alt_voice
+            else:
+                await websocket.accept()
+                await websocket.send_bytes(0x05.to_bytes(1, "big") + f"Voice preset '{voice_prompt}' not found on worker".encode("utf-8"))
+                await websocket.close(code=status.WS_1008_POLICY_VIOLATION, reason=f"Voice {voice_prompt} not found")
+                return
+
+        params = {
+            "text_prompt": text_prompt,
+            "voice_prompt": voice_prompt,
+            "audio_temperature": str(audio_temperature),
+            "text_temperature": str(text_temperature),
+            "audio_topk": str(audio_topk),
+            "text_topk": str(text_topk),
+        }
+        if seed is not None:
+            params["seed"] = str(seed)
+
+        qs = urllib.parse.urlencode(params)
+        worker_ws_url = f"ws://127.0.0.1:8998/api/chat?{qs}"
+
+        await websocket.accept()
+
+        try:
+            async with websockets.connect(
+                worker_ws_url,
+                max_size=16 * 1024 * 1024,
+                ping_interval=20,
+                ping_timeout=20,
+            ) as worker_ws:
+                stop_event = asyncio.Event()
+
+                async def forward_upstream_to_client():
+                    try:
+                        async for msg in worker_ws:
+                            if stop_event.is_set():
+                                break
+                            if isinstance(msg, bytes):
+                                await websocket.send_bytes(msg)
+                            elif isinstance(msg, str):
+                                await websocket.send_text(msg)
+                    except Exception:
+                        pass
+                    finally:
+                        stop_event.set()
+
+                async def forward_client_to_upstream():
+                    try:
+                        while not stop_event.is_set():
+                            data = await websocket.receive()
+                            if data.get("type") == "websocket.disconnect":
+                                break
+                            if "bytes" in data and data["bytes"]:
+                                await worker_ws.send(data["bytes"])
+                            elif "text" in data and data["text"]:
+                                await worker_ws.send(data["text"])
+                    except Exception:
+                        pass
+                    finally:
+                        stop_event.set()
+
+                t1 = asyncio.create_task(forward_upstream_to_client())
+                t2 = asyncio.create_task(forward_client_to_upstream())
+                await asyncio.gather(t1, t2)
+        except Exception as e:
+            logger.error(f"Failed to proxy official /api/chat: {e}")
+            try:
+                await websocket.send_bytes(0x05.to_bytes(1, "big") + f"Worker proxy error: {e}".encode("utf-8"))
+            except Exception:
+                pass
+        finally:
+            try:
+                await websocket.close()
+            except Exception:
+                pass
 
     # ==========================================================
     # Interactive Lean Voice Agent Studio & Modern React SPA

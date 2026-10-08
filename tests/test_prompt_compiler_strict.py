@@ -33,6 +33,7 @@ def test_strict_template_resolution_missing_variable_raises():
             system_prompt=template,
             agent_name="TestAgent",
             variables={},
+            strict=True,
         )
     assert "unresolved_custom_field" in str(exc_info.value)
     assert exc_info.value.missing_variables == ["unresolved_custom_field"]

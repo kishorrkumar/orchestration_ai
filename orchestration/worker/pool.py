@@ -26,7 +26,7 @@ class WorkerNodeConfig(BaseModel):
     host: str = Field(default="localhost", description="Worker host or IP")
     port: int = Field(default=8998, ge=1, le=65535, description="Worker port")
     use_ssl: bool = Field(default=False, description="Use WSS if True")
-    use_opus: bool = Field(default=True, description="Use Opus transcoding for upstream moshi server")
+    use_opus: bool = Field(default=False, description="Use Opus transcoding for upstream moshi server")
     gpu_id: int | None = Field(default=None, description="GPU device index worker is pinned to")
 
 
@@ -40,8 +40,9 @@ class WorkerPool:
     to idle workers and managing their full-duplex session leases.
     """
 
-    def __init__(self, wait_timeout: float = 30.0):
+    def __init__(self, wait_timeout: float = 30.0, probe_on_acquire: bool = False):
         self.wait_timeout = wait_timeout
+        self.probe_on_acquire = probe_on_acquire
         self._workers: dict[str, PersonaPlexWorkerClient] = {}
         self._configs: dict[str, WorkerNodeConfig] = {}
         self._condition = asyncio.Condition()
@@ -74,11 +75,18 @@ class WorkerPool:
             del self._configs[worker_id]
             logger.info(f"Unregistered worker {worker_id}")
 
-    async def acquire_worker(self, session_id: str, timeout: float | None = None) -> PersonaPlexWorkerClient:
+    async def acquire_worker(
+        self,
+        session_id: str,
+        timeout: float | None = None,
+        probe_health: bool | None = None,
+    ) -> PersonaPlexWorkerClient:
         """
         Lease an available IDLE worker.
-        If all workers are BUSY, waits until a worker is released or timeout expires.
+        Probes worker health before leasing when probe_health is enabled.
+        If all workers are BUSY or unhealthy, waits until a worker is released or timeout expires.
         """
+        should_probe = self.probe_on_acquire if probe_health is None else probe_health
         wait_limit = timeout if timeout is not None else self.wait_timeout
         deadline = time.time() + wait_limit
 
@@ -87,6 +95,16 @@ class WorkerPool:
                 # Look for an available worker
                 for worker in self._workers.values():
                     if worker.is_available:
+                        if should_probe:
+                            # Probe worker health before leasing
+                            is_healthy = await worker.probe_health()
+                            if not is_healthy:
+                                worker._status = WorkerStatus.UNHEALTHY
+                                logger.warning(
+                                    f"Worker {worker.worker_id} failed health probe during acquire; marked UNHEALTHY"
+                                )
+                                continue
+
                         # Mark as connecting immediately to prevent race conditions
                         worker._status = WorkerStatus.CONNECTING
                         worker._active_session_id = session_id
@@ -96,7 +114,7 @@ class WorkerPool:
                 remaining = deadline - time.time()
                 if remaining <= 0:
                     raise PoolCapacityExceededError(
-                        f"All {len(self._workers)} PersonaPlex workers are currently saturated. "
+                        f"All {len(self._workers)} PersonaPlex workers are currently saturated or unhealthy. "
                         f"Please retry later."
                     )
 
@@ -104,16 +122,30 @@ class WorkerPool:
                     await asyncio.wait_for(self._condition.wait(), timeout=remaining)
                 except TimeoutError:
                     raise PoolCapacityExceededError(
-                        f"Timed out waiting for available worker ({wait_limit:.1f}s). All workers busy."
+                        f"Timed out waiting for available worker ({wait_limit:.1f}s). All workers busy or unhealthy."
                     )
 
-    async def release_worker(self, worker_id: str) -> None:
-        """Release a worker back to the IDLE pool."""
+    async def release_worker(self, worker_id: str, success: bool = True) -> None:
+        """Release a worker back to the pool. Probes health if call failed."""
         async with self._condition:
             worker = self._workers.get(worker_id)
             if worker:
-                await worker.close()
-                logger.info(f"Released worker {worker_id} back to IDLE pool")
+                if not success:
+                    # Probe health before returning to IDLE
+                    is_healthy = await worker.probe_health()
+                    await worker.close(mark_idle=is_healthy)
+                    if not is_healthy:
+                        worker._status = WorkerStatus.UNHEALTHY
+                        logger.warning(
+                            f"Worker {worker_id} failed call and failed health probe; marked UNHEALTHY"
+                        )
+                    else:
+                        logger.info(
+                            f"Worker {worker_id} passed health probe after failed call; reset to IDLE"
+                        )
+                else:
+                    await worker.close(mark_idle=True)
+                    logger.info(f"Released worker {worker_id} back to IDLE pool")
                 self._condition.notify_all()
 
     def get_worker(self, worker_id: str) -> PersonaPlexWorkerClient | None:

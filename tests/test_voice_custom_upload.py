@@ -60,3 +60,65 @@ async def test_custom_voice_upload_and_listing():
     test_file = pathlib.Path("voices/aarav_custom_ref.wav")
     if test_file.exists():
         test_file.unlink()
+
+
+@pytest.mark.asyncio
+async def test_custom_voice_clone_preview_and_delete_lifecycle():
+    """Verify end-to-end voice cloning, preview audio retrieval, and deletion."""
+    app = create_app(pool=WorkerPool(), registry=PersonaRegistry())
+    transport = ASGITransport(app=app)
+
+    # Generate a clean 5-second harmonic vocal WAV for cloning
+    sr = 24000
+    t = np.linspace(0, 5.0, sr * 5, endpoint=False)
+    vocal_audio = (
+        0.5 * np.sin(2 * np.pi * 200 * t) +
+        0.25 * np.sin(2 * np.pi * 400 * t)
+    ).astype(np.float32) * (0.5 + 0.5 * np.sin(2 * np.pi * 3 * t))
+
+    buf = io.BytesIO()
+    sf.write(buf, vocal_audio, sr, format="WAV", subtype="PCM_16")
+    wav_bytes = buf.getvalue()
+
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        # 1. Reject without consent
+        files = {"file": ("my_recording.wav", wav_bytes, "audio/wav")}
+        data_no_consent = {"name": "Kishore Voice", "consent": "false"}
+        res_no_consent = await client.post("/v2/agents/voices/clone", files=files, data=data_no_consent)
+        assert res_no_consent.status_code == 400
+        assert "consent" in res_no_consent.text.lower()
+
+        # 2. Successfully clone with consent
+        files = {"file": ("my_recording.wav", wav_bytes, "audio/wav")}
+        data_valid = {"name": "Kishore Live Voice", "consent": "true", "gender": "male"}
+        res_clone = await client.post("/v2/agents/voices/clone", files=files, data=data_valid)
+        assert res_clone.status_code == 201
+        cloned_meta = res_clone.json()
+        assert cloned_meta["is_cloned"] is True
+        assert "kishorelivevoice" in cloned_meta["id"].lower()
+        assert cloned_meta["preview_url"] is not None
+        cloned_id = cloned_meta["id"]
+
+        # 3. Check listing contains cloned voice
+        res_list = await client.get("/v2/agents/voices")
+        assert res_list.status_code == 200
+        voices = res_list.json()
+        match = next((v for v in voices if v["id"] == cloned_id), None)
+        assert match is not None
+        assert match["is_cloned"] is True
+        assert match["duration_sec"] is not None
+
+        # 4. Preview audio
+        res_preview = await client.get(f"/v2/agents/voices/{cloned_id}/preview")
+        assert res_preview.status_code == 200
+        assert "audio/wav" in res_preview.headers["content-type"]
+        assert len(res_preview.content) > 1000
+
+        # 5. Delete cloned voice
+        res_del = await client.delete(f"/v2/agents/voices/{cloned_id}")
+        assert res_del.status_code == 200
+        assert res_del.json()["success"] is True
+
+        # 6. Verify deleted from listing
+        res_list_after = await client.get("/v2/agents/voices")
+        assert not any(v["id"] == cloned_id for v in res_list_after.json())

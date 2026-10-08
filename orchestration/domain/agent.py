@@ -107,11 +107,30 @@ class Agent:
             raise ValueError(f"Invalid IANA timezone '{self.timezone_str}'") from err
 
     def validate_voice(self) -> VoicePreset | None:
-        """Validate that the configured voice preset exists in the official catalog."""
+        """Validate that the configured voice preset exists in the official catalog or filesystem."""
         if self.engine == "cascaded_cloud":
             return None
-        if self.voice_id not in OFFICIAL_PRESETS:
-            raise ValueError(
-                f"Unknown voice '{self.voice_id}'. Choose from: {list(OFFICIAL_PRESETS.keys())}"
-            )
-        return OFFICIAL_PRESETS[self.voice_id]
+        if not self.voice_id:
+            return None
+        # 1. Matches semantic preset key
+        if self.voice_id in OFFICIAL_PRESETS:
+            return OFFICIAL_PRESETS[self.voice_id]
+        # 2. Matches official PersonaPlex .pt file or stem
+        clean_voice = self.voice_id.strip()
+        stem = clean_voice[:-3] if clean_voice.endswith(".pt") else clean_voice
+        pt_name = f"{stem}.pt"
+        official_pt_set = {
+            "NATF0.pt", "NATF1.pt", "NATF2.pt", "NATF3.pt",
+            "NATM0.pt", "NATM1.pt", "NATM2.pt", "NATM3.pt",
+            "VARF0.pt", "VARF1.pt", "VARF2.pt", "VARF3.pt", "VARF4.pt",
+            "VARM0.pt", "VARM1.pt", "VARM2.pt", "VARM3.pt", "VARM4.pt",
+        }
+        if pt_name in official_pt_set or clean_voice in official_pt_set:
+            return None
+        # 3. Matches custom voice file (.pt or .wav)
+        if clean_voice.endswith(".pt") or clean_voice.endswith(".wav"):
+            return None
+        raise ValueError(
+            f"Unknown voice '{self.voice_id}'. Choose from: {sorted(list(OFFICIAL_PRESETS.keys()) + list(official_pt_set))}"
+        )
+

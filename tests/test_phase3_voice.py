@@ -119,7 +119,9 @@ async def test_v2_voice_full_web_lifecycle():
             greet_msg = json.loads(greet_raw)
             assert greet_msg["type"] == "transcript"
             assert greet_msg["role"] == "assistant"
-            assert "Metro Clinic" in greet_msg["text"]
+            # In Phase 1 full-duplex S2S, fake synthetic text greeting injection was removed
+            # to eliminate the double-greeting bug. The transcript tokens arrive directly from the worker.
+            assert len(greet_msg["text"]) > 0
 
             # 3. Stream 16 kHz PCM frames from client (320 samples = 640 bytes)
             frame_i16 = (np.sin(np.linspace(0, 10, 320)) * 5000).astype(np.int16)
@@ -219,9 +221,13 @@ async def test_v2_voice_telephony_g711_lifecycle():
             assert start_msg["sample_rate"] == 8000
             assert start_msg["codec"] == "g711_ulaw"
 
-            # 2. Greeting transcript
+            # 2. Greeting transcript from worker/model
             greet_raw = await asyncio.wait_for(ws.recv(), timeout=5.0)
-            assert "Welcome to support line." in greet_raw
+            greet_data = json.loads(greet_raw)
+            assert greet_data["type"] == "transcript"
+            assert greet_data["role"] == "assistant"
+            # Assistant speech tokens arrive from worker instead of fake injection
+            assert len(greet_data["text"]) > 0
 
             # 3. Send 160-byte G.711 mu-law frames (20 ms at 8 kHz)
             from orchestration.audio.codecs import encode_ulaw
