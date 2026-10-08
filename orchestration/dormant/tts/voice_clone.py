@@ -23,7 +23,6 @@ from typing import Any
 
 import numpy as np
 import soundfile as sf
-from scipy.signal import resample_poly
 
 logger = logging.getLogger("orchestration.tts.voice_clone")
 
