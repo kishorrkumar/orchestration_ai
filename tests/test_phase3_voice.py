@@ -114,15 +114,8 @@ async def test_v2_voice_full_web_lifecycle():
             assert start_msg["greeting_mode"] == "agent_first"
             session_id = start_msg["session_id"]
 
-            # 2. Receive greeting transcript
-            greet_raw = await asyncio.wait_for(ws.recv(), timeout=5.0)
-            greet_msg = json.loads(greet_raw)
-            assert greet_msg["type"] == "transcript"
-            assert greet_msg["role"] == "assistant"
-            # In Phase 1 full-duplex S2S, fake synthetic text greeting injection was removed
-            # to eliminate the double-greeting bug. The transcript tokens arrive directly from the worker.
-            assert len(greet_msg["text"]) > 0
-
+            # 2. In pure S2S, there is no scripted greeting. The agent connects silently
+            # and only speaks in response to caller speech.
             # 3. Stream 16 kHz PCM frames from client (320 samples = 640 bytes)
             frame_i16 = (np.sin(np.linspace(0, 10, 320)) * 5000).astype(np.int16)
             for _ in range(5):
@@ -221,14 +214,7 @@ async def test_v2_voice_telephony_g711_lifecycle():
             assert start_msg["sample_rate"] == 8000
             assert start_msg["codec"] == "g711_ulaw"
 
-            # 2. Greeting transcript from worker/model
-            greet_raw = await asyncio.wait_for(ws.recv(), timeout=5.0)
-            greet_data = json.loads(greet_raw)
-            assert greet_data["type"] == "transcript"
-            assert greet_data["role"] == "assistant"
-            # Assistant speech tokens arrive from worker instead of fake injection
-            assert len(greet_data["text"]) > 0
-
+            # 2. In pure S2S, no greeting transcript is sent. Agent connects silently.
             # 3. Send 160-byte G.711 mu-law frames (20 ms at 8 kHz)
             from orchestration.audio.codecs import encode_ulaw
             pcm16 = (np.sin(np.linspace(0, 10, 160)) * 5000).astype(np.int16)
@@ -295,11 +281,7 @@ async def test_v2_voice_end_of_call_detector():
                 start_msg = json.loads(start_raw)
             assert start_msg["type"] == "session_started"
 
-            # Receive greeting
-            greet_raw = await ws.recv()
-            greet_msg = json.loads(greet_raw)
-            assert greet_msg["type"] == "transcript"
-
+            # In pure S2S, agent connects silently without scripted greeting.
             # Client remains silent; EndOfCallDetector should trigger silence_timeout or max_duration
             call_ended_received = False
             for _ in range(100):

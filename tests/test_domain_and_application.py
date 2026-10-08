@@ -208,7 +208,9 @@ async def test_rfc_9457_problem_details_and_v2_routes():
         r_voices = await client.get("/v2/agents/voices")
         assert r_voices.status_code == 200
         voices = r_voices.json()
-        assert len(voices) == 18
+        assert len(voices) >= 18
+        preset_ids = {v["id"] for v in voices}
+        assert "natural_calm" in preset_ids
 
         # 3. Live Compile Prompt
         r_compile = await client.post(

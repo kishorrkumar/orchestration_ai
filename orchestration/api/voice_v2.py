@@ -23,13 +23,6 @@ from ..audio.resample import AudioResampler, StreamingResampleBuffer
 from ..db.models import AgentVersion
 from ..db.service import AgentService, CallSessionService
 from ..db.session import get_session_factory
-from ..domain.engines.spec import EngineType
-from ..engines.base import SessionContext
-
-try:
-    from ..engines.cascaded.engine import CascadedVoiceEngine
-except ImportError:
-    CascadedVoiceEngine = None  # type: ignore
 from ..persona.registry import OFFICIAL_VOICE_PRESETS, PersonaConfig
 from ..pipeline.end_detector import EndOfCallDetector
 from ..prompts.compiler import compile_prompt
@@ -235,75 +228,7 @@ async def voice_v2_endpoint(
         "message": "Connecting to voice engine...",
     })
 
-    # Check Engine type and apply intelligent per-voice routing
-    resolved_engine = target_ver.engine if (target_ver and hasattr(target_ver, "engine")) else getattr(agent, "draft_engine", "personaplex_s2s")
-
-    # If voice is a cloned voice that requires Cascaded routing (or failed S2S QA), route to Engine B
-    from ..tts.voice_clone import default_voice_cloner
-    target_voice_check = voice_prompt or (target_ver.voice_id if target_ver else agent.draft_voice_id) or ""
-    clean_vc = str(target_voice_check).strip()
-    if clean_vc.endswith(".wav") or clean_vc.endswith(".pt"):
-        clean_vc = clean_vc.rsplit(".", 1)[0]
-
-    if default_voice_cloner.has_voice(clean_vc):
-        v_meta = default_voice_cloner.get_voice_metadata(clean_vc)
-        if v_meta and (v_meta.get("recommended_engine") == "cascaded" or not v_meta.get("qa_passed", False)):
-            if CascadedVoiceEngine is not None:
-                logger.info(
-                    f"Intelligent voice routing: routing cloned voice '{clean_vc}' to Cascaded Engine B "
-                    f"(QA passed={v_meta.get('qa_passed')}, similarity={v_meta.get('qa_score')})"
-                )
-                resolved_engine = EngineType.CASCADED_CLOUD.value
-            else:
-                logger.warning(
-                    f"Cloned voice '{clean_vc}' recommended for Cascaded Engine B but CascadedVoiceEngine is unavailable; "
-                    f"using Engine A fallback."
-                )
-
-    # If Engine B (Cascaded Cloud pipeline)
-    if resolved_engine == EngineType.CASCADED_CLOUD.value or resolved_engine == "cascaded_cloud":
-        call_start_time = time.time()
-        call_session_id = f"call_{int(call_start_time)}_{agent.id[:8]}"
-        agent_version_id = target_ver.id if target_ver else None
-        async with session_factory() as db:
-            call_svc = CallSessionService(db)
-            session_record = await call_svc.create_session(
-                agent_id=agent.id,
-                agent_version_id=agent_version_id,
-                session_id=call_session_id,
-                engine=EngineType.CASCADED_CLOUD.value,
-            )
-            await db.commit()
-
-        context = SessionContext(
-            websocket=websocket,
-            agent=agent,
-            version=target_ver,
-            session_record=session_record,
-            session_factory=session_factory,
-            client_sample_rate=sample_rate,
-            codec=codec,
-            template_vars={
-                "caller_name": caller_name or "",
-                "customer_name": customer_name or "",
-                "phone_number": phone_number or "",
-            },
-            workspace_id=agent.workspace_id,
-        )
-
-        if CascadedVoiceEngine is None:
-            await websocket.send_json({
-                "type": "error",
-                "message": "Engine B requires Pipecat. Install via: pip install 'pipecat-ai>=1.12.0'",
-            })
-            await websocket.close(code=status.WS_1011_INTERNAL_ERROR)
-            return
-
-        engine_runner = CascadedVoiceEngine()
-        await engine_runner.run_session(context)
-        return
-
-    # Engine A (PersonaPlex S2S): requires GPU/Mock Worker Pool
+    # PersonaPlex S2S worker pool
     worker_pool: WorkerPool = getattr(websocket.app.state, "pool", None)
     if not worker_pool:
         await websocket.send_json({"type": "error", "message": "Worker pool not available on gateway"})
@@ -493,39 +418,6 @@ async def voice_v2_endpoint(
     initial_greeting_delivered = False
     user_has_responded = False
 
-    effective_greeting = (
-        greeting_text.strip()
-        if (greeting_text and greeting_text.strip())
-        else f"Hi, thanks for calling Snapserve. My name is {agent.name}, how can I help you today?"
-    )
-    should_speak_first = greeting_mode in ("agent_speaks_first", "agent_first")
-
-    if should_speak_first:
-        try:
-            await websocket.send_json({
-                "type": "greeting",
-                "session_id": call_session_id,
-                "agent_name": agent.name,
-                "text": effective_greeting,
-                "role": "assistant",
-                "speak": True,
-            })
-            initial_greeting_delivered = True
-            telemetry["ttfa_greeting_ms"] = round((time.time() - call_start_time) * 1000.0, 1)
-            telemetry["timing"]["ttfa_greeting_ms"] = telemetry["ttfa_greeting_ms"]
-            telemetry["first_audio_to_browser_ms"] = telemetry["ttfa_greeting_ms"]
-            conversation_turns.append({
-                "role": "assistant",
-                "text": effective_greeting,
-                "started_ms": 0.0,
-                "ended_ms": round(len(effective_greeting.split()) * 300.0, 1),
-                "time_offset_sec": 0.0,
-                "timestamp": time.time(),
-                "words": len(effective_greeting.split()),
-            })
-            logger.info(f"[VoiceSession {call_session_id}] Instant greeting dispatched to client: '{effective_greeting}'")
-        except Exception as e:
-            logger.debug(f"Instant greeting notice: {e}")
 
     # 6. Priming with Keepalive Heartbeats & Early Disconnect Protection
     priming_start = time.perf_counter()
@@ -935,6 +827,7 @@ async def voice_v2_endpoint(
     async def worker_to_client_loop():
         nonlocal disconnect_reason, turn_counter, current_agent_turn_text, current_agent_turn_start
         nonlocal first_agent_audio_emitted, ttfa_greeting_ms, last_agent_token_time, user_has_responded
+        nonlocal last_user_speech_end_time, agent_turn_yielded, turn_latencies
         worker_audio_frame_count = 0
         decode_err_count = 0
         try:
@@ -954,13 +847,6 @@ async def voice_v2_endpoint(
 
                 elif opcode == 0x01:
                     # Audio payload from worker
-                    if initial_greeting_delivered and not user_has_responded:
-                        if (time.time() - call_stream_start) < 6.0:
-                            # Branded greeting is active; suppress early pretraining audio from worker
-                            continue
-                        else:
-                            user_has_responded = True
-
                     if agent_turn_yielded:
                         # Turn yielded to caller; suppress further assistant audio until user responds
                         continue

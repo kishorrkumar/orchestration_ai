@@ -11,6 +11,7 @@ import logging
 import math
 import os
 import tempfile
+import re
 import time
 import urllib.parse
 
@@ -19,7 +20,6 @@ import soundfile as sf
 import websockets
 from websockets.asyncio.server import Server, ServerConnection, serve
 
-from ..chunker.bridge import ClauseChunker
 from ..persona.dialogue import StrictVoiceDialogueEngine
 from ..protocol.audio import (
     FRAME_SIZE,
@@ -351,14 +351,8 @@ class PersonaPlexMockServer:
                 tokens = [(" " if i > 0 else "") + w for i, w in enumerate(words)]
                 outbound_tokens = tokens
 
-                # Streaming Clause Chunker: segment into immediate speakable chunks
-                chunker = ClauseChunker(first_chunk_min_words=3, first_chunk_max_words=5, later_chunk_min_words=6, later_chunk_max_words=12)
-                chunks: list[str] = []
-                for w in words:
-                    ready = chunker.feed_token(w + " ")
-                    chunks.extend(ready)
-                chunks.extend(chunker.flush())
-
+                # Segment into sentences or clauses
+                chunks = [s.strip() for s in re.split(r"[.!?]+", reply_text) if s.strip()]
                 if not chunks:
                     chunks = [reply_text]
 
@@ -393,9 +387,7 @@ class PersonaPlexMockServer:
                         # Add chunk frames immediately so client begins playing Chunk 1 while Chunk 2 synthesizes!
                         outbound_audio_frames.extend(frames)
 
-            # Queue initial concise greeting
-            initial_greeting = dialogue.get_initial_greeting()
-            synth_task = asyncio.create_task(queue_agent_utterance(initial_greeting))
+                pass
 
             async def receiver():
                 nonlocal user_speaking, last_speech_time, outbound_audio_frames, outbound_tokens
@@ -496,7 +488,6 @@ class PersonaPlexMockServer:
 
             done, pending = await asyncio.wait([recv_task, gen_task], return_when=asyncio.FIRST_COMPLETED)
 
-            synth_task.cancel()
             for task in pending:
                 task.cancel()
                 try:
