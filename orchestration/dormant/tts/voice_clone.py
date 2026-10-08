@@ -25,7 +25,10 @@ from typing import Any
 
 import numpy as np
 import soundfile as sf
-from scipy.signal import resample_poly
+try:
+    from scipy.signal import resample_poly
+except ImportError:
+    resample_poly = None
 
 logger = logging.getLogger("orchestration.tts.voice_clone")
 
@@ -184,10 +187,16 @@ class VoiceCloner:
     def _resample(audio: np.ndarray, orig_sr: int, target_sr: int = 24000) -> np.ndarray:
         if orig_sr == target_sr:
             return audio
-        gcd = math.gcd(orig_sr, target_sr)
-        up = target_sr // gcd
-        down = orig_sr // gcd
-        return resample_poly(audio, up, down).astype(np.float32)
+        if resample_poly is not None:
+            gcd = math.gcd(orig_sr, target_sr)
+            up = target_sr // gcd
+            down = orig_sr // gcd
+            return resample_poly(audio, up, down).astype(np.float32)
+        # Linear interpolation fallback
+        old_indices = np.arange(len(audio))
+        new_length = int(round(len(audio) * target_sr / orig_sr))
+        new_indices = np.linspace(0, len(audio) - 1, new_length)
+        return np.interp(new_indices, old_indices, audio).astype(np.float32)
 
     @staticmethod
     def _validate_audio_quality(
