@@ -39,6 +39,9 @@ package-lock.json
 
 # Local secrets
 .secrets/
+.env
+.env*.local
 
 conversations/
 logs/
+recordings/
