@@ -32,7 +32,7 @@ except ImportError:
 
 logger = logging.getLogger("orchestration.tts.voice_clone")
 
-DATA_DIR = pathlib.Path(__file__).resolve().parent.parent.parent.parent / "data" / "cloned_voices"
+DATA_DIR = pathlib.Path(__file__).resolve().parent.parent.parent / "data" / "cloned_voices"
 
 PUBLIC_FIGURE_BLOCKLIST = {
     "barack obama", "obama", "donald trump", "trump", "joe biden", "biden",
