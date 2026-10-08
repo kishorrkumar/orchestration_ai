@@ -100,15 +100,19 @@ def detokenize_sentencepiece_stream(tokens: list[str], agent_name: str | None = 
     result = re.sub(r"\byou'(?![a-zA-Z])\s*(busy|free|available|there|ready|doing|calling)\b", r"you're \1", result, flags=re.IGNORECASE)
     result = re.sub(r"\bgetll\b", "get'll", result, flags=re.IGNORECASE)
 
-    # 4. Anti-Persona Leak: intercept and neutralize pretraining "Moshi" name leaks
+    # 4. Anti-Persona Leak: intercept and neutralize pretraining "Moshi" and "Kyutai" leaks
     display_name = agent_name.strip() if agent_name else "Snapserve"
     result = re.sub(r"\bMy name is Moshi\b", f"My name is {display_name}", result, flags=re.IGNORECASE)
     result = re.sub(r"\bI am Moshi\b", f"I'm {display_name}", result, flags=re.IGNORECASE)
     result = re.sub(r"\bI'm Moshi\b", f"I'm {display_name}", result, flags=re.IGNORECASE)
     result = re.sub(r"\bthis is Moshi\b", f"this is {display_name} from Snapserve", result, flags=re.IGNORECASE)
     result = re.sub(r"\bMoshi\b", display_name, result, flags=re.IGNORECASE)
+    result = re.sub(r"\bKyutai\b", "Snapserve", result, flags=re.IGNORECASE)
 
-    # 5. Collapse multiple spaces
+    # 5. Normalize punctuation spacing (e.g. "word ," -> "word,")
+    result = re.sub(r"\s+([,.:;?!%])", r"\1", result)
+
+    # 6. Collapse multiple spaces
     result = re.sub(r"\s+", " ", result).strip()
 
     return result

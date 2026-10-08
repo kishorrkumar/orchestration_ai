@@ -120,31 +120,17 @@ def create_app(
 
         # Only auto-spawn a local worker if pool has no workers registered
         if len(worker_pool._workers) == 0:
-            target_type = os.environ.get("PERSONAPLEX_WORKER_TYPE", worker_type if worker_type != "auto" else "mock").lower()
-            if target_type == "cascaded":
-                from ..worker.cascaded_worker import CascadedLocalWorkerServer
-                try:
-                    cascaded_server = CascadedLocalWorkerServer(host="127.0.0.1", port=8998)
-                    await cascaded_server.start()
-                    server_to_stop = cascaded_server
-                    resolved_server = cascaded_server
-                    logger.info("Cascaded local worker auto-started on ws://127.0.0.1:8998")
-                except OSError as e:
-                    logger.info("Cascaded worker port 8998 already active (%s); reusing running worker", e)
-                mock_cfg = WorkerNodeConfig(id="cascaded-worker-1", host="127.0.0.1", port=8998)
-                worker_pool.register_worker(mock_cfg)
-            else:
-                from ..worker.mock_worker import PersonaPlexMockServer
-                try:
-                    mock_server = PersonaPlexMockServer(host="127.0.0.1", port=8998)
-                    await mock_server.start()
-                    server_to_stop = mock_server
-                    resolved_server = mock_server
-                    logger.info("Mock worker auto-started on ws://127.0.0.1:8998")
-                except OSError as e:
-                    logger.info("Mock worker port 8998 already active (%s); reusing running worker", e)
-                mock_cfg = WorkerNodeConfig(id="mock-worker-1", host="127.0.0.1", port=8998)
-                worker_pool.register_worker(mock_cfg)
+            from ..worker.mock_worker import PersonaPlexMockServer
+            try:
+                mock_server = PersonaPlexMockServer(host="127.0.0.1", port=8998)
+                await mock_server.start()
+                server_to_stop = mock_server
+                resolved_server = mock_server
+                logger.info("PersonaPlex worker auto-started on ws://127.0.0.1:8998")
+            except OSError as e:
+                logger.info("PersonaPlex worker port 8998 already active (%s); reusing running worker", e)
+            mock_cfg = WorkerNodeConfig(id="worker-node-1", host="127.0.0.1", port=8998)
+            worker_pool.register_worker(mock_cfg)
 
         # Database initialization & seeding for Voice Agent Platform
         try:

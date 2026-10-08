@@ -31,6 +31,7 @@ from ..protocol.audio import (
     MODEL_SAMPLE_RATE,
 )
 from ..protocol.messages import AudioMessage, ControlAction, TextMessage
+from ..tts.voice_clone import default_voice_cloner
 from ..worker.client import PersonaPlexWorkerClient
 from ..worker.pool import WorkerPool
 
@@ -193,6 +194,26 @@ async def voice_v2_endpoint(
             return
 
     await websocket.accept()
+
+    # Early Inbound Audio Buffer (Zero dropped frames during handshake / lease - Defect 10.4)
+    inbound_prebuffer: asyncio.Queue = asyncio.Queue(maxsize=1000)
+    early_disconnect = asyncio.Event()
+
+    async def inbound_reader_task():
+        try:
+            while not early_disconnect.is_set():
+                msg = await websocket.receive()
+                if msg.get("type") == "websocket.disconnect":
+                    early_disconnect.set()
+                    await inbound_prebuffer.put(msg)
+                    break
+                await inbound_prebuffer.put(msg)
+        except asyncio.CancelledError:
+            pass
+        except Exception as e:
+            logger.debug(f"[VoiceSession] Inbound reader notice: {e}")
+
+    inbound_reader = asyncio.create_task(inbound_reader_task())
     session_factory = get_session_factory()
 
     # 1. Resolve Agent and Version snapshot from Database
@@ -207,6 +228,7 @@ async def voice_v2_endpoint(
                 agent = agents_list[0]
 
         if not agent:
+            inbound_reader.cancel()
             await websocket.send_json({"type": "error", "message": f"Agent '{agent_id}' not found"})
             await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
             return
@@ -231,6 +253,7 @@ async def voice_v2_endpoint(
     # PersonaPlex S2S worker pool
     worker_pool: WorkerPool = getattr(websocket.app.state, "pool", None)
     if not worker_pool:
+        inbound_reader.cancel()
         await websocket.send_json({"type": "error", "message": "Worker pool not available on gateway"})
         await websocket.close(code=status.WS_1011_INTERNAL_ERROR)
         return
@@ -445,19 +468,11 @@ async def voice_v2_endpoint(
 
     priming_ticker = asyncio.create_task(priming_heartbeat())
 
-    # 7. Acquire Worker from Pool (with health probe)
+    # 7. Acquire Worker from Pool (with warm standby claim & fast capacity rejection)
+    session_manager = getattr(websocket.app.state, "session_manager", None)
+    standby_claimed_session = None
+    claimed_from_standby = False
     worker_client: PersonaPlexWorkerClient | None = None
-    try:
-        worker_client = await worker_pool.acquire_worker(session_id=call_session_id, timeout=15.0)
-    except Exception as e:
-        priming_stop.set()
-        priming_ticker.cancel()
-        logger.error(f"Failed to acquire worker for session {call_session_id}: {e}")
-        telemetry["closed_by"] = "gateway"
-        telemetry["close_reason"] = f"Worker acquire failed: {e}"
-        await websocket.send_json({"type": "error", "message": f"All inference workers are busy or unhealthy. Please retry: {e}"})
-        await websocket.close(code=status.WS_1013_TRY_AGAIN_LATER)
-        return
 
     persona_cfg = PersonaConfig(
         id=agent.id,
@@ -471,29 +486,64 @@ async def voice_v2_endpoint(
         top_k_text=int(resolved_text_topk),
     )
 
-    try:
-        connect_task = asyncio.create_task(worker_client.connect(session_id=call_session_id, persona=persona_cfg))
-        await connect_task
-    except asyncio.CancelledError:
-        logger.info("Worker connect cancelled due to early client disconnect.")
-        telemetry["closed_by"] = "client"
-        telemetry["close_reason"] = "client_disconnected_during_priming"
-        await worker_pool.release_worker(worker_client.worker_id, success=True)
-        return
-    except Exception as e:
-        priming_stop.set()
-        priming_ticker.cancel()
-        logger.error(f"Failed to connect worker client: {e}")
-        telemetry["closed_by"] = "gateway"
-        telemetry["close_reason"] = f"Worker connection failed: {e}"
-        await worker_pool.release_worker(worker_client.worker_id, success=False)
+    if session_manager and session_manager.has_standby():
         try:
-            await websocket.send_json({"type": "error", "message": f"Worker connection failed: {e}"})
-            await websocket.close(code=status.WS_1011_INTERNAL_ERROR, reason=f"Worker connection failed: {e}")
-        except Exception:
-            pass
-        return
-    finally:
+            candidate = await session_manager.create_session(
+                persona=persona_cfg,
+                session_id=call_session_id,
+                timeout=0.1,
+                use_standby=True,
+            )
+            if candidate.is_claimed_from_standby:
+                standby_claimed_session = candidate
+                claimed_from_standby = True
+                worker_client = candidate.worker
+                logger.info(f"[STANDBY] Fast-claimed warm standby worker {worker_client.worker_id} for session {call_session_id} (<10ms lease)!")
+        except Exception as e:
+            logger.debug(f"Standby claim bypass note: {e}")
+
+    if worker_client is None:
+        try:
+            worker_client = await worker_pool.acquire_worker(session_id=call_session_id, timeout=2.0)
+        except Exception as e:
+            priming_stop.set()
+            priming_ticker.cancel()
+            inbound_reader.cancel()
+            logger.warning(f"Fast capacity rejection for session {call_session_id}: {e}")
+            telemetry["closed_by"] = "gateway"
+            telemetry["close_reason"] = f"Worker acquire failed: {e}"
+            await websocket.send_json({"type": "error", "message": f"Inference capacity exceeded. All workers busy: {e}"})
+            await websocket.close(code=status.WS_1013_TRY_AGAIN_LATER, reason="Inference capacity exceeded")
+            return
+
+        try:
+            connect_task = asyncio.create_task(worker_client.connect(session_id=call_session_id, persona=persona_cfg))
+            await connect_task
+        except asyncio.CancelledError:
+            logger.info("Worker connect cancelled due to early client disconnect.")
+            telemetry["closed_by"] = "client"
+            telemetry["close_reason"] = "client_disconnected_during_priming"
+            inbound_reader.cancel()
+            await worker_pool.release_worker(worker_client.worker_id, success=True)
+            return
+        except Exception as e:
+            priming_stop.set()
+            priming_ticker.cancel()
+            inbound_reader.cancel()
+            logger.error(f"Failed to connect worker client: {e}")
+            telemetry["closed_by"] = "gateway"
+            telemetry["close_reason"] = f"Worker connection failed: {e}"
+            await worker_pool.release_worker(worker_client.worker_id, success=False)
+            try:
+                await websocket.send_json({"type": "error", "message": f"Worker connection failed: {e}"})
+                await websocket.close(code=status.WS_1011_INTERNAL_ERROR, reason=f"Worker connection failed: {e}")
+            except Exception:
+                pass
+            return
+        finally:
+            priming_stop.set()
+            priming_ticker.cancel()
+    else:
         priming_stop.set()
         priming_ticker.cancel()
 
@@ -634,7 +684,7 @@ async def voice_v2_endpoint(
         nonlocal last_user_speech_time, last_user_speech_end_time, agent_turn_yielded, user_has_responded
         try:
             while not stop_event.is_set():
-                raw = await websocket.receive()
+                raw = await inbound_prebuffer.get()
                 if raw.get("type") == "websocket.disconnect":
                     logger.warning(f"[VoiceSession {call_session_id}] Client WebSocket disconnected: code={raw.get('code')}")
                     trigger_stop(f"ws_disconnect_{raw.get('code', 1000)}")
@@ -1311,11 +1361,15 @@ async def voice_v2_endpoint(
     except Exception as db_err:
         logger.error(f"Error finalizing call session {call_session_id}: {db_err}")
 
-    # 10. Clean up worker & connection
-    cur_w = active_worker_holder[0]
-    if cur_w:
-        call_success = disconnect_reason in ("normal", "user_hangup", "duration_limit", "silence_timeout", "agent_closed")
-        await worker_pool.release_worker(cur_w.worker_id, success=call_success)
+    # 10. Clean up worker, inbound reader & connection
+    inbound_reader.cancel()
+    if standby_claimed_session and session_manager:
+        await session_manager.end_session(call_session_id)
+    else:
+        cur_w = active_worker_holder[0]
+        if cur_w:
+            call_success = disconnect_reason in ("normal", "user_hangup", "duration_limit", "silence_timeout", "agent_closed")
+            await worker_pool.release_worker(cur_w.worker_id, success=call_success)
 
     try:
         close_code = status.WS_1000_NORMAL_CLOSURE

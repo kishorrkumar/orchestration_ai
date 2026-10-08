@@ -365,17 +365,19 @@ def compile_prompt(
     clean_sys = re.sub(r"^You enjoy having (a )?good conversations?\.?\s*", "", clean_sys, flags=re.IGNORECASE)
 
     # If the prompt does not establish agent identity, explicitly anchor it
-    if eff_name.lower() not in clean_sys.lower():
-        identity_prefix = (
-            f"You are {eff_name}, a friendly sales rep at Snapserve. "
-            f"Your name is {eff_name}. You represent Snapserve. You are NEVER Moshi. "
-            "Speak casually in 1-2 short sentences. Acknowledge before asking ('Got it', 'Makes sense'). "
-            "Ask ONE question at a time. Never repeat questions you already asked.\n"
-        )
-        clean_sys = identity_prefix + clean_sys
-    else:
-        # Reinforce anti-Moshi identity boundary
-        clean_sys = f"You are {eff_name} at Snapserve, never Moshi.\n" + clean_sys
+    has_explicit_identity = bool(re.search(r"\b(you are|your name is|role:)\b", clean_sys, flags=re.IGNORECASE))
+    if not has_explicit_identity:
+        if eff_name.lower() not in clean_sys.lower():
+            identity_prefix = (
+                f"You are {eff_name}, a friendly sales rep at Snapserve. "
+                f"Your name is {eff_name}. You represent Snapserve. You are NEVER Moshi. "
+                "Speak casually in 1-2 short sentences. Acknowledge before asking ('Got it', 'Makes sense'). "
+                "Ask ONE question at a time. Never repeat questions you already asked.\n"
+            )
+            clean_sys = identity_prefix + clean_sys
+        else:
+            # Reinforce anti-Moshi identity boundary
+            clean_sys = f"You are {eff_name} at Snapserve, never Moshi.\n" + clean_sys
 
     compiled_body = clean_sys.strip()
     final_prompt = wrap_system_prompt(compiled_body)
