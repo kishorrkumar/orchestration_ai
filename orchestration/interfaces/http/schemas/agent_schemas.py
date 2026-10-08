@@ -14,6 +14,9 @@ class VoicePresetResponse(BaseModel):
     speaking_style: str
     accent: str
     recommended_for: str
+    is_cloned: bool = False
+    preview_url: str | None = None
+    duration_sec: float | None = None
 
 
 class CreateAgentRequest(BaseModel):

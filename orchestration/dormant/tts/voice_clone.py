@@ -104,6 +104,7 @@ class VoiceCloner:
 
     def delete_voice(self, voice_id: str) -> bool:
         """Delete a cloned voice profile and remove disk artifacts."""
+        import os
         clean = voice_id.strip()
         if clean.endswith(".wav") or clean.endswith(".pt"):
             clean = pathlib.Path(clean).stem
@@ -111,8 +112,22 @@ class VoiceCloner:
         v_dir = self.data_dir / clean
         if v_dir.exists():
             shutil.rmtree(v_dir, ignore_errors=True)
-            return True
-        return meta is not None
+
+        mirror_dirs = [
+            pathlib.Path("voices"),
+            pathlib.Path(os.environ.get("HF_HOME", "")) / "voices" if os.environ.get("HF_HOME") else None,
+            pathlib.Path("/workspace/voices") if pathlib.Path("/workspace/voices").exists() else None,
+        ]
+        for mdir in mirror_dirs:
+            if mdir and mdir.exists():
+                for ext in (".wav", ".pt"):
+                    p = mdir / f"{clean}{ext}"
+                    if p.exists():
+                        try:
+                            p.unlink()
+                        except Exception:
+                            pass
+        return meta is not None or v_dir.exists()
 
     @staticmethod
     def _decode_audio(audio_bytes: bytes) -> tuple[np.ndarray, int]:
@@ -317,6 +332,21 @@ class VoiceCloner:
 
         wav_path = voice_dir / f"{voice_id}.wav"
         sf.write(str(wav_path), final_audio, 24000, subtype="PCM_16")
+
+        # Mirror directly into voices/ so Moshi worker can find it immediately via --voice-prompt-dir
+        import os
+        mirror_dirs = [
+            pathlib.Path("voices"),
+            pathlib.Path(os.environ.get("HF_HOME", "")) / "voices" if os.environ.get("HF_HOME") else None,
+            pathlib.Path("/workspace/voices") if pathlib.Path("/workspace/voices").exists() else None,
+        ]
+        for mdir in mirror_dirs:
+            if mdir:
+                try:
+                    mdir.mkdir(parents=True, exist_ok=True)
+                    sf.write(str(mdir / f"{voice_id}.wav"), final_audio, 24000, subtype="PCM_16")
+                except Exception as m_err:
+                    logger.debug(f"Notice mirroring voice to {mdir}: {m_err}")
 
         # Determine gender
         gender = preferred_gender or ("Female" if metrics.get("f0_pitch", 160) > 165 else "Male")

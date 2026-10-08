@@ -39,6 +39,7 @@ def get_existing_voice_files() -> list[str]:
         Path("voices"),
         Path(os.environ.get("HF_HOME", "/workspace/huggingface")) / "voices",
         Path.home() / ".cache" / "huggingface" / "voices",
+        Path("data/cloned_voices"),
     ]
     voices = set()
     for d in dirs_to_check:
@@ -46,6 +47,10 @@ def get_existing_voice_files() -> list[str]:
             for p in d.glob("*.pt"):
                 voices.add(p.name)
             for p in d.glob("*.wav"):
+                voices.add(p.name)
+            for p in d.glob("*/*.wav"):
+                voices.add(p.name)
+            for p in d.glob("*/*.pt"):
                 voices.add(p.name)
     return sorted(voices) if voices else list(OFFICIAL_VOICE_PRESETS)
 

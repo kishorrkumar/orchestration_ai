@@ -5,6 +5,9 @@ export interface VoicePreset {
   speaking_style: string
   accent: string
   recommended_for: string
+  is_cloned?: boolean
+  preview_url?: string | null
+  duration_sec?: number | null
 }
 
 export type EngineType = 'personaplex_s2s' | 'cascaded_cloud'

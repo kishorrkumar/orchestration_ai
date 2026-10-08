@@ -16,6 +16,7 @@ import { Badge } from '../components/ui/Badge'
 import { Input } from '../components/ui/Input'
 import { TextArea } from '../components/ui/TextArea'
 import { TokenMeter } from '../components/ui/TokenMeter'
+import { VoiceCloneModal } from './VoiceCloneModal'
 import {
   ArrowLeft,
   Check,
@@ -35,6 +36,9 @@ import {
   Key,
   CheckCircle2,
   AlertCircle,
+  Trash2,
+  Play,
+  Pause,
 } from 'lucide-react'
 
 export interface AgentEditorViewProps {
@@ -128,6 +132,49 @@ export const AgentEditorView: React.FC<AgentEditorViewProps> = ({
   const [isPublishing, setIsPublishing] = useState(false)
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
   const [successMessage, setSuccessMessage] = useState<string | null>(null)
+  const [isCloneModalOpen, setIsCloneModalOpen] = useState(false)
+  const [playingVoiceId, setPlayingVoiceId] = useState<string | null>(null)
+  const previewAudioRef = React.useRef<HTMLAudioElement | null>(null)
+
+  const handlePlayVoicePreview = (v: VoicePreset, e: React.MouseEvent) => {
+    e.stopPropagation()
+    if (playingVoiceId === v.id) {
+      if (previewAudioRef.current) {
+        previewAudioRef.current.pause()
+      }
+      setPlayingVoiceId(null)
+      return
+    }
+    if (previewAudioRef.current) {
+      previewAudioRef.current.pause()
+    }
+    const audioUrl = v.preview_url || `/v2/agents/voices/${encodeURIComponent(v.id)}/preview`
+    const audio = new Audio(audioUrl)
+    previewAudioRef.current = audio
+    audio.onended = () => setPlayingVoiceId(null)
+    audio.onerror = () => setPlayingVoiceId(null)
+    audio.play().then(() => setPlayingVoiceId(v.id)).catch(() => setPlayingVoiceId(null))
+  }
+
+  const handleDeleteClonedVoice = async (v: VoicePreset, e: React.MouseEvent) => {
+    e.stopPropagation()
+    if (!confirm(`Are you sure you want to delete the cloned voice "${v.name}"?`)) return
+    try {
+      await api.deleteVoice(v.id)
+      setVoices((prev) => prev.filter((item) => item.id !== v.id))
+      if (voiceId === v.id) {
+        setVoiceId('NATM1.pt')
+      }
+    } catch (err) {
+      console.error('Failed to delete cloned voice:', err)
+    }
+  }
+
+  const handleVoiceCloned = (newVoice: VoicePreset) => {
+    setVoices((prev) => [newVoice, ...prev.filter((item) => item.id !== newVoice.id)])
+    setVoiceId(newVoice.id)
+    setSuccessMessage(`Voice "${newVoice.name}" cloned and applied successfully!`)
+  }
 
   // 1. Load Voices, Catalog, Credentials & Agent (if editing)
   useEffect(() => {
@@ -752,42 +799,127 @@ export const AgentEditorView: React.FC<AgentEditorViewProps> = ({
           />
         </div>
 
-        {/* Engine A: PersonaPlex 18 Presets */}
+        {/* Engine A: Voice Presets & Cloned Voices */}
         {!isEngineB && (
-          <div className="space-y-2">
-            <div className="flex items-center justify-between">
-              <label className="text-[13px] font-medium text-[#1F1E1D]">
-                Voice Preset (PersonaPlex 18 Official Conditioning Presets)
-              </label>
-              <span className="text-[12px] text-[#9E9B93]">Zero hallucinated voices</span>
+          <div className="space-y-4">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+              <div>
+                <label className="text-[13px] font-medium text-[#1F1E1D]">
+                  Voice Conditioning Presets
+                </label>
+                <p className="text-[12px] text-[#9E9B93]">
+                  Select an official neural preset or clone your own voice from a microphone recording
+                </p>
+              </div>
+              <Button
+                type="button"
+                variant="secondary"
+                size="compact"
+                onClick={() => setIsCloneModalOpen(true)}
+                className="flex items-center gap-1.5 self-start sm:self-auto border-[#C2603F]/30 text-[#C2603F] hover:bg-[#FBEFEA]"
+              >
+                <Sparkles className="w-3.5 h-3.5 text-[#C2603F]" />
+                Clone Your Voice
+              </Button>
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2.5">
-              {voices.map((v) => {
-                const isSelected = voiceId === v.id
-                return (
-                  <button
-                    key={v.id}
-                    type="button"
-                    onClick={() => setVoiceId(v.id)}
-                    className={`text-left p-3 rounded-xl border transition-all text-[13px] cursor-pointer ${
-                      isSelected
-                        ? 'border-[#C2603F] bg-[#FBEFEA] shadow-xs'
-                        : 'border-[rgba(31,30,29,0.08)] bg-[#FAF9F5] hover:border-[rgba(31,30,29,0.18)]'
-                    }`}
-                  >
-                    <div className="flex items-center justify-between mb-1">
-                      <span className="font-semibold text-[#1F1E1D] flex items-center gap-1.5">
-                        <Volume2 className={`w-3.5 h-3.5 ${isSelected ? 'text-[#C2603F]' : 'text-[#6B6963]'}`} />
-                        {v.name}
-                      </span>
-                      <span className="text-[11px] text-[#9E9B93] uppercase font-mono">{v.gender[0]}</span>
-                    </div>
-                    <div className="text-[12px] text-[#6B6963] truncate">{v.speaking_style}</div>
-                    <div className="text-[11px] text-[#9E9B93] mt-1">{v.accent}</div>
-                  </button>
-                )
-              })}
+            {/* Cloned Voices Category */}
+            {voices.some((v) => v.is_cloned) && (
+              <div className="space-y-2 p-3.5 bg-[#FAF9F5] border border-[rgba(194,96,63,0.18)] rounded-xl">
+                <div className="flex items-center justify-between">
+                  <span className="text-[12px] font-semibold text-[#1F1E1D] flex items-center gap-1.5">
+                    <Sparkles className="w-3.5 h-3.5 text-[#C2603F]" />
+                    Your Cloned Voices
+                  </span>
+                  <span className="text-[11px] text-[#C2603F] font-medium">Custom Reference Samples</span>
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2.5">
+                  {voices
+                    .filter((v) => v.is_cloned)
+                    .map((v) => {
+                      const isSelected = voiceId === v.id
+                      const isPlaying = playingVoiceId === v.id
+                      return (
+                        <div
+                          key={v.id}
+                          onClick={() => setVoiceId(v.id)}
+                          className={`text-left p-3 rounded-xl border transition-all text-[13px] cursor-pointer relative group ${
+                            isSelected
+                              ? 'border-[#C2603F] bg-[#FBEFEA] shadow-xs'
+                              : 'border-[rgba(31,30,29,0.08)] bg-white hover:border-[rgba(31,30,29,0.18)]'
+                          }`}
+                        >
+                          <div className="flex items-center justify-between mb-1">
+                            <span className="font-semibold text-[#1F1E1D] flex items-center gap-1.5 truncate">
+                              <Volume2 className={`w-3.5 h-3.5 shrink-0 ${isSelected ? 'text-[#C2603F]' : 'text-[#6B6963]'}`} />
+                              <span className="truncate">{v.name}</span>
+                            </span>
+                            <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-[#C2603F]/10 text-[#C2603F] font-medium shrink-0">
+                              Cloned
+                            </span>
+                          </div>
+                          <div className="text-[12px] text-[#6B6963] truncate">
+                            {v.duration_sec ? `${v.duration_sec}s sample` : v.speaking_style}
+                          </div>
+                          <div className="flex items-center justify-between mt-2 pt-1 border-t border-[rgba(31,30,29,0.06)]">
+                            <button
+                              type="button"
+                              onClick={(e) => handlePlayVoicePreview(v, e)}
+                              className="text-[11px] font-medium text-[#C2603F] hover:underline flex items-center gap-1 cursor-pointer"
+                            >
+                              {isPlaying ? <Pause className="w-3 h-3" /> : <Play className="w-3 h-3" />}
+                              {isPlaying ? 'Pause' : 'Preview'}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={(e) => handleDeleteClonedVoice(v, e)}
+                              className="text-[11px] text-[#9E9B93] hover:text-red-600 flex items-center gap-0.5 opacity-60 group-hover:opacity-100 transition-opacity cursor-pointer"
+                              title="Delete cloned voice"
+                            >
+                              <Trash2 className="w-3 h-3" />
+                            </button>
+                          </div>
+                        </div>
+                      )
+                    })}
+                </div>
+              </div>
+            )}
+
+            {/* Official PersonaPlex Presets Category */}
+            <div className="space-y-2">
+              <span className="text-[12px] font-semibold text-[#1F1E1D] block">
+                Official Built-in Presets (18 Voices)
+              </span>
+              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2.5">
+                {voices
+                  .filter((v) => !v.is_cloned)
+                  .map((v) => {
+                    const isSelected = voiceId === v.id
+                    return (
+                      <button
+                        key={v.id}
+                        type="button"
+                        onClick={() => setVoiceId(v.id)}
+                        className={`text-left p-3 rounded-xl border transition-all text-[13px] cursor-pointer ${
+                          isSelected
+                            ? 'border-[#C2603F] bg-[#FBEFEA] shadow-xs'
+                            : 'border-[rgba(31,30,29,0.08)] bg-[#FAF9F5] hover:border-[rgba(31,30,29,0.18)]'
+                        }`}
+                      >
+                        <div className="flex items-center justify-between mb-1">
+                          <span className="font-semibold text-[#1F1E1D] flex items-center gap-1.5">
+                            <Volume2 className={`w-3.5 h-3.5 ${isSelected ? 'text-[#C2603F]' : 'text-[#6B6963]'}`} />
+                            {v.name}
+                          </span>
+                          <span className="text-[11px] text-[#9E9B93] uppercase font-mono">{v.gender[0]}</span>
+                        </div>
+                        <div className="text-[12px] text-[#6B6963] truncate">{v.speaking_style}</div>
+                        <div className="text-[11px] text-[#9E9B93] mt-1">{v.accent}</div>
+                      </button>
+                    )
+                  })}
+              </div>
             </div>
           </div>
         )}
@@ -1260,12 +1392,12 @@ export const AgentEditorView: React.FC<AgentEditorViewProps> = ({
               type="number"
               value={silenceTimeoutSec}
               onChange={(e) => setSilenceTimeoutSec(parseFloat(e.target.value))}
-              min={3}
-              max={60}
+              min={1}
+              max={7200}
               step={1}
               className="w-full h-10 px-3 text-[14px] bg-[#FFFFFF] border border-[rgba(31,30,29,0.12)] rounded-lg text-[#1F1E1D] focus:ring-2 focus:ring-[#C2603F] focus:outline-none tabular-nums"
             />
-            <span className="text-[11px] text-[#9E9B93] block">Seconds of silence before end</span>
+            <span className="text-[11px] text-[#9E9B93] block">Seconds of silence before end (1 - 7200s)</span>
           </div>
 
           <div className="space-y-1.5">
@@ -1276,15 +1408,22 @@ export const AgentEditorView: React.FC<AgentEditorViewProps> = ({
               type="number"
               value={maxDurationSec}
               onChange={(e) => setMaxDurationSec(parseFloat(e.target.value))}
-              min={30}
-              max={3600}
+              min={1}
+              max={14400}
               step={30}
               className="w-full h-10 px-3 text-[14px] bg-[#FFFFFF] border border-[rgba(31,30,29,0.12)] rounded-lg text-[#1F1E1D] focus:ring-2 focus:ring-[#C2603F] focus:outline-none tabular-nums"
             />
-            <span className="text-[11px] text-[#9E9B93] block">Hard cap in seconds (default 600s)</span>
+            <span className="text-[11px] text-[#9E9B93] block">Hard cap in seconds (1 - 14400s)</span>
           </div>
         </div>
       </div>
+
+      {/* Voice Clone Modal */}
+      <VoiceCloneModal
+        isOpen={isCloneModalOpen}
+        onClose={() => setIsCloneModalOpen(false)}
+        onVoiceCloned={handleVoiceCloned}
+      />
     </div>
   )
 }

@@ -9,6 +9,7 @@ import pathlib
 import re
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
+from fastapi.responses import FileResponse
 
 from orchestration.application.agents.commands import (
     CreateAgentCommand,
@@ -25,6 +26,10 @@ from orchestration.interfaces.http.schemas.agent_schemas import (
     PublishVersionRequest,
     UpdateAgentRequest,
     VoicePresetResponse,
+)
+from orchestration.tts.voice_clone import (
+    default_voice_cloner,
+    VoiceCloningValidationError,
 )
 
 router = APIRouter(prefix="/v2/agents", tags=["Agents"])
@@ -56,7 +61,7 @@ def _to_agent_response(a: Agent) -> AgentResponse:
 
 @router.get("/voices", response_model=list[VoicePresetResponse])
 async def list_voice_presets() -> list[VoicePresetResponse]:
-    """Return all 18 official PersonaPlex voice conditioning presets plus custom uploaded voices."""
+    """Return all 18 official PersonaPlex voice conditioning presets plus custom cloned voices."""
     presets = [
         VoicePresetResponse(
             id=p.id,
@@ -65,22 +70,51 @@ async def list_voice_presets() -> list[VoicePresetResponse]:
             speaking_style=p.speaking_style,
             accent=p.accent,
             recommended_for=p.recommended_for,
+            is_cloned=False,
+            preview_url=None,
         )
         for p in OFFICIAL_PRESETS.values()
     ]
 
-    # Discover custom voices in local voices/ directory or HF_HOME/voices
+    seen_ids = {p.id for p in presets}
+
+    # 1. Discover custom cloned voices registered in VoiceCloner
+    try:
+        cloned_list = default_voice_cloner.list_cloned_voices()
+        for cv in cloned_list:
+            vid = cv.get("id", "")
+            fname = f"{vid}.wav"
+            if fname not in seen_ids and vid not in seen_ids:
+                seen_ids.add(fname)
+                seen_ids.add(vid)
+                presets.append(
+                    VoicePresetResponse(
+                        id=fname,
+                        name=f"{cv.get('name', vid)} (Cloned)",
+                        gender=cv.get("gender", "custom"),
+                        speaking_style="Cloned Neural Voice",
+                        accent="Custom Cloned Reference",
+                        recommended_for="Custom cloned voice conditioning",
+                        is_cloned=True,
+                        preview_url=f"/v2/agents/voices/{vid}/preview",
+                        duration_sec=cv.get("duration_sec"),
+                    )
+                )
+    except Exception as e:
+        pass
+
+    # 2. Discover custom voices in local voices/ directory or HF_HOME/voices
     custom_dirs = [
         pathlib.Path("voices"),
         pathlib.Path(os.environ.get("HF_HOME", "")) / "voices" if os.environ.get("HF_HOME") else None,
     ]
-    seen_ids = {p.id for p in presets}
     for cdir in custom_dirs:
         if cdir and cdir.exists() and cdir.is_dir():
             for fpath in cdir.glob("*"):
-                if fpath.suffix.lower() in (".wav", ".pt") and fpath.name not in seen_ids:
+                if fpath.suffix.lower() in (".wav", ".pt") and fpath.name not in seen_ids and fpath.stem not in seen_ids:
                     seen_ids.add(fpath.name)
                     stem = fpath.stem.replace("_", " ").title()
+                    is_cloned = fpath.stem.startswith("cloned_") or "clone" in fpath.stem.lower()
                     presets.append(
                         VoicePresetResponse(
                             id=fpath.name,
@@ -89,9 +123,104 @@ async def list_voice_presets() -> list[VoicePresetResponse]:
                             speaking_style="User conditioning reference",
                             accent="Indian English" if "indian" in fpath.stem.lower() or "aarav" in fpath.stem.lower() else "Custom Reference",
                             recommended_for="Custom persona voice conditioning",
+                            is_cloned=is_cloned,
+                            preview_url=f"/v2/agents/voices/{fpath.name}/preview",
                         )
                     )
     return presets
+
+
+@router.post("/voices/clone", response_model=VoicePresetResponse, status_code=status.HTTP_201_CREATED)
+async def clone_custom_voice(
+    file: UploadFile = File(...),
+    name: str = Form("My Voice"),
+    consent: bool = Form(True),
+    gender: str = Form(None),
+) -> VoicePresetResponse:
+    """
+    Clone a voice from recorded microphone audio or uploaded audio sample (3-30 seconds).
+    Validates quality, removes silence, normalizes loudness to -24 LUFS, and registers voice.
+    """
+    if not consent:
+        raise HTTPException(status_code=400, detail="Voice cloning requires explicit user consent.")
+
+    content = await file.read()
+    if len(content) < 1024:
+        raise HTTPException(status_code=400, detail="Audio file too small (must contain valid audio data)")
+
+    try:
+        meta = default_voice_cloner.clone_voice(
+            audio_bytes=content,
+            voice_name=name.strip() or "My Voice",
+            consent=consent,
+            preferred_gender=gender,
+        )
+    except VoiceCloningValidationError as val_err:
+        raise HTTPException(status_code=400, detail=str(val_err))
+    except Exception as err:
+        raise HTTPException(status_code=400, detail=f"Failed to process voice sample: {err}")
+
+    voice_file = f"{meta['id']}.wav"
+    return VoicePresetResponse(
+        id=voice_file,
+        name=f"{meta['name']} (Cloned)",
+        gender=meta.get("gender", "custom"),
+        speaking_style="Cloned Neural Voice",
+        accent="Custom Cloned Reference",
+        recommended_for="Custom cloned voice conditioning",
+        is_cloned=True,
+        preview_url=f"/v2/agents/voices/{meta['id']}/preview",
+        duration_sec=meta.get("duration_sec"),
+    )
+
+
+@router.get("/voices/{voice_id}/preview")
+async def preview_voice(voice_id: str):
+    """Serve the 24 kHz WAV audio preview for a voice preset."""
+    clean = voice_id.strip()
+    if clean.endswith(".wav") or clean.endswith(".pt"):
+        clean = pathlib.Path(clean).stem
+
+    # 1. Check VoiceCloner data dir
+    v_path = default_voice_cloner.get_voice_path(clean)
+    if v_path and v_path.exists():
+        return FileResponse(str(v_path), media_type="audio/wav", filename=f"{clean}.wav")
+
+    # 2. Check voices/ directory
+    for dir_cand in [pathlib.Path("voices"), pathlib.Path(os.environ.get("HF_HOME", "")) / "voices" if os.environ.get("HF_HOME") else None]:
+        if dir_cand and dir_cand.is_dir():
+            for ext in (".wav", ".mp3", ".ogg"):
+                target = dir_cand / f"{clean}{ext}"
+                if target.exists():
+                    return FileResponse(str(target), media_type=f"audio/{ext.lstrip('.')}")
+                exact = dir_cand / voice_id
+                if exact.exists():
+                    return FileResponse(str(exact), media_type="audio/wav")
+
+    raise HTTPException(status_code=404, detail=f"Preview audio for voice '{voice_id}' not found.")
+
+
+@router.delete("/voices/{voice_id}")
+async def delete_cloned_voice(voice_id: str):
+    """Delete a custom cloned voice preset and its artifacts."""
+    clean = voice_id.strip()
+    if clean.endswith(".wav") or clean.endswith(".pt"):
+        clean = pathlib.Path(clean).stem
+
+    success = default_voice_cloner.delete_voice(clean)
+    for dir_cand in [pathlib.Path("voices"), pathlib.Path(os.environ.get("HF_HOME", "")) / "voices" if os.environ.get("HF_HOME") else None]:
+        if dir_cand and dir_cand.is_dir():
+            for ext in (".wav", ".pt"):
+                p = dir_cand / f"{clean}{ext}"
+                if p.exists():
+                    try:
+                        p.unlink()
+                        success = True
+                    except Exception:
+                        pass
+    if not success:
+        raise HTTPException(status_code=404, detail=f"Cloned voice '{voice_id}' not found.")
+    return {"success": True, "id": voice_id}
 
 
 @router.post("/voices/upload", response_model=VoicePresetResponse, status_code=status.HTTP_201_CREATED)
@@ -180,6 +309,8 @@ async def upload_custom_voice(
         speaking_style="User conditioning reference",
         accent=accent,
         recommended_for="Custom persona voice conditioning",
+        is_cloned=True,
+        preview_url=f"/v2/agents/voices/{out_path.name}/preview",
     )
 
 

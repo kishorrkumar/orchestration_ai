@@ -54,6 +54,33 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
 export const api = {
   // Voice Presets
   getVoices: () => request<VoicePreset[]>('/v2/agents/voices'),
+  cloneVoice: async (formData: FormData): Promise<VoicePreset> => {
+    const res = await fetch('/v2/agents/voices/clone', {
+      method: 'POST',
+      body: formData,
+    })
+    if (!res.ok) {
+      let problem: ProblemDetail
+      try {
+        problem = await res.json()
+      } catch {
+        problem = {
+          type: 'https://errors.personaplex.ai/unexpected-error',
+          title: res.statusText || 'Error',
+          status: res.status,
+          detail: `HTTP ${res.status}: ${res.statusText}`,
+          code: 'HTTP_ERROR',
+          error_id: 'err_client',
+        }
+      }
+      throw new ApiError(problem)
+    }
+    return res.json()
+  },
+  deleteVoice: (voiceId: string) =>
+    request<{ success: boolean; id: string }>(`/v2/agents/voices/${encodeURIComponent(voiceId)}`, {
+      method: 'DELETE',
+    }),
 
   // Agents CRUD
   listAgents: () => request<Agent[]>('/v2/agents'),
