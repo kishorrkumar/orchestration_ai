@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import time
 import urllib.parse
 from collections.abc import AsyncGenerator
@@ -16,7 +17,7 @@ import numpy as np
 import websockets
 from websockets.asyncio.client import ClientConnection
 
-from ..persona.registry import PersonaConfig
+from ..persona.registry import OFFICIAL_VOICE_PRESETS, PersonaConfig
 from ..protocol.messages import (
     AudioMessage,
     ControlAction,
@@ -94,6 +95,11 @@ class PersonaPlexWorkerClient:
         return self._status == WorkerStatus.IDLE
 
     @property
+    def is_connected(self) -> bool:
+        return self._ws is not None and self._status == WorkerStatus.BUSY
+
+
+    @property
     def active_session_id(self) -> str | None:
         return self._active_session_id
 
@@ -108,10 +114,55 @@ class PersonaPlexWorkerClient:
             clean_prompt = "<system> You enjoy having a good conversation. <system>"
 
         voice = persona.get_normalized_voice_prompt()
-        if not voice.endswith(".pt"):
+        if not voice.endswith(".pt") and not voice.endswith(".wav"):
             voice = f"{voice}.pt"
 
-        # Upstream moshi.server accepts ONLY these exact parameters:
+        # Check if the requested voice is an official preset or an existing valid .pt file
+        is_official = voice in OFFICIAL_VOICE_PRESETS
+        valid_pt_on_disk = False
+
+        if not is_official:
+            stem = voice.replace(".wav", "").replace(".pt", "")
+            candidate_pt_paths = [
+                os.path.join("voices", f"{stem}.pt"),
+                os.path.join("/workspace/voices", f"{stem}.pt"),
+                os.path.join("/workspace/orchestration_ai/voices", f"{stem}.pt"),
+            ]
+            hf_h = os.environ.get("HF_HOME")
+            if hf_h:
+                candidate_pt_paths.append(os.path.join(hf_h, "voices", f"{stem}.pt"))
+
+            for cp in candidate_pt_paths:
+                if os.path.exists(cp) and os.path.getsize(cp) > 1024:
+                    try:
+                        with open(cp, "rb") as f:
+                            header = f.read(4)
+                        # Valid PyTorch files are zip archives (b'PK\x03\x04') or pickles (b'\x80\x02'..)
+                        # They are NEVER WAV files (b'RIFF')
+                        if header != b"RIFF":
+                            valid_pt_on_disk = True
+                            voice = f"{stem}.pt"
+                            break
+                    except Exception:
+                        pass
+
+        if not is_official and not valid_pt_on_disk:
+            # Map cloned voice to closest official preset so PersonaPlex S2S worker never crashes
+            # Check gender preference from persona or cloned voice metadata
+            is_female = "female" in getattr(persona, "gender", "").lower()
+            if not is_female and hasattr(persona, "name"):
+                name_l = persona.name.lower()
+                if any(fn in name_l for fn in ("ananya", "priya", "sarah", "emma", "maria")):
+                    is_female = True
+
+            fallback = "NATF0.pt" if is_female else "NATM1.pt"
+            logger.info(
+                f"[VOICE ROUTING] Cloned voice profile '{voice}' mapped to base S2S preset '{fallback}' "
+                f"for PersonaPlex full-duplex session."
+            )
+            voice = fallback
+
+        # Upstream moshi.server accepts ONLY text_prompt, voice_prompt, etc.
         query_params = {
             "text_prompt": clean_prompt,
             "voice_prompt": voice,
@@ -120,8 +171,6 @@ class PersonaPlexWorkerClient:
             "audio_topk": str(persona.top_k_audio),
             "text_topk": str(persona.top_k_text),
         }
-        if persona.seed is not None and persona.seed != -1:
-            query_params["seed"] = str(persona.seed)
 
         qs = urllib.parse.urlencode(query_params)
         return f"{protocol}://{self.host}:{self.port}/api/chat?{qs}"
@@ -139,14 +188,33 @@ class PersonaPlexWorkerClient:
         url = self.build_url(persona)
 
         # Fresh Opus codecs per session to guarantee valid Ogg container headers
-        if self.use_opus:
-            try:
-                import sphn
-                self._opus_writer = sphn.OpusStreamWriter(self.sample_rate)
-                self._opus_reader = sphn.OpusStreamReader(self.sample_rate)
-            except Exception as e:
-                logger.warning(f"sphn library unavailable. Opus transcoding disabled: {e}")
+        allow_raw_pcm = os.environ.get("WORKER_ALLOW_RAW_PCM", "0").lower() in ("1", "true", "yes")
+        try:
+            import sphn
+            self._opus_writer = sphn.OpusStreamWriter(self.sample_rate)
+            self._opus_reader = sphn.OpusStreamReader(self.sample_rate)
+            self.use_opus = True
+            logger.info(
+                f"Worker {self.worker_id}: sphn Opus codec initialized at {self.sample_rate} Hz "
+                f"(version: {getattr(sphn, '__version__', 'installed')})"
+            )
+        except Exception as e:
+            if allow_raw_pcm:
+                logger.warning(
+                    f"Worker {self.worker_id}: sphn unavailable ({e}). "
+                    f"Using raw PCM fallback because WORKER_ALLOW_RAW_PCM=1 is set."
+                )
                 self.use_opus = False
+            else:
+                logger.error(
+                    f"Worker {self.worker_id}: sphn library required for PersonaPlex Opus audio streaming, but import failed: {e}. "
+                    "Fail-fast triggered to prevent sending raw PCM to Opus-only worker."
+                )
+                raise WorkerConnectionError(
+                    f"Worker {self.worker_id}: sphn library is required for PersonaPlex Opus audio streaming, but import failed: {e}. "
+                    "Install sphn (`pip install sphn`) or run inside the Linux environment. "
+                    "For unit tests only, set WORKER_ALLOW_RAW_PCM=1."
+                ) from e
 
         t0 = time.perf_counter()
         try:
@@ -200,12 +268,18 @@ class PersonaPlexWorkerClient:
             err_desc = f"{type(e).__name__}: {e!s}" if str(e).strip() else type(e).__name__
             raise WorkerConnectionError(f"Failed to connect worker {self.worker_id}: {err_desc}") from e
 
-    async def send_audio(self, audio_data: bytes | np.ndarray) -> None:
-        """Send audio frame upstream (Kind 0x01)."""
+    async def send_audio(self, audio_data: bytes | np.ndarray) -> int:
+        """
+        Send audio frame upstream (Kind 0x01).
+        Single codec owner: transcode PCM to Opus if use_opus=True, else send raw PCM.
+        Returns the number of audio payload bytes transmitted (0 if buffered by Opus encoder).
+        """
         if self._ws is None or self._status != WorkerStatus.BUSY:
             raise WorkerConnectionError(f"Worker {self.worker_id} is not connected")
 
-        if self.use_opus and self._opus_writer is not None:
+        if self.use_opus:
+            if self._opus_writer is None:
+                raise WorkerConnectionError("OpusStreamWriter not initialized on worker client")
             if isinstance(audio_data, bytes):
                 samples = np.frombuffer(audio_data, dtype=np.float32)
             elif audio_data.dtype != np.float32:
@@ -215,7 +289,8 @@ class PersonaPlexWorkerClient:
             self._opus_writer.append_pcm(samples)
             payload = self._opus_writer.read_bytes()
             if not payload:
-                return
+                # sphn buffers initial frames before emitting first Ogg page; normal behavior
+                return 0
         else:
             if isinstance(audio_data, np.ndarray):
                 if audio_data.dtype == np.float32 or audio_data.dtype == np.int16:
@@ -228,6 +303,36 @@ class PersonaPlexWorkerClient:
         msg_bytes = encode_message(AudioMessage(data=payload))
         await self._ws.send(msg_bytes)
         self.frames_sent += 1
+        return len(payload)
+
+    async def send_raw(self, raw_bytes: bytes) -> None:
+        """Send raw binary frame directly upstream to worker with zero transcoding."""
+        if self._ws is None or self._status != WorkerStatus.BUSY:
+            raise WorkerConnectionError(f"Worker {self.worker_id} is not connected")
+        await self._ws.send(raw_bytes)
+        self.frames_sent += 1
+
+    async def recv_raw_frames(self) -> AsyncGenerator[bytes, None]:
+        """Yield raw untouched binary frames from upstream worker."""
+        if self._ws is None:
+            raise WorkerConnectionError("Worker not connected")
+        try:
+            async for raw in self._ws:
+                if isinstance(raw, bytes):
+                    self.frames_received += 1
+                    now = time.perf_counter()
+                    if self._last_frame_recv_time > 0:
+                        self.last_frame_step_ms = round((now - self._last_frame_recv_time) * 1000, 2)
+                    self._last_frame_recv_time = now
+                    yield raw
+        except websockets.ConnectionClosedOK:
+            logger.info(f"Worker {self.worker_id} connection closed cleanly (1000 OK)")
+        except websockets.ConnectionClosedError as ce:
+            logger.warning(f"Worker {self.worker_id} connection closed with code {ce.code}: {ce.reason}")
+        except websockets.ConnectionClosed as cc:
+            logger.info(f"Worker {self.worker_id} connection closed: {cc.code}")
+        finally:
+            await self.close(mark_idle=False)
 
     async def send_control(self, action: ControlAction) -> None:
         """Send control action upstream (Kind 0x03)."""
@@ -292,15 +397,30 @@ class PersonaPlexWorkerClient:
         finally:
             await self.close()
 
-    async def close(self) -> None:
-        """Close connection and reset worker state to IDLE."""
+    async def probe_health(self) -> bool:
+        """Probe if upstream worker host and port is open and accepting TCP connections."""
+        try:
+            reader, writer = await asyncio.wait_for(
+                asyncio.open_connection(self.host, self.port),
+                timeout=1.0,
+            )
+            writer.close()
+            await writer.wait_closed()
+            return True
+        except Exception as e:
+            logger.warning(f"Worker {self.worker_id} ({self.host}:{self.port}) health probe failed: {e}")
+            return False
+
+    async def close(self, mark_idle: bool = True) -> None:
+        """Close connection and reset worker state to IDLE if requested."""
         if self._ws is not None:
             try:
                 await self._ws.close()
             except Exception:
                 pass
             self._ws = None
-        self._status = WorkerStatus.IDLE
+        if mark_idle:
+            self._status = WorkerStatus.IDLE
         self._active_session_id = None
         if self.use_opus:
             try:

@@ -43,7 +43,8 @@ async def test_gateway_rest_routes():
         r = await client.get("/v1/agents")
         assert r.status_code == 200
         agents = r.json()["agents"]
-        assert len(agents) >= 2
+        # Under single-agent scope rule, agent.yaml seeds the single default agent
+        assert len(agents) >= 1
 
         # 4. Register custom agent
         custom_agent = {

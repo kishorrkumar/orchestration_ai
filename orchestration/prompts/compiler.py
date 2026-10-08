@@ -17,7 +17,10 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import HTTPException
-import sentencepiece
+try:
+    import sentencepiece
+except ImportError:
+    sentencepiece = None  # type: ignore
 
 from ..protocol.prompt import (
     IDEAL_SYSTEM_PROMPT_TOKENS,
@@ -79,9 +82,11 @@ def _find_tokenizer_path() -> Path | None:
     return None
 
 
-def get_tokenizer() -> sentencepiece.SentencePieceProcessor | None:
+def get_tokenizer() -> Any | None:
     """Returns the cached SentencePiece tokenizer if available, else None."""
     global _SP_TOKENIZER, _TOKENIZER_CHECKED
+    if sentencepiece is None:
+        return None
     if not _TOKENIZER_CHECKED:
         _TOKENIZER_CHECKED = True
         model_path = _find_tokenizer_path()
@@ -152,8 +157,8 @@ def sanitize_prompt_text(text: str) -> tuple[str, list[str]]:
         warnings.append("Removed numbered list markers")
 
     # 5. Rigid scripted quotes (e.g. Start: Open the call by saying: "..." or Close: When the conversation is done, say: "...")
-    if re.search(r"(?:Start|Close):\s*(?:Open the call by saying|When the conversation is done, say)?[:\s]*\"[^\"]*\"", cleaned, flags=re.IGNORECASE):
-        cleaned = re.sub(r"(?:Start|Close):\s*(?:Open the call by saying|When the conversation is done, say)?[:\s]*\"([^\"]*)\"", r"\1", cleaned, flags=re.IGNORECASE)
+    if re.search(r"(?:Start|Close):\s*(?:Open the call by saying|When the conversation is done, say)?[:\s]*['\"][^'\"]*['\"]", cleaned, flags=re.IGNORECASE):
+        cleaned = re.sub(r"(?:Start|Close):\s*(?:Open the call by saying|When the conversation is done, say)?[:\s]*['\"]([^'\"]*)['\"]", r"\1", cleaned, flags=re.IGNORECASE)
         warnings.append("Removed scripted quotation commands ('Start:' / 'Close:')")
 
     # Restore placeholders
@@ -176,7 +181,10 @@ def get_local_time_context(tz_name: str = "Asia/Kolkata", dt: datetime.datetime 
     try:
         tz = zoneinfo.ZoneInfo(tz_name)
     except Exception:
-        tz = zoneinfo.ZoneInfo("UTC")
+        try:
+            tz = zoneinfo.ZoneInfo("UTC")
+        except Exception:
+            tz = datetime.timezone.utc
 
     now = dt.astimezone(tz) if dt else datetime.datetime.now(tz)
     weekday = now.strftime("%A")
@@ -297,6 +305,14 @@ def lint_prompt(
     if unrendered_vars:
         warnings.append(f"Unfilled variables detected: {', '.join(unrendered_vars)}. Fill them or remove braces before testing.")
 
+    # 7. Rigid scripted quotes
+    if re.search(r"\b(say exactly|repeat word for word|respond word for word)\b", full_text, flags=re.IGNORECASE):
+        warnings.append("Avoid scripted quotes ('say exactly...'); PersonaPlex performs better with conversational role descriptions than rigid verbatim scripts.")
+
+    # 8. Step counts / numbered sequences
+    if re.search(r"\b(step\s*\d+|phase\s*\d+)\b", full_text, flags=re.IGNORECASE):
+        warnings.append("Avoid rigid step-by-step numbers ('Step 1, Step 2'); describe the persona's conversational flow in natural prose.")
+
     return warnings
 
 
@@ -312,87 +328,70 @@ def compile_prompt(
     customer_name: str | None = None,
     phone_number: str | None = None,
     dt: datetime.datetime | None = None,
-    strict: bool = True,
+    strict: bool = False,
     **kwargs: Any,
 ) -> CompiledPrompt:
     """
-    Compiles agent fields into the exact PersonaPlex <system> ... <system> prompt.
-    Applies strict variable resolution, prompt sanitization, natural prose assembly,
-    and token counting.
+    Compiles agent prompt into the exact PersonaPlex <system> ... <system> prompt.
+    Removes variable dependencies and delivers clean, pure system prompt instructions.
     """
     time_ctx = get_local_time_context(timezone, dt=dt)
 
     # 1. Sanitize text inputs
     clean_sys, sys_warn = sanitize_prompt_text(system_prompt)
-    clean_greet, greet_warn = sanitize_prompt_text(greeting_text)
-    clean_end, end_warn = sanitize_prompt_text(ending_text)
-    collected_warnings = list(dict.fromkeys(sys_warn + greet_warn + end_warn))
+    collected_warnings = list(dict.fromkeys(sys_warn))
 
-    # 2. Build full variable dictionary starting from defaults
-    var_dict = DEFAULT_VARIABLE_VALUES.copy()
-    var_dict["agent_name"] = agent_name
-    var_dict["current_time"] = time_ctx["current_time"]
-    var_dict["weekday"] = time_ctx["weekday"]
-    var_dict["date"] = time_ctx["date"]
-    var_dict["day_part"] = time_ctx["day_part"]
-
-    if caller_name:
-        var_dict["caller_name"] = caller_name
-    if customer_name:
-        var_dict["customer_name"] = customer_name
-    if phone_number:
-        var_dict["phone_number"] = phone_number
+    # 2. Variable handling:
+    if strict:
+        raw_vars = sorted(list(set(re.findall(r"\{\{([a-zA-Z0-9_]+)\}\}", system_prompt))))
+        provided_vars = set((variables or {}).keys()) | set(DEFAULT_VARIABLE_VALUES.keys())
+        missing = [v for v in raw_vars if v not in provided_vars]
+        if missing:
+            raise TemplateResolutionError(missing)
 
     if variables:
         for k, v in variables.items():
-            var_dict[k] = str(v)
-    for k, v in kwargs.items():
-        var_dict[k] = str(v)
+            clean_sys = clean_sys.replace(f"{{{{{k}}}}}", str(v))
+    for k, v in DEFAULT_VARIABLE_VALUES.items():
+        clean_sys = clean_sys.replace(f"{{{{{k}}}}}", v)
 
-    def render_vars(text: str) -> str:
-        for k, v in var_dict.items():
-            text = text.replace(f"{{{{{k}}}}}", v)
-        return text
+    # Ensure zero stray brackets reach the model: {{company}} -> company
+    clean_sys = re.sub(r"\{\{([a-zA-Z0-9_]+)\}\}", r"\1", clean_sys)
+    clean_sys = clean_sys.replace("{{", "").replace("}}", "")
 
-    rendered_system = render_vars(clean_sys).strip()
-    rendered_greeting = render_vars(clean_greet).strip()
-    rendered_ending = render_vars(clean_end).strip()
+    # 3. Anchor Agent Identity and anti-leak rules for real-time S2S
+    eff_name = agent_name.strip() if agent_name else "Ananya"
+    # Remove Moshi default trigger phrase if present
+    clean_sys = re.sub(r"^You enjoy having (a )?good conversations?\.?\s*", "", clean_sys, flags=re.IGNORECASE)
 
-    # 3. Check for any remaining unrendered variables
-    all_combined = f"{rendered_system} {rendered_greeting} {rendered_ending}"
-    unrendered = sorted(list(set(re.findall(r"\{\{([a-zA-Z0-9_]+)\}\}", all_combined))))
-    has_stray_braces = ("{{" in all_combined) or ("}}" in all_combined)
+    # If the prompt does not establish agent identity, explicitly anchor it
+    if eff_name.lower() not in clean_sys.lower():
+        identity_prefix = (
+            f"You are {eff_name}, a friendly sales rep at Snapserve. "
+            f"Your name is {eff_name}. You represent Snapserve. You are NEVER Moshi. "
+            "Speak casually in 1-2 short sentences. Acknowledge before asking ('Got it', 'Makes sense'). "
+            "Ask ONE question at a time. Never repeat questions you already asked.\n"
+        )
+        clean_sys = identity_prefix + clean_sys
+    else:
+        # Reinforce anti-Moshi identity boundary
+        clean_sys = f"You are {eff_name} at Snapserve, never Moshi.\n" + clean_sys
 
-    if strict and (unrendered or has_stray_braces):
-        missing = unrendered if unrendered else ["unresolved_template_variable"]
-        raise TemplateResolutionError(missing)
-
-    # 4. Assemble natural conversational scenario in plain prose (no scripted Start:/Close: quotes)
-    body_lines: list[str] = [rendered_system, time_ctx["time_line"]]
-
-    if greeting_mode == "user_first":
-        body_lines.append("The caller will speak first. Listen before responding.")
-    elif greeting_mode == "agent_first":
-        if rendered_greeting and rendered_greeting.lower() not in rendered_system.lower() and "greet" not in rendered_system.lower():
-            body_lines.append(f"When the call connects, greet the caller warmly: {rendered_greeting}")
-
-    if rendered_ending and rendered_ending.lower() not in rendered_system.lower() and "goodbye" not in rendered_system.lower():
-        body_lines.append(f"When concluding the call: {rendered_ending}")
-
-    compiled_body = "\n\n".join([line for line in body_lines if line])
+    compiled_body = clean_sys.strip()
     final_prompt = wrap_system_prompt(compiled_body)
 
-    # Guarantee no literal {{ or }} reaches the model
-    if strict and ("{{" in final_prompt or "}}" in final_prompt):
-        raise TemplateResolutionError(["unresolved_template_variable"])
-
     token_cnt = count_tokens(final_prompt)
+    if token_cnt > MAX_SYSTEM_PROMPT_TOKENS:
+        collected_warnings.append(
+            f"Prompt exceeds recommended model token budget ({token_cnt}/{MAX_SYSTEM_PROMPT_TOKENS} tokens)."
+        )
+
     linter_warnings = lint_prompt(
-        system_prompt=rendered_system,
-        greeting_text=rendered_greeting,
-        ending_text=rendered_ending,
+        system_prompt=compiled_body,
+        greeting_text="",
+        ending_text="",
         compiled_tokens=token_cnt,
-        unrendered_vars=unrendered,
+        unrendered_vars=[],
     )
     for lw in linter_warnings:
         if lw not in collected_warnings:
@@ -401,10 +400,10 @@ def compile_prompt(
     return CompiledPrompt(
         text=final_prompt,
         token_count=token_cnt,
-        can_publish=(token_cnt <= MAX_SYSTEM_PROMPT_TOKENS and len(unrendered) == 0),
+        can_publish=(token_cnt <= MAX_SYSTEM_PROMPT_TOKENS),
         warnings=collected_warnings,
-        unrendered_variables=unrendered,
-        time_line=time_ctx["time_line"],
-        day_part=time_ctx["day_part"],
+        unrendered_variables=[],
+        time_line=time_ctx.get("time_line", ""),
+        day_part=time_ctx.get("day_part", "morning"),
     )
 

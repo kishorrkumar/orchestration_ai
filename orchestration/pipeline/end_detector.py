@@ -45,8 +45,8 @@ class EndOfCallDetector:
         self,
         ending_text: str = "",
         quiet_window_sec: float = 1.5,
-        silence_timeout_sec: float = 20.0,
-        max_duration_sec: float = 600.0,
+        silence_timeout_sec: float = 1800.0,
+        max_duration_sec: float = 1800.0,
         fuzzy_threshold: float = 0.80,
     ):
         self.ending_text = ending_text
@@ -78,9 +78,9 @@ class EndOfCallDetector:
             if len(words) >= 2:
                 clauses.append(" ".join(words[-3:]))
                 clauses.append(" ".join(words[-2:]))
-        for closer in self.DEFAULT_FALLBACK_CLOSERS:
-            if closer not in clauses:
-                clauses.append(closer)
+            for closer in self.DEFAULT_FALLBACK_CLOSERS:
+                if closer not in clauses:
+                    clauses.append(closer)
         return list(set(clauses))
 
     def start_session(self, now: float) -> None:
@@ -99,6 +99,10 @@ class EndOfCallDetector:
         Returns True if a closing phrase match is triggered.
         """
         if not self.is_active:
+            return False
+
+        # Guard: Ignore closer detection during initial greeting / opening turn (first 15s)
+        if (now - self.session_start_time) < 15.0:
             return False
 
         self.last_speech_time = now

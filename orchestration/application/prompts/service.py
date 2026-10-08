@@ -36,55 +36,29 @@ class PromptCompilerUseCase:
         company: str = "PersonaPlex",
     ) -> CompiledPrompt:
         """Compile an Agent's prompt fields into the exact string consumed by PersonaPlex."""
-        # 1. Compute time context
-        now = self.clock.now_utc()
-        local_time_line, day_part = compute_local_time_context(agent.timezone_str, now)
+        import re
 
-        # 2. Template variable substitution
-        replacements = {
-            "{{agent_name}}": agent.name,
-            "{{customer_name}}": customer_name,
-            "{{company}}": company,
-            "{{day_part}}": day_part,
-            "{{timezone}}": agent.timezone_str,
-            "{{time}}": local_time_line,
-        }
+        # 1. Clean any stray template brackets or residual variables
+        raw_prompt = agent.system_prompt or ""
+        clean_prompt = re.sub(r"\{\{([a-zA-Z0-9_]+)\}\}", r"\1", raw_prompt)
+        clean_prompt = clean_prompt.replace("{{", "").replace("}}", "").strip()
 
-        rendered_prompt = agent.system_prompt
-        rendered_greeting = agent.greeting
-        rendered_ending = agent.ending
+        # 2. Pure system prompt wrapped for PersonaPlex
+        wrapped_text = wrap_system_prompt(clean_prompt)
 
-        for var, val in replacements.items():
-            rendered_prompt = rendered_prompt.replace(var, val)
-            rendered_greeting = rendered_greeting.replace(var, val)
-            rendered_ending = rendered_ending.replace(var, val)
-
-        # 3. Assemble structured body
-        lines = [
-            rendered_prompt.strip(),
-            local_time_line,
-        ]
-        if rendered_greeting.strip():
-            lines.append(f"Start: {rendered_greeting.strip()}")
-        if rendered_ending.strip():
-            lines.append(f"Close: {rendered_ending.strip()}")
-
-        raw_compiled = "\n\n".join(lines)
-        wrapped_text = wrap_system_prompt(raw_compiled)
-
-        # 4. Count discrete SentencePiece tokens
+        # 3. Count discrete SentencePiece tokens
         token_count = self.tokenizer.count_tokens(wrapped_text)
 
-        # 5. Run voice linter
-        warnings = PromptLinter.lint(raw_compiled)
+        # 4. Run voice linter
+        warnings = PromptLinter.lint(clean_prompt)
 
         return CompiledPrompt(
             raw_prompt=agent.system_prompt,
-            compiled_text=raw_compiled,
+            compiled_text=clean_prompt,
             wrapped_text=wrapped_text,
             token_count=token_count,
-            timezone_str=agent.timezone_str,
-            local_time_line=local_time_line,
+            timezone_str=agent.timezone_str or "UTC",
+            local_time_line="",
             warnings=warnings,
         )
 

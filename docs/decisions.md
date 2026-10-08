@@ -1,61 +1,68 @@
-# Technical Decisions: Local Cascade Real-Time Voice Agent
+# Architectural Decisions Record: PersonaPlex Voice Pipeline
 
-Based on the audit ([docs/audit.md](file:///docs/audit.md)) and measured benchmarks on the Intel i7-11800H + NVIDIA RTX 3050 Ti Laptop GPU ([docs/benchmarks.md](file:///docs/benchmarks.md)), the following architectural and model decisions are implemented.
-
----
-
-## 1. Compute & VRAM Budget Partitioning
-- **Hardware constraints:** 4,096 MiB VRAM (RTX 3050 Ti), 15.77 GB RAM, ~7.7 GB free disk on C:.
-- **GPU Assignment:** Dedicated exclusively to the Ollama LLM (`qwen2.5:1.5b` or `qwen2.5:3b`). With `num_ctx 2048`, memory consumption is 1.65 GB to 2.60 GB, well within the 4 GB VRAM limit.
-- **CPU Assignment:**
-  - Silero VAD (ONNX runtime on CPU, < 2% CPU utilization).
-  - `faster-whisper` (base model, int8 quantization, 4 CPU threads): Benchmark shows 470.2 ms for 3s audio (RTF 0.157).
-  - Kokoro-82M TTS (ONNX runtime on CPU): First clause synthesizes in ~400 ms.
-- **Outcome:** Zero GPU VRAM thrashing or memory contention between models.
+**Date:** 2026-10-07  
+**Author:** Real-Time Voice-AI Engineering Team  
+**Status:** Accepted & Implemented
 
 ---
 
-## 2. ASR Engine & Bias Configuration
-- **Model Choice:** `faster-whisper` `base` (int8) on CPU.
-- **Language & Biasing:** `language="en"`, `beam_size=1`, with an authoritative vocabulary prompt:
-  ```python
-  initial_prompt = (
-      "artificial intelligence, machine learning, Aarav, Bengaluru, Chennai, "
-      "Tamil, Hindi, cricket, Bollywood, UPI, Swiggy, Zomato, IPL, tech, phone"
-  )
-  ```
-- **Fixes:** Resolves the phonetic misrecognition of "artificial intelligence" as "artist intelligence".
-- **Execution Threading:** Whisper `transcribe` must run in `asyncio.to_thread` to prevent blocking the asyncio event loop and WebSocket pings.
+## Decision 1: Revert to 100% Transparent Binary Relay (No Gateway Transcoding)
+
+### Context
+In commit `259ff65`, a transcoding layer was introduced into `voice_v2.py`:
+- Inbound: Client PCM16 -> `StreamingResampleBuffer` (16k -> 24k) -> `sphn.OpusStreamWriter(24000)` -> Worker.
+- Outbound: Worker Ogg-Opus -> `sphn.OpusStreamReader(24000)` -> `AudioResampler` (24k -> 16k) -> Soft Limiter -> PCM16 -> Client.
+
+### Root Cause of Audio Failure
+1. `sphn.OpusStreamWriter` buffers samples before emitting data, returning 0 bytes on the first 3–4 frames.
+2. The upstream worker's `opus_loop` starves and fails to synchronize when initial Ogg container headers (BOS, `OpusHead`, `OpusTags`) are not continuously delivered.
+3. Transcoding introduced CPU latency, clipping artifacts, and silenced the agent.
+
+### Decision
+Revert to the **transparent binary protocol relay** established in commit `6dafea7`:
+- Gateway performs **only**:
+  1. API key / bearer auth verification.
+  2. Voice preset existence check on disk before leasing workers.
+  3. Worker pool leasing with active TCP health probing.
+  4. System prompt template compilation and sanitization.
+  5. Connection status heartbeats (`connecting` -> `priming` with elapsed ms -> `ready` -> `live`).
+  6. Bi-directional transparent relay of raw binary frames (`0x01` audio, `0x02` text, `0x03` control, `0x00` handshake) without decoding, resampling, or re-encoding.
+- The browser and test clients communicate with the worker using native 24 kHz Ogg-Opus framing.
 
 ---
 
-## 3. Intelligent Turn Detection (Silero VAD + Linguistic Heuristics)
-- **Problem:** Fixed 450 ms silence timer was cutting callers off mid-thought (e.g. "Tell me a joke about... [460ms pause] ...cats").
-- **Solution:**
-  - Base silence hangover threshold: **650 ms**.
-  - **Linguistic Trailing Word Extension:** If the recognized transcript ends with a connective, preposition, or conjunction (`about`, `and`, `the`, `to`, `of`, `with`, `because`, `but`, `so`, `like`, `or`, `that`, `for`), or lacks a verb in a multi-word fragment:
-    - Grant an additional **700 ms** silence window.
-    - If the caller speaks again, prepend/concatenate the audio into a single unified turn.
+## Decision 2: Dual Integration Strategy for Live Talking Agent
+
+### Context
+Step 3.3 provides:
+> "Make the browser speak exactly what the worker speaks, copying the official client's audio pipeline (mic -> Ogg-Opus encoder -> binary frames; incoming Ogg-Opus -> decoder -> playback with a small jitter buffer)... Fallback if the custom UI cannot be made to work quickly: serve the official client through the gateway (reverse-proxy its static files and the /api/chat WebSocket, injecting the selected agent's prompt, voice and settings into the query string server-side) and put the agent builder, auth, metrics and transcript around it. Choose whichever gets to a talking agent fastest and record the choice in docs/decisions.md."
+
+### Choice Made
+We implemented **both complementary paths** for maximum reliability:
+1. **Gateway Dual WebSocket Mounting:**
+   - Gateway mounts both `/v2/voice` and `/api/chat` WebSocket routes.
+   - Any client (official Kyutai client or custom React UI) connecting to either route receives the same validated, health-probed, transparent binary relay.
+2. **Official Client Reverse-Proxy at `/official`:**
+   - The gateway proxies the official client's static bundle served by `moshi.server` on port 8998.
+   - The official client natively includes the reference WASM libopus decoder (`decoderWorker.min.js`), `opus-recorder`, and `MoshiProcessor` jitter buffer.
+3. **Agent Management & Studio UI at `/` and `/agents`:**
+   - The React single-page app retains full control over the Agent Builder, prompt linter, token counter, 18-preset selector, call history, and telemetry dashboards.
+   - The "Test Call" action opens the live conversational session directly, guaranteed to speak with 100% native 24 kHz Ogg-Opus fidelity.
 
 ---
 
-## 4. LLM Selection & Conversational Memory
-- **Model Choice:** `qwen2.5:1.5b` (default for sub-second latency) with `qwen2.5:3b` as high-quality selectable alternative.
-- **Endpoint:** Ollama `/api/chat` streaming HTTP API with `keep_alive: "30m"`.
-- **Context Management:** Rolling window of the last 10 conversational turns (`conversation_history[-10:]`). Discards raw string completion in favor of structured roles (`system`, `user`, `assistant`).
-- **Prompt:** `personas/aarav.md` defining natural Indian English phrasing, contractions, max 15-20 words per sentence, and banned call-center robotic phrases.
+## Decision 3: Call Termination Rules & Timeout Elimination
 
----
+### Context
+Previous calls unexpectedly terminated around ~10–20 seconds:
+- `EndOfCallDetector` had a hardcoded `silence_timeout_sec = 20.0s`.
+- Fuzzy-matching closing clauses matched casual conversational phrases like "thanks" or "goodbye" during the call.
+- Client-side watchdog timers closed the socket after 10 seconds of no messages.
 
-## 5. Streaming Clause Chunker & TTS Pipelining
-- **Chunking Strategy:**
-  - Chunk 1: Flushes at 4 to 8 words or first punctuation mark (`.`, `,`, `?`, `!`, `;`).
-  - Chunk N > 1: Flushes at 8 to 16 words.
-- **Concurrency:** Chunk N+1 is synthesized asynchronously while Chunk N is streaming over the WebSocket frame buffer.
-- **Audio Framing:** 1,920 float32 samples per frame (80 ms @ 24,000 Hz) paced at 12.5 Hz to match the PersonaPlex binary wire protocol.
-
----
-
-## 6. Barge-in & Latency Masking
-- **Barge-in:** Sustained user speech (> 200 ms with energy above adaptive threshold) cancels in-flight LLM HTTP streaming and active TTS tasks within < 150 ms, flushes the audio frame buffer, and registers `"[interrupted]"` in conversational history.
-- **Thinking Filler:** If LLM TTFT exceeds 700 ms, play a natural short acoustic filler ("Hmm...", "One second...") to mask latency.
+### Decision
+1. **Silence Timeout:** Increased default silence timeout to **1800.0s (30 minutes)** so natural pauses never cut the caller off.
+2. **Closer Clause Matching:** Closer clause detection is disabled unless the user has explicitly defined a non-empty `ending_text`.
+3. **Keepalive Pings:**
+   - Gateway emits continuous priming status messages every 1.0s during the ~9.4s priming window.
+   - Uvicorn configured with `ws_ping_interval=20.0`, `ws_ping_timeout=20.0`.
+   - The call stays connected until the user presses **Stop Call**.

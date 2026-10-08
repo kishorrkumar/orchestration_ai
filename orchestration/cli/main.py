@@ -98,7 +98,15 @@ async def _run_gateway_cmd(args):
             logger.info(f"Registered real PersonaPlex worker node {wid} ({host}:{port})")
 
     app = create_app(pool=pool, worker_type=worker_type, active_server=spawned_servers[0] if spawned_servers else None)
-    config = uvicorn.Config(app, host=args.host, port=args.port, log_level="info")
+    config = uvicorn.Config(
+        app,
+        host=args.host,
+        port=args.port,
+        log_level="info",
+        ws_ping_interval=20.0,
+        ws_ping_timeout=20.0,
+        ws_max_size=16777216,
+    )
     uv_server = uvicorn.Server(config)
 
     logger.info(f"Starting Orchestration Gateway ({worker_type.upper()}) on http://{args.host}:{args.port}")

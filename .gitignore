@@ -40,3 +40,5 @@ package-lock.json
 # Local secrets
 .secrets/
 
+conversations/
+logs/

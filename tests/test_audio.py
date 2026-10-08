@@ -120,7 +120,7 @@ def test_int16_to_float32_asymmetry_bounds():
 
 def test_opus_codec_roundtrip():
     """AUDIT-001: sphn OpusStreamWriter and OpusStreamReader roundtrip for upstream Moshi compatibility."""
-    import sphn
+    sphn = pytest.importorskip("sphn")
     sr = 24000
     writer = sphn.OpusStreamWriter(sr)
     reader = sphn.OpusStreamReader(sr)
