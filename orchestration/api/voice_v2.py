@@ -309,23 +309,36 @@ async def voice_v2_endpoint(
     resolved_text_temp = text_temperature if text_temperature is not None else pipeline_cfg.get("text_temperature", 0.7)
     resolved_audio_topk = audio_topk if audio_topk is not None else pipeline_cfg.get("audio_topk", 250)
     resolved_text_topk = text_topk if text_topk is not None else pipeline_cfg.get("text_topk", 25)
-    resolved_voice = voice_prompt or pipeline_cfg.get("voice_id") or voice_id
+    agent_voice = target_ver.voice_id if target_ver else (getattr(agent, "draft_voice_id", None) or getattr(agent, "voice_id", None))
+    resolved_voice = voice_prompt or voice_id or agent_voice or pipeline_cfg.get("voice_id") or pipeline_cfg.get("voice") or "NATM1.pt"
 
     from ..persona.registry import OFFICIAL_VOICE_PRESETS, get_existing_voice_files
     available_voices = get_existing_voice_files()
-    norm_voice = str(resolved_voice) if resolved_voice else "NATF0.pt"
-    if not norm_voice.endswith(".pt") and not norm_voice.endswith(".wav"):
-        norm_voice = f"{norm_voice}.pt"
+    raw_v = str(resolved_voice).strip() if resolved_voice else "NATM1.pt"
 
-    if norm_voice not in available_voices and not norm_voice.endswith(".wav"):
-        logger.error(f"Requested voice '{resolved_voice}' not found on disk. Available: {available_voices}")
-        await websocket.send_json({
-            "type": "error",
-            "message": f"voice '{resolved_voice}' not found, available: {', '.join(available_voices)}",
-        })
-        await websocket.close(code=status.WS_1008_POLICY_VIOLATION, reason=f"voice {resolved_voice} not found")
-        return
-    resolved_voice = norm_voice
+    matched_voice = None
+    if raw_v in available_voices:
+        matched_voice = raw_v
+    elif f"{raw_v}.wav" in available_voices:
+        matched_voice = f"{raw_v}.wav"
+    elif f"{raw_v}.pt" in available_voices:
+        matched_voice = f"{raw_v}.pt"
+    elif raw_v.endswith(".pt") and raw_v.replace(".pt", ".wav") in available_voices:
+        matched_voice = raw_v.replace(".pt", ".wav")
+    elif raw_v.endswith(".wav") and raw_v.replace(".wav", ".pt") in available_voices:
+        matched_voice = raw_v.replace(".wav", ".pt")
+
+    if matched_voice is None:
+        if available_voices:
+            logger.warning(
+                f"Requested voice '{resolved_voice}' not found in active voice directory. "
+                f"Falling back to available voice '{available_voices[0]}'. (Available: {available_voices})"
+            )
+            matched_voice = available_voices[0]
+        else:
+            matched_voice = raw_v if (raw_v.endswith(".pt") or raw_v.endswith(".wav")) else f"{raw_v}.pt"
+
+    resolved_voice = matched_voice
 
     # 2. Compile prompt - pure system prompt with variables removed
     try:

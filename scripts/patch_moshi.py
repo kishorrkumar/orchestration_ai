@@ -1,31 +1,79 @@
 """
 Standalone script to patch upstream moshi.server with PersonaPlex stability fixes.
-Safe to run idempotently. Does not throw if moshi is not yet installed.
+Safe to run idempotently.
+Does NOT import moshi.server directly to prevent top-level main() execution.
 """
 
+import importlib.util
+import os
 import sys
 from pathlib import Path
+
+
+def find_moshi_server_file() -> Path | None:
+    # 1. Search common deployment paths
+    candidates = [
+        Path("/workspace/personaplex/moshi/moshi/server.py"),
+        Path.home() / "personaplex/moshi/moshi/server.py",
+        Path("_personaplex_upstream/moshi/moshi/server.py"),
+        Path("./_personaplex_upstream/moshi/moshi/server.py"),
+    ]
+    for c in candidates:
+        if c.exists():
+            return c.resolve()
+
+    # 2. Inspect module spec without executing module
+    try:
+        spec = importlib.util.find_spec("moshi.server")
+        if spec and spec.origin and Path(spec.origin).exists():
+            return Path(spec.origin).resolve()
+    except Exception:
+        pass
+
+    # 3. Inspect parent moshi package spec
+    try:
+        spec = importlib.util.find_spec("moshi")
+        if spec and spec.origin:
+            p = Path(spec.origin).parent / "server.py"
+            if p.exists():
+                return p.resolve()
+    except Exception:
+        pass
+
+    return None
 
 
 def patch_moshi_server(target_path: str | Path | None = None) -> bool:
     if target_path:
         server_path = Path(target_path)
     else:
-        try:
-            import moshi.server
-            server_path = Path(moshi.server.__file__)
-        except ImportError:
-            print("[INFO] moshi module not found in current Python environment. Skipping patch.")
-            return False
+        server_path = find_moshi_server_file()
 
-    if not server_path.exists():
-        print(f"[WARNING] moshi.server not found at {server_path}")
+    if not server_path or not server_path.exists():
+        print(f"[INFO] moshi.server not found at target ({server_path}). Skipping patch.")
         return False
 
     with open(server_path, "r", encoding="utf-8") as f:
         src = f.read()
 
     modified = False
+
+    # Fix 0: Wrap top-level main() call with `if __name__ == '__main__':`
+    # Upstream moshi/server.py puts `with torch.no_grad(): main()` at module root,
+    # causing any import of moshi.server to execute main() immediately.
+    if 'if __name__ == "__main__":' not in src:
+        if "with torch.no_grad():\n    main()" in src:
+            src = src.replace(
+                "with torch.no_grad():\n    main()",
+                'if __name__ == "__main__":\n    with torch.no_grad():\n        main()',
+            )
+            modified = True
+        elif "main()" in src:
+            src = src.replace(
+                "main()",
+                'if __name__ == "__main__":\n    main()',
+            )
+            modified = True
 
     # Fix 1: Seed parameter query dictionary lookup
     if 'request["seed"]' in src:
@@ -42,7 +90,7 @@ def patch_moshi_server(target_path: str | Path | None = None) -> bool:
     # Fix 3: Fallback on missing voice file instead of crashing TCP session
     old_fnf = "raise FileNotFoundError(\n                    f\"Requested voice prompt '{voice_prompt_filename}' not found in '{self.voice_prompt_dir}'\"\n                )"
     new_fnf = """import glob
-                pt_candidates = sorted(glob.glob(os.path.join(self.voice_prompt_dir, "*.pt")))
+                pt_candidates = sorted(glob.glob(os.path.join(self.voice_prompt_dir, "*.pt"))) + sorted(glob.glob(os.path.join(self.voice_prompt_dir, "*.wav")))
                 if pt_candidates:
                     voice_prompt_path = pt_candidates[0]
                     clog.log("warning", f"Requested voice '{voice_prompt_filename}' not found, falling back to {voice_prompt_path}")
@@ -92,6 +140,29 @@ def patch_moshi_server(target_path: str | Path | None = None) -> bool:
             'await ws.send_bytes(b"\\x01" + msg)',
             'async with send_lock:\n                        await ws.send_bytes(b"\\x01" + msg)',
         )
+        modified = True
+
+    # Fix 7: Bypass dist.tgz static download (Gateway on port 8000 serves UI, worker does not need static assets)
+    if 'dist_tgz = hf_hub_download("nvidia/personaplex-7b-v1", "dist.tgz")' in src:
+        src = src.replace(
+            'dist_tgz = hf_hub_download("nvidia/personaplex-7b-v1", "dist.tgz")',
+            'return None  # Bypass dist.tgz; Gateway serves console',
+        )
+        modified = True
+
+    # Fix 8: Forward HF_TOKEN to hf_hub_download automatically
+    hf_token_patch_marker = "# HF_TOKEN auto-inject wrapper"
+    if hf_token_patch_marker not in src and "from huggingface_hub import hf_hub_download" in src:
+        hf_replacement = """from huggingface_hub import hf_hub_download as _raw_hf_hub_download
+# HF_TOKEN auto-inject wrapper
+def hf_hub_download(*args, **kwargs):
+    if "token" not in kwargs:
+        token_env = os.environ.get("HF_TOKEN")
+        if token_env:
+            kwargs["token"] = token_env
+    return _raw_hf_hub_download(*args, **kwargs)
+"""
+        src = src.replace("from huggingface_hub import hf_hub_download", hf_replacement, 1)
         modified = True
 
     if modified:

@@ -34,14 +34,14 @@ from pathlib import Path
 
 
 def get_existing_voice_files() -> list[str]:
-    """Return all voice preset filenames actually present on disk."""
+    """Return all voice preset filenames on disk, unioned with official presets."""
     dirs_to_check = [
         Path("voices"),
         Path(os.environ.get("HF_HOME", "/workspace/huggingface")) / "voices",
         Path.home() / ".cache" / "huggingface" / "voices",
         Path("data/cloned_voices"),
     ]
-    voices = set()
+    voices = set(OFFICIAL_VOICE_PRESETS)
     for d in dirs_to_check:
         if d.is_dir():
             for p in d.glob("*.pt"):
@@ -52,7 +52,7 @@ def get_existing_voice_files() -> list[str]:
                 voices.add(p.name)
             for p in d.glob("*/*.pt"):
                 voices.add(p.name)
-    return sorted(voices) if voices else list(OFFICIAL_VOICE_PRESETS)
+    return sorted(voices)
 
 
 PRESET_METADATA = {

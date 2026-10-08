@@ -180,9 +180,10 @@ export const TestCallModal: React.FC<TestCallModalProps> = ({ agent, onClose }) 
         // Build WebSocket URL
         const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
         const host = window.location.host
+        const voiceParam = agent.voice_id ? `&voice_prompt=${encodeURIComponent(agent.voice_id)}` : ''
         const wsUrl = `${protocol}//${host}/v2/voice?agent_id=${encodeURIComponent(
           agent.id || 'default'
-        )}&sample_rate=16000&codec=pcm16`
+        )}${voiceParam}&sample_rate=16000&codec=pcm16`
 
         const ws = new WebSocket(wsUrl)
         wsRef.current = ws
