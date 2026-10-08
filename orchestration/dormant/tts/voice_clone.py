@@ -12,6 +12,8 @@ Implements:
 
 from __future__ import annotations
 
+import datetime
+import hashlib
 import io
 import json
 import logging
@@ -23,10 +25,18 @@ from typing import Any
 
 import numpy as np
 import soundfile as sf
+from scipy.signal import resample_poly
 
 logger = logging.getLogger("orchestration.tts.voice_clone")
 
 DATA_DIR = pathlib.Path(__file__).resolve().parent.parent.parent.parent / "data" / "cloned_voices"
+
+PUBLIC_FIGURE_BLOCKLIST = {
+    "barack obama", "obama", "donald trump", "trump", "joe biden", "biden",
+    "kamala harris", "narendra modi", "modi", "elon musk", "musk",
+    "bill gates", "steve jobs", "mark zuckerberg", "jeff bezos",
+    "morgan freeman", "david attenborough", "taylor swift", "eminem",
+}
 
 
 class VoiceCloningValidationError(ValueError):
@@ -184,17 +194,17 @@ class VoiceCloner:
         audio: np.ndarray,
         sr: int,
         min_sec: float = 3.0,
-        max_sec: float = 30.0
+        max_sec: float = 60.0
     ) -> dict[str, float]:
-        """Validate duration, clipping, silence, and noise levels."""
+        """Validate duration, clipping, silence, RMS energy, and SNR levels."""
         duration = len(audio) / sr
         if duration < min_sec:
             raise VoiceCloningValidationError(
-                f"Audio sample duration ({duration:.1f}s) is too short. Minimum required is {min_sec:.1f}s."
+                f"Audio sample duration ({duration:.1f}s) is too short. Minimum required is {min_sec:.1f}s (ideal: 15-60s)."
             )
         if duration > max_sec:
             raise VoiceCloningValidationError(
-                f"Audio sample duration ({duration:.1f}s) exceeds maximum allowed {max_sec:.1f}s."
+                f"Audio sample duration ({duration:.1f}s) exceeds maximum allowed {max_sec:.1f}s (ideal: 15-60s)."
             )
 
         # RMS Energy
@@ -207,23 +217,37 @@ class VoiceCloner:
         # Clipping Check (|x| >= 0.999)
         clipped_samples = int(np.sum(np.abs(audio) >= 0.999))
         clipping_ratio = clipped_samples / len(audio)
-        if clipping_ratio > 0.08:
+        if clipping_ratio > 0.05:
             raise VoiceCloningValidationError(
                 f"Audio sample has excessive digital clipping ({clipping_ratio * 100:.1f}% clipped). Lower input gain."
             )
 
-        # Silence / Speech ratio check
+        # SNR Estimation (10th percentile ambient floor vs 90th percentile speech power)
         frame_len = int(sr * 0.04)  # 40ms frames
         speech_frames = 0
         total_frames = 0
+        frame_energies: list[float] = []
         for i in range(0, len(audio) - frame_len, frame_len):
-            f = audio[i:i + frame_len]
-            if np.sqrt(np.mean(f ** 2)) > 0.015:
+            f_rms = float(np.sqrt(np.mean(audio[i : i + frame_len] ** 2)))
+            frame_energies.append(f_rms)
+            if f_rms > 0.015:
                 speech_frames += 1
             total_frames += 1
 
+        if frame_energies:
+            p10_noise = float(np.percentile(frame_energies, 10))
+            p90_speech = float(np.percentile(frame_energies, 90))
+            snr_db = float(20.0 * np.log10(max(p90_speech, 1e-6) / max(p10_noise, 1e-6)))
+        else:
+            snr_db = 20.0
+
+        if snr_db < 8.0:
+            raise VoiceCloningValidationError(
+                f"Audio sample has excessive background noise or music (SNR: {snr_db:.1f} dB < 8.0 dB threshold). Provide clean, quiet speech."
+            )
+
         speech_ratio = speech_frames / max(1, total_frames)
-        if speech_ratio < 0.35:
+        if speech_ratio < 0.30:
             raise VoiceCloningValidationError(
                 f"Audio contains too much silence or background pause ({speech_ratio * 100:.1f}% speech). Please provide continuous clear speech."
             )
@@ -231,6 +255,7 @@ class VoiceCloner:
         return {
             "duration_sec": round(duration, 2),
             "rms_energy": round(rms, 4),
+            "snr_db": round(snr_db, 1),
             "clipping_ratio": round(clipping_ratio, 4),
             "speech_ratio": round(speech_ratio, 3),
         }
@@ -278,43 +303,112 @@ class VoiceCloner:
             normalized = normalized * (0.95 / max_sample)
         return normalized.astype(np.float32)
 
+    def update_voice_qa_status(
+        self,
+        voice_id: str,
+        qa_passed: bool,
+        qa_score: float,
+        recommended_engine: str = "cascaded",
+        qa_report: dict[str, Any] | None = None,
+    ) -> bool:
+        """Update QA validation status for a cloned voice profile."""
+        clean = voice_id.strip()
+        if clean.endswith(".wav") or clean.endswith(".pt"):
+            clean = pathlib.Path(clean).stem
+        meta = self._cached_voices.get(clean)
+        if not meta:
+            return False
+
+        meta["qa_passed"] = bool(qa_passed)
+        meta["qa_score"] = round(float(qa_score), 4)
+        meta["recommended_engine"] = recommended_engine
+        if qa_report:
+            meta["qa_report"] = qa_report
+
+        voice_dir = self.data_dir / clean
+        meta_path = voice_dir / "metadata.json"
+        try:
+            with open(meta_path, "w", encoding="utf-8") as f:
+                json.dump(meta, f, indent=2)
+            self._cached_voices[clean] = meta
+            logger.info(f"Updated QA status for {clean}: passed={qa_passed}, score={qa_score}")
+            return True
+        except Exception as e:
+            logger.warning(f"Failed to persist QA status for {clean}: {e}")
+            return False
+
     def clone_voice(
         self,
-        audio_bytes: bytes,
+        audio_bytes: bytes | list[bytes],
         voice_name: str,
         owner: str = "default_user",
         consent: bool = False,
+        consent_statement: str | None = None,
         preferred_gender: str | None = None,
     ) -> dict[str, Any]:
         """
         Execute the end-to-end voice cloning pipeline:
-        1. Explicit consent verification.
-        2. Audio decode & resample to 24kHz.
-        3. Quality validation (duration, clipping, silence).
+        1. Explicit consent verification & public figure policy enforcement.
+        2. Audio decode & resample to 24kHz (supports single or multi-reference inputs).
+        3. Quality validation (duration, clipping, silence, SNR).
         4. Silence trimming & optimal segment selection (5 - 12s).
         5. -24 LUFS loudness normalization.
-        6. Persistent storage and metadata registration.
+        6. Persistent storage and metadata registration with SHA-256 fingerprint.
         """
         if not consent:
             raise VoiceCloningValidationError("Voice cloning requires explicit user consent.")
 
-        raw_audio, sr = self._decode_audio(audio_bytes)
-        audio_24k = self._resample(raw_audio, sr, 24000)
+        clean_name_check = voice_name.strip().lower()
+        if any(term in clean_name_check for term in PUBLIC_FIGURE_BLOCKLIST):
+            raise VoiceCloningValidationError(
+                f"Cloning public figures or celebrity voices ('{voice_name}') is strictly prohibited by safety policy."
+            )
 
-        # Quality validation
-        metrics = self._validate_audio_quality(audio_24k, 24000)
+        if not consent_statement or len(consent_statement.strip()) < 8:
+            consent_statement = f"I hereby grant permission to clone the voice '{voice_name}' for authorized business calls."
+
+        # Handle multiple references if provided
+        refs_bytes: list[bytes] = [audio_bytes] if isinstance(audio_bytes, bytes) else audio_bytes
+        if not refs_bytes:
+            raise VoiceCloningValidationError("No audio reference provided for voice cloning.")
+
+        ref_hashes = [hashlib.sha256(b).hexdigest() for b in refs_bytes]
+        primary_hash = ref_hashes[0]
+
+        # Decode and evaluate each candidate reference to pick the highest quality audio
+        candidates: list[tuple[np.ndarray, dict[str, float]]] = []
+        last_val_err: Exception | None = None
+
+        for b in refs_bytes:
+            try:
+                raw_audio, sr = self._decode_audio(b)
+                audio_24k = self._resample(raw_audio, sr, 24000)
+                m = self._validate_audio_quality(audio_24k, 24000)
+                candidates.append((audio_24k, m))
+            except VoiceCloningValidationError as err:
+                last_val_err = err
+
+        if not candidates:
+            if last_val_err:
+                raise last_val_err
+            raise VoiceCloningValidationError("Could not decode any valid audio reference.")
+
+        # Rank candidates by composite score (SNR + speech ratio * 20 - clipping * 50)
+        candidates.sort(
+            key=lambda item: item[1].get("snr_db", 0.0) + (item[1].get("speech_ratio", 0.0) * 20.0) - (item[1].get("clipping_ratio", 0.0) * 50.0),
+            reverse=True,
+        )
+        selected_audio, metrics = candidates[0]
 
         # Silence trimming
-        trimmed = self._trim_silence(audio_24k, 24000)
+        trimmed = self._trim_silence(selected_audio, 24000)
 
         # Optimal length selection for PersonaPlex (5 - 12 seconds)
-        # 10 seconds is optimal (125 frames = ~2s initialization)
         target_samples = int(24000 * 10.0)
         if len(trimmed) > target_samples:
             trimmed = trimmed[:target_samples]
         elif len(trimmed) < int(24000 * 4.0):
-            # If trimmed too much, fall back to untrimmed audio
-            trimmed = audio_24k[:target_samples]
+            trimmed = selected_audio[:target_samples]
 
         # Normalize to -24 LUFS
         final_audio = self._normalize_loudness(trimmed, target_lufs=-24.0)
@@ -355,7 +449,12 @@ class VoiceCloner:
             "name": voice_name,
             "owner": owner,
             "created_at": time.time(),
+            "created_at_iso": datetime.datetime.now(datetime.timezone.utc).isoformat(),
             "consent": True,
+            "consent_statement": consent_statement,
+            "reference_sha256": primary_hash,
+            "reference_sha256_list": ref_hashes,
+            "reference_count": len(refs_bytes),
             "sample_rate": 24000,
             "channels": 1,
             "duration_sec": round(len(final_audio) / 24000.0, 2),
@@ -365,6 +464,9 @@ class VoiceCloner:
             "description": f"Custom voice cloned from reference sample ({round(len(final_audio)/24000.0, 1)}s)",
             "artifact_wav": str(wav_path),
             "metrics": metrics,
+            "qa_passed": False,  # Pending QA verification
+            "qa_score": None,
+            "recommended_engine": "cascaded",  # Default to cascaded until QA proved
         }
 
         meta_path = voice_dir / "metadata.json"

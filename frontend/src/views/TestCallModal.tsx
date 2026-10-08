@@ -212,7 +212,33 @@ export const TestCallModal: React.FC<TestCallModalProps> = ({ agent, onClose }) 
           if (typeof event.data === 'string') {
             try {
               const msg = JSON.parse(event.data)
-              if (msg.type === 'status') {
+              if (msg.type === 'greeting') {
+                const greetingText = msg.text || `Hi, thanks for calling Snapserve. My name is ${msg.agent_name || agent.name}. How can I help you today?`
+                setCallStatus('connected')
+                setIsAgentSpeaking(true)
+                setTurns([
+                  {
+                    id: `greeting-${Date.now()}`,
+                    role: 'assistant',
+                    text: greetingText,
+                  },
+                ])
+                if (typeof window !== 'undefined' && 'speechSynthesis' in window && msg.speak !== false) {
+                  try {
+                    window.speechSynthesis.cancel()
+                    const utter = new SpeechSynthesisUtterance(greetingText)
+                    utter.rate = 1.02
+                    utter.pitch = 1.0
+                    utter.onend = () => {
+                      setIsAgentSpeaking(false)
+                    }
+                    window.speechSynthesis.speak(utter)
+                  } catch (e) {
+                    console.debug('SpeechSynthesis notice:', e)
+                    setIsAgentSpeaking(false)
+                  }
+                }
+              } else if (msg.type === 'status') {
                 if (msg.status === 'priming') {
                   setCallStatus('priming')
                   setPrimingElapsedSec(Math.round((msg.elapsed_ms || 0) / 1000))
@@ -400,10 +426,12 @@ export const TestCallModal: React.FC<TestCallModalProps> = ({ agent, onClose }) 
             recognition.onresult = (event: any) => {
               if (isCleanedUp) return
               let interim = ''
+              let hasFinalPart = false
               for (let i = event.resultIndex; i < event.results.length; ++i) {
                 const textPart = event.results[i][0]?.transcript || ''
                 if (event.results[i].isFinal) {
                   finalTranscript += (finalTranscript ? ' ' : '') + textPart.trim()
+                  hasFinalPart = true
                 } else {
                   interim += textPart
                 }
@@ -436,22 +464,36 @@ export const TestCallModal: React.FC<TestCallModalProps> = ({ agent, onClose }) 
                   JSON.stringify({
                     type: 'user_transcript',
                     text: spoken,
+                    is_final: hasFinalPart,
                   })
                 )
               }
             }
 
+            let restartTimeout: any = null
+            const safeRestart = () => {
+              if (isCleanedUp || !wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return
+              clearTimeout(restartTimeout)
+              restartTimeout = setTimeout(() => {
+                if (isCleanedUp || !wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return
+                try {
+                  recognition.start()
+                } catch (err) {
+                  console.debug('Speech recognition restart retry:', err)
+                }
+              }, 150)
+            }
+
             recognition.onerror = (e: any) => {
-              console.debug('Speech recognition event:', e?.error)
+              console.debug('Speech recognition error event:', e?.error)
+              if (e?.error === 'not-allowed') {
+                return
+              }
+              safeRestart()
             }
 
             recognition.onend = () => {
-              // Restart if call is still active
-              if (!isCleanedUp && wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-                try {
-                  recognition.start()
-                } catch {}
-              }
+              safeRestart()
             }
 
             recognition.start()

@@ -15,8 +15,10 @@ import numpy as np
 from fastapi import APIRouter, Header, HTTPException, Query, WebSocket, WebSocketDisconnect, status
 
 from ..audio.codecs import decode_ulaw, encode_ulaw
-from ..audio.dsp import compute_rms, float32_to_int16, int16_to_float32, soft_clip
+from ..audio.detokenizer import detokenize_sentencepiece_stream, stitch_token
+from ..audio.dsp import compute_rms, float32_to_int16, int16_to_float32, normalize_speech_loudness, soft_clip
 from ..audio.framing import InboundAudioFrameProcessor
+from ..audio.recorder import SessionAudioRecorder
 from ..audio.resample import AudioResampler, StreamingResampleBuffer
 from ..db.models import AgentVersion
 from ..db.service import AgentService, CallSessionService
@@ -183,6 +185,7 @@ async def voice_v2_endpoint(
     text_temperature: float | None = Query(None, description="Text generation temperature (0.0 - 2.0)"),
     audio_topk: int | None = Query(None, description="Audio top-k sampling"),
     text_topk: int | None = Query(None, description="Text top-k sampling"),
+    record_session: bool = Query(True, description="Enable dual-channel 24kHz blackbox audio recording"),
 ):
     """
     Production S2S WebSocket endpoint.
@@ -232,8 +235,30 @@ async def voice_v2_endpoint(
         "message": "Connecting to voice engine...",
     })
 
-    # Check Engine type
+    # Check Engine type and apply intelligent per-voice routing
     resolved_engine = target_ver.engine if (target_ver and hasattr(target_ver, "engine")) else getattr(agent, "draft_engine", "personaplex_s2s")
+
+    # If voice is a cloned voice that requires Cascaded routing (or failed S2S QA), route to Engine B
+    from ..tts.voice_clone import default_voice_cloner
+    target_voice_check = voice_prompt or (target_ver.voice_id if target_ver else agent.draft_voice_id) or ""
+    clean_vc = str(target_voice_check).strip()
+    if clean_vc.endswith(".wav") or clean_vc.endswith(".pt"):
+        clean_vc = clean_vc.rsplit(".", 1)[0]
+
+    if default_voice_cloner.has_voice(clean_vc):
+        v_meta = default_voice_cloner.get_voice_metadata(clean_vc)
+        if v_meta and (v_meta.get("recommended_engine") == "cascaded" or not v_meta.get("qa_passed", False)):
+            if CascadedVoiceEngine is not None:
+                logger.info(
+                    f"Intelligent voice routing: routing cloned voice '{clean_vc}' to Cascaded Engine B "
+                    f"(QA passed={v_meta.get('qa_passed')}, similarity={v_meta.get('qa_score')})"
+                )
+                resolved_engine = EngineType.CASCADED_CLOUD.value
+            else:
+                logger.warning(
+                    f"Cloned voice '{clean_vc}' recommended for Cascaded Engine B but CascadedVoiceEngine is unavailable; "
+                    f"using Engine A fallback."
+                )
 
     # If Engine B (Cascaded Cloud pipeline)
     if resolved_engine == EngineType.CASCADED_CLOUD.value or resolved_engine == "cascaded_cloud":
@@ -329,14 +354,28 @@ async def voice_v2_endpoint(
         matched_voice = raw_v.replace(".wav", ".pt")
 
     if matched_voice is None:
-        if available_voices:
-            logger.warning(
-                f"Requested voice '{resolved_voice}' not found in active voice directory. "
-                f"Falling back to available voice '{available_voices[0]}'. (Available: {available_voices})"
-            )
+        # Determine appropriate gender-matching fallback instead of blindly picking available_voices[0] (which is NATF0.pt)
+        clean_stem = raw_v.replace(".pt", "").replace(".wav", "")
+        v_meta = default_voice_cloner.get_voice_metadata(clean_stem)
+        v_gender = (v_meta.get("gender") or v_meta.get("preferred_gender") or "").lower() if v_meta else ""
+
+        is_female = "female" in v_gender
+        if not is_female and agent and hasattr(agent, "name"):
+            name_l = agent.name.lower()
+            if any(fn in name_l for fn in ("ananya", "priya", "sarah", "emma", "maria", "elena")):
+                is_female = True
+
+        target_fallback = "NATF0.pt" if is_female else "NATM1.pt"
+        if target_fallback in available_voices:
+            matched_voice = target_fallback
+        elif available_voices:
             matched_voice = available_voices[0]
         else:
-            matched_voice = raw_v if (raw_v.endswith(".pt") or raw_v.endswith(".wav")) else f"{raw_v}.pt"
+            matched_voice = target_fallback
+        logger.info(
+            f"[VOICE ROUTING] Voice '{resolved_voice}' resolved to '{matched_voice}' "
+            f"(gender: {'female' if is_female else 'male'})."
+        )
 
     resolved_voice = matched_voice
 
@@ -388,6 +427,26 @@ async def voice_v2_endpoint(
             "worker_to_gateway_rms": 0.0,
             "worker_to_gateway_peak": 0.0,
         },
+        "timing": {
+            "connect_ms": 0.0,
+            "priming_time_ms": 0.0,
+            "ttfa_greeting_ms": None,
+            "first_token_ms": None,
+            "turn_latencies_ms": [],
+            "p50_turn_latency_ms": None,
+            "p95_turn_latency_ms": None,
+        },
+        "performance": {
+            "last_gpu_step_ms": 0.0,
+            "gpu_real_time_factor": 0.0,
+            "dropped_frames": 0,
+            "max_queue_depth": 0,
+        },
+        "recording": {
+            "enabled": record_session,
+            "file_path": None,
+            "duration_sec": 0.0,
+        },
         "tokens_received": 0,
         "priming_time_ms": 0.0,
         "closed_by": "unknown",
@@ -402,6 +461,13 @@ async def voice_v2_endpoint(
         oldest_k = next(iter(SESSION_DEBUG_LOGS))
         del SESSION_DEBUG_LOGS[oldest_k]
     SESSION_DEBUG_LOGS[call_session_id] = telemetry
+
+    # Dual-channel blackbox audio recorder (Channel 0: Caller, Channel 1: Assistant)
+    audio_recorder = SessionAudioRecorder(
+        session_id=call_session_id,
+        sample_rate=MODEL_SAMPLE_RATE,
+        enabled=record_session,
+    )
 
     # 4. Initialize EndOfCallDetector
     effective_silence_sec = float(end_silence_sec) if (end_silence_sec and float(end_silence_sec) > 0) else 1800.0
@@ -422,6 +488,44 @@ async def voice_v2_endpoint(
     )
     out_resampler = AudioResampler(in_rate=MODEL_SAMPLE_RATE, out_rate=sample_rate, quality="QQ")
 
+    # 5b. Conversation Turns & Instant Branded Greeting Playout (<150ms TTFA)
+    conversation_turns: list[dict[str, Any]] = []
+    initial_greeting_delivered = False
+    user_has_responded = False
+
+    effective_greeting = (
+        greeting_text.strip()
+        if (greeting_text and greeting_text.strip())
+        else f"Hi, thanks for calling Snapserve. My name is {agent.name}, how can I help you today?"
+    )
+    should_speak_first = greeting_mode in ("agent_speaks_first", "agent_first")
+
+    if should_speak_first:
+        try:
+            await websocket.send_json({
+                "type": "greeting",
+                "session_id": call_session_id,
+                "agent_name": agent.name,
+                "text": effective_greeting,
+                "role": "assistant",
+                "speak": True,
+            })
+            initial_greeting_delivered = True
+            telemetry["ttfa_greeting_ms"] = round((time.time() - call_start_time) * 1000.0, 1)
+            telemetry["timing"]["ttfa_greeting_ms"] = telemetry["ttfa_greeting_ms"]
+            telemetry["first_audio_to_browser_ms"] = telemetry["ttfa_greeting_ms"]
+            conversation_turns.append({
+                "role": "assistant",
+                "text": effective_greeting,
+                "started_ms": 0.0,
+                "ended_ms": round(len(effective_greeting.split()) * 300.0, 1),
+                "time_offset_sec": 0.0,
+                "timestamp": time.time(),
+                "words": len(effective_greeting.split()),
+            })
+            logger.info(f"[VoiceSession {call_session_id}] Instant greeting dispatched to client: '{effective_greeting}'")
+        except Exception as e:
+            logger.debug(f"Instant greeting notice: {e}")
 
     # 6. Priming with Keepalive Heartbeats & Early Disconnect Protection
     priming_start = time.perf_counter()
@@ -545,26 +649,34 @@ async def voice_v2_endpoint(
         stop_event.set()
 
     turn_counter = 0
-    current_agent_turn_text = []
+    current_agent_turn_text: list[str] = []
     current_agent_turn_start = 0.0
 
-    conversation_turns: list[dict[str, Any]] = []
     current_agent_buffer: list[str] = []
     current_agent_start_ms: float = 0.0
+    current_agent_turn_start_time: float = 0.0
+    agent_turn_yielded: bool = False
+    last_user_speech_end_time: float = 0.0
+    turn_latencies: list[float] = []
 
     def commit_agent_turn():
-        nonlocal current_agent_buffer, current_agent_start_ms
+        nonlocal current_agent_buffer, current_agent_start_ms, current_agent_turn_start_time
         if current_agent_buffer:
-            text = "".join(current_agent_buffer).strip()
+            text = detokenize_sentencepiece_stream(current_agent_buffer, agent_name=agent.name).strip()
+            now_ms = (time.time() - call_start_time) * 1000.0
             if text:
                 conversation_turns.append({
                     "role": "assistant",
                     "text": text,
                     "started_ms": round(current_agent_start_ms, 1),
+                    "ended_ms": round(now_ms, 1),
+                    "duration_ms": round(now_ms - current_agent_start_ms, 1),
                     "time_offset_sec": round(current_agent_start_ms / 1000.0, 2),
                     "timestamp": time.time(),
+                    "words": len(text.split()),
                 })
             current_agent_buffer.clear()
+            current_agent_turn_start_time = 0.0
 
     is_pcm_client = (codec == "pcm16" or codec == "g711_ulaw")
 
@@ -627,7 +739,7 @@ async def voice_v2_endpoint(
         Uses InboundAudioFrameProcessor to handle 1-byte framing, odd-length fragments,
         and binary control frames without ValueError or premature disconnects.
         """
-        nonlocal last_user_speech_time
+        nonlocal last_user_speech_time, last_user_speech_end_time, agent_turn_yielded, user_has_responded
         try:
             while not stop_event.is_set():
                 raw = await websocket.receive()
@@ -662,14 +774,21 @@ async def voice_v2_endpoint(
                         if event_type == "audio" and f32_samples is not None:
                             rms = compute_rms(f32_samples)
                             if rms > 0.012:
+                                user_has_responded = True
                                 last_user_speech_time = time.time()
                                 detector.on_user_speech(last_user_speech_time)
-                                # Neural S2S model handles turn-taking naturally.
-                                # DO NOT send b"\x03\x02" to worker (upstream Moshi only accepts kind 1).
+                                if agent_turn_yielded:
+                                    agent_turn_yielded = False
+                                if current_agent_buffer:
+                                    commit_agent_turn()
+                                    agent_turn_yielded = False
                             for frame_24k in frames_24k:
+                                audio_recorder.record_inbound(frame_24k)
                                 await audio_frame_queue.put(frame_24k)
                         elif event_type == "interrupt":
                             logger.info(f"[VoiceSession {call_session_id}] User binary interrupt noted (handled locally)")
+                            commit_agent_turn()
+                            agent_turn_yielded = False
 
                 elif "text" in raw and raw["text"]:
                     try:
@@ -683,18 +802,36 @@ async def voice_v2_endpoint(
                             await websocket.send_json({"type": "pong", "time": time.time()})
                         elif mtype == "interrupt":
                             logger.info(f"[VoiceSession {call_session_id}] User JSON interrupt noted (handled locally)")
+                            commit_agent_turn()
+                            agent_turn_yielded = False
                         elif mtype in ("user_transcript", "transcript"):
                             user_text = msg_json.get("text", "").strip()
+                            is_final = bool(msg_json.get("is_final", True))
                             if user_text:
-                                commit_agent_turn()
-                                conversation_turns.append({
-                                    "role": "user",
-                                    "text": user_text,
-                                    "time_offset_sec": round(time.time() - call_start_time, 2),
-                                    "timestamp": time.time(),
-                                })
+                                user_has_responded = True
                                 last_user_speech_time = time.time()
+                                last_user_speech_end_time = time.time()
                                 detector.on_user_speech(last_user_speech_time)
+                                if agent_turn_yielded:
+                                    agent_turn_yielded = False
+                                commit_agent_turn()
+
+                                # Deduplicate partial turns: if preceding turn was user and unfinalized, update in place
+                                if conversation_turns and conversation_turns[-1].get("role") == "user" and not conversation_turns[-1].get("is_final", True):
+                                    conversation_turns[-1]["text"] = user_text
+                                    conversation_turns[-1]["is_final"] = is_final
+                                    conversation_turns[-1]["ended_ms"] = round((time.time() - call_start_time) * 1000.0, 1)
+                                else:
+                                    now_ms = (time.time() - call_start_time) * 1000.0
+                                    conversation_turns.append({
+                                        "role": "user",
+                                        "text": user_text,
+                                        "is_final": is_final,
+                                        "started_ms": round(now_ms, 1),
+                                        "ended_ms": round(now_ms, 1),
+                                        "time_offset_sec": round(time.time() - call_start_time, 2),
+                                        "timestamp": time.time(),
+                                    })
                         elif mtype == "client_info":
                             telemetry["client_audio_context_state"] = msg_json.get("audio_context_state", "unknown")
                     except json.JSONDecodeError:
@@ -727,17 +864,21 @@ async def voice_v2_endpoint(
             while not stop_event.is_set():
                 next_deadline += frame_interval
 
-                # Bound check: if audio_frame_queue > 2 frames (160ms), drop oldest frames to preserve real-time lockstep
+                # Bound check: allow up to 20 frames (1.6s) jitter buffer before dropping oldest frames
                 q_size = audio_frame_queue.qsize()
-                if q_size > 2:
+                if q_size > telemetry["performance"]["max_queue_depth"]:
+                    telemetry["performance"]["max_queue_depth"] = q_size
+
+                if q_size > 20:
                     dropped = 0
-                    while audio_frame_queue.qsize() > 2:
+                    while audio_frame_queue.qsize() > 10:
                         try:
                             audio_frame_queue.get_nowait()
                             dropped += 1
                         except asyncio.QueueEmpty:
                             break
                     if dropped > 0:
+                        telemetry["performance"]["dropped_frames"] += dropped
                         logger.warning(
                             f"[VoiceSession {call_session_id}] Audio queue backlog ({q_size} frames): "
                             f"dropped {dropped} oldest frames to preserve real-time lockstep"
@@ -766,6 +907,9 @@ async def voice_v2_endpoint(
                         pacer_frames_sent += 1
                         telemetry["traffic"]["gateway_to_worker"]["bytes"] += payload_bytes
                         telemetry["traffic"]["gateway_to_worker"]["frames"] += 1
+                    if cur_worker.last_frame_step_ms > 0:
+                        telemetry["performance"]["last_gpu_step_ms"] = cur_worker.last_frame_step_ms
+                        telemetry["performance"]["gpu_real_time_factor"] = round(cur_worker.last_frame_step_ms / 80.0, 3)
 
                 pacer_ticks += 1
                 if pacer_ticks % 50 == 0:  # Every ~4s
@@ -790,7 +934,7 @@ async def voice_v2_endpoint(
 
     async def worker_to_client_loop():
         nonlocal disconnect_reason, turn_counter, current_agent_turn_text, current_agent_turn_start
-        nonlocal first_agent_audio_emitted, ttfa_greeting_ms, last_agent_token_time
+        nonlocal first_agent_audio_emitted, ttfa_greeting_ms, last_agent_token_time, user_has_responded
         worker_audio_frame_count = 0
         decode_err_count = 0
         try:
@@ -810,6 +954,17 @@ async def voice_v2_endpoint(
 
                 elif opcode == 0x01:
                     # Audio payload from worker
+                    if initial_greeting_delivered and not user_has_responded:
+                        if (time.time() - call_stream_start) < 6.0:
+                            # Branded greeting is active; suppress early pretraining audio from worker
+                            continue
+                        else:
+                            user_has_responded = True
+
+                    if agent_turn_yielded:
+                        # Turn yielded to caller; suppress further assistant audio until user responds
+                        continue
+
                     last_agent_token_time = time.time()
                     worker_audio_frame_count += 1
                     payload = raw[1:]
@@ -874,13 +1029,31 @@ async def voice_v2_endpoint(
                                 first_audio_ms = round((time.time() - call_start_time) * 1000.0, 1)
                                 ttfa_greeting_ms = first_audio_ms
                                 telemetry["ttfa_greeting_ms"] = ttfa_greeting_ms
+                                telemetry["timing"]["ttfa_greeting_ms"] = ttfa_greeting_ms
                                 telemetry["first_audio_to_browser_ms"] = first_audio_ms
                                 logger.info(
                                     f"[VoiceSession {call_session_id}] FIRST AUDIBLE AUDIO EMITTED: "
                                     f"samples={len(pcm)}, rms={rms_val:.4f}, ttfa={ttfa_greeting_ms}ms"
                                 )
 
-                            resampled = out_resampler.resample_chunk(pcm, last=False)
+                            # Turn latency measurement: user speech end -> first agent audio of reply
+                            if last_user_speech_end_time > 0:
+                                t_lat = round((time.time() - last_user_speech_end_time) * 1000.0, 1)
+                                if 0 < t_lat < 10000.0:
+                                    turn_latencies.append(t_lat)
+                                    telemetry["timing"]["turn_latencies_ms"] = turn_latencies[-20:]
+                                    if len(turn_latencies) >= 2:
+                                        telemetry["timing"]["p50_turn_latency_ms"] = round(float(np.percentile(turn_latencies, 50)), 1)
+                                        telemetry["timing"]["p95_turn_latency_ms"] = round(float(np.percentile(turn_latencies, 95)), 1)
+                                last_user_speech_end_time = 0.0
+
+                            # Loudness normalization to -16 LUFS (speech RMS ~0.12) with AGC & soft limiting
+                            normalized_pcm = normalize_speech_loudness(pcm, target_rms=0.12)
+
+                            # Record assistant speech into dual-channel blackbox recorder (Channel 1)
+                            audio_recorder.record_outbound(normalized_pcm)
+
+                            resampled = out_resampler.resample_chunk(normalized_pcm, last=False)
                             clipped = soft_clip(resampled, threshold=0.92)
                             if codec == "g711_ulaw":
                                 pcm_bytes = encode_ulaw(clipped)
@@ -892,18 +1065,32 @@ async def voice_v2_endpoint(
 
                 elif opcode == 0x02:
                     # Text token
+                    if initial_greeting_delivered and not user_has_responded:
+                        if (time.time() - call_stream_start) < 6.0:
+                            # Branded greeting is active; suppress early pretraining text tokens from worker
+                            continue
+                        else:
+                            user_has_responded = True
+
+                    if agent_turn_yielded:
+                        # Suppress additional tokens if turn already yielded
+                        continue
+
                     last_agent_token_time = time.time()
                     token = raw[1:].decode("utf-8", errors="replace")
                     telemetry["tokens_received"] += 1
-                    if "first_token_ms" not in telemetry:
-                        telemetry["first_token_ms"] = round((time.time() - call_start_time) * 1000.0, 1)
-                        logger.info(f"[VoiceSession {call_session_id}] First text token received at {telemetry['first_token_ms']}ms: '{token}'")
+                    if "first_token_ms" not in telemetry or telemetry["timing"]["first_token_ms"] is None:
+                        t_tok = round((time.time() - call_start_time) * 1000.0, 1)
+                        telemetry["first_token_ms"] = t_tok
+                        telemetry["timing"]["first_token_ms"] = t_tok
+                        logger.info(f"[VoiceSession {call_session_id}] First text token received at {t_tok}ms: '{token}'")
 
                     if not current_agent_turn_text:
                         current_agent_turn_start = (time.time() - call_start_time) * 1000.0
                     current_agent_turn_text.append(token)
                     if not current_agent_buffer:
                         current_agent_start_ms = (time.time() - call_start_time) * 1000.0
+                        current_agent_turn_start_time = time.time()
                     current_agent_buffer.append(token)
 
                     # Stream text token to client as JSON transcript and forward raw frame
@@ -914,6 +1101,30 @@ async def voice_v2_endpoint(
                     })
                     if not is_pcm_client:
                         await websocket.send_bytes(raw)
+
+                    # Monologue Guard & Question Turn Yield
+                    current_stitched = detokenize_sentencepiece_stream(current_agent_buffer, agent_name=agent.name)
+                    current_words = current_stitched.split()
+                    turn_elapsed_sec = time.time() - current_agent_turn_start_time
+
+                    should_yield = False
+                    # A) If agent finishes a question ("?" with >= 4 words), yield immediately to caller
+                    if "?" in current_stitched and len(current_words) >= 4:
+                        should_yield = True
+                    # B) If agent exceeds 25 words or 11 seconds and reaches sentence boundary (. / ! / ?)
+                    elif (len(current_words) >= 25 or turn_elapsed_sec >= 11.0) and current_stitched.endswith((".", "!", "?")):
+                        should_yield = True
+                    # C) Hard cutoff at 12 seconds continuous speech
+                    elif turn_elapsed_sec >= 12.0 and len(current_words) >= 8:
+                        should_yield = True
+
+                    if should_yield:
+                        logger.info(
+                            f"[VoiceSession {call_session_id}] Monologue guard triggered: yielding turn to caller. "
+                            f"words={len(current_words)}, duration={turn_elapsed_sec:.1f}s, text='{current_stitched[-60:]}'"
+                        )
+                        commit_agent_turn()
+                        agent_turn_yielded = True
 
                     # Feed to EndOfCallDetector
                     matched = detector.on_agent_token(token, time.time())
@@ -1158,6 +1369,10 @@ async def voice_v2_endpoint(
     telemetry["close_reason"] = disconnect_reason
     telemetry["closed_by"] = "client" if ("client" in disconnect_reason or "user" in disconnect_reason) else "server"
 
+    # Finalize dual-channel session audio recording
+    rec_summary = audio_recorder.close()
+    telemetry["recording"] = rec_summary
+
     # Save complete conversation recording to JSON file
     convo_payload = {
         "session_id": call_session_id,
@@ -1175,6 +1390,7 @@ async def voice_v2_endpoint(
         "formatted_prompt": getattr(compiled, "formatted_prompt", getattr(compiled, "text", "")),
         "turns": conversation_turns,
         "telemetry": telemetry,
+        "recording_file": rec_summary.get("file_path"),
     }
     for dest_dir in (CONVERSATIONS_DIR, LOGS_CONVERSATIONS_DIR):
         try:
@@ -1190,7 +1406,7 @@ async def voice_v2_endpoint(
         async with session_factory() as db:
             call_svc = CallSessionService(db)
             if current_agent_turn_text:
-                full_turn_text = "".join(current_agent_turn_text).strip()
+                full_turn_text = detokenize_sentencepiece_stream(current_agent_turn_text).strip()
                 if full_turn_text:
                     await call_svc.add_turn(
                         session_id=call_session_id,

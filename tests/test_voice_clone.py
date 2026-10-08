@@ -143,3 +143,57 @@ def test_get_cloned_style(tmp_path):
     # Voice exists with only WAV artifact
     assert cloner.get_cloned_style(meta["id"]) is None
 
+
+def test_voice_cloning_blocks_public_figure(tmp_path):
+    cloner = VoiceCloner(data_dir=tmp_path)
+    sample_wav = _generate_synthetic_speech_sample(5.0)
+    with pytest.raises(VoiceCloningValidationError, match="strictly prohibited by safety policy"):
+        cloner.clone_voice(
+            audio_bytes=sample_wav,
+            voice_name="Donald Trump",
+            consent=True,
+        )
+
+
+def test_voice_cloning_multi_reference(tmp_path):
+    cloner = VoiceCloner(data_dir=tmp_path)
+    sample_1 = _generate_synthetic_speech_sample(5.0, f0=160.0)
+    sample_2 = _generate_synthetic_speech_sample(6.0, f0=170.0)
+
+    meta = cloner.clone_voice(
+        audio_bytes=[sample_1, sample_2],
+        voice_name="Multi Ref Voice",
+        consent=True,
+        consent_statement="I confirm permission to use both voice clips for authorized calling.",
+    )
+    assert meta["reference_count"] == 2
+    assert len(meta["reference_sha256_list"]) == 2
+    assert meta["qa_passed"] is False  # Pending QA
+
+
+def test_voice_cloning_qa_status_lifecycle(tmp_path):
+    cloner = VoiceCloner(data_dir=tmp_path)
+    sample_wav = _generate_synthetic_speech_sample(5.0)
+    meta = cloner.clone_voice(
+        audio_bytes=sample_wav,
+        voice_name="QA Lifecycle Voice",
+        consent=True,
+    )
+    v_id = meta["id"]
+
+    # Initially false
+    assert cloner.get_voice_metadata(v_id)["qa_passed"] is False
+
+    # Update QA status to PASS
+    updated = cloner.update_voice_qa_status(
+        voice_id=v_id,
+        qa_passed=True,
+        qa_score=0.82,
+        recommended_engine="personaplex_s2s",
+    )
+    assert updated is True
+    fresh_meta = cloner.get_voice_metadata(v_id)
+    assert fresh_meta["qa_passed"] is True
+    assert fresh_meta["qa_score"] == 0.82
+    assert fresh_meta["recommended_engine"] == "personaplex_s2s"
+

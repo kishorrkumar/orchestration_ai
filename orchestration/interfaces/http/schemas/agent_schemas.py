@@ -17,6 +17,9 @@ class VoicePresetResponse(BaseModel):
     is_cloned: bool = False
     preview_url: str | None = None
     duration_sec: float | None = None
+    qa_passed: bool | None = None
+    qa_score: float | None = None
+    recommended_engine: str | None = None
 
 
 class CreateAgentRequest(BaseModel):

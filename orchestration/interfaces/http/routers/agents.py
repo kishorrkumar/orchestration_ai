@@ -115,16 +115,21 @@ async def list_voice_presets() -> list[VoicePresetResponse]:
                     seen_ids.add(fpath.name)
                     stem = fpath.stem.replace("_", " ").title()
                     is_cloned = fpath.stem.startswith("cloned_") or "clone" in fpath.stem.lower()
+                    meta = default_voice_cloner.get_voice_metadata(fpath.stem) if is_cloned else None
                     presets.append(
                         VoicePresetResponse(
                             id=fpath.name,
-                            name=f"{stem} (Custom)",
-                            gender="custom",
-                            speaking_style="User conditioning reference",
+                            name=f"{stem} (Custom)" if not (meta and meta.get("name")) else f"{meta['name']} (Cloned)",
+                            gender=meta.get("gender", "custom") if meta else "custom",
+                            speaking_style="Cloned Neural Voice" if is_cloned else "User conditioning reference",
                             accent="Indian English" if "indian" in fpath.stem.lower() or "aarav" in fpath.stem.lower() else "Custom Reference",
                             recommended_for="Custom persona voice conditioning",
                             is_cloned=is_cloned,
                             preview_url=f"/v2/agents/voices/{fpath.name}/preview",
+                            duration_sec=meta.get("duration_sec") if meta else None,
+                            qa_passed=meta.get("qa_passed") if meta else None,
+                            qa_score=meta.get("qa_score") if meta else None,
+                            recommended_engine=meta.get("recommended_engine") if meta else None,
                         )
                     )
     return presets
@@ -135,11 +140,12 @@ async def clone_custom_voice(
     file: UploadFile = File(...),
     name: str = Form("My Voice"),
     consent: bool = Form(True),
+    consent_statement: str | None = Form(None),
     gender: str = Form(None),
 ) -> VoicePresetResponse:
     """
-    Clone a voice from recorded microphone audio or uploaded audio sample (3-30 seconds).
-    Validates quality, removes silence, normalizes loudness to -24 LUFS, and registers voice.
+    Clone a voice from recorded microphone audio or uploaded audio sample (3-60 seconds).
+    Enforces recorded consent statement, validates quality, normalizes loudness, and registers voice.
     """
     if not consent:
         raise HTTPException(status_code=400, detail="Voice cloning requires explicit user consent.")
@@ -153,6 +159,7 @@ async def clone_custom_voice(
             audio_bytes=content,
             voice_name=name.strip() or "My Voice",
             consent=consent,
+            consent_statement=consent_statement,
             preferred_gender=gender,
         )
     except VoiceCloningValidationError as val_err:
@@ -171,6 +178,9 @@ async def clone_custom_voice(
         is_cloned=True,
         preview_url=f"/v2/agents/voices/{meta['id']}/preview",
         duration_sec=meta.get("duration_sec"),
+        qa_passed=meta.get("qa_passed"),
+        qa_score=meta.get("qa_score"),
+        recommended_engine=meta.get("recommended_engine"),
     )
 
 

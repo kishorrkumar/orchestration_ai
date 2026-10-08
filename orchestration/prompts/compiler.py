@@ -359,7 +359,24 @@ def compile_prompt(
     clean_sys = re.sub(r"\{\{([a-zA-Z0-9_]+)\}\}", r"\1", clean_sys)
     clean_sys = clean_sys.replace("{{", "").replace("}}", "")
 
-    # 3. Just the system prompt - no artificial scripted commands or extra lines
+    # 3. Anchor Agent Identity and anti-leak rules for real-time S2S
+    eff_name = agent_name.strip() if agent_name else "Ananya"
+    # Remove Moshi default trigger phrase if present
+    clean_sys = re.sub(r"^You enjoy having (a )?good conversations?\.?\s*", "", clean_sys, flags=re.IGNORECASE)
+
+    # If the prompt does not establish agent identity, explicitly anchor it
+    if eff_name.lower() not in clean_sys.lower():
+        identity_prefix = (
+            f"You are {eff_name}, a friendly sales rep at Snapserve. "
+            f"Your name is {eff_name}. You represent Snapserve. You are NEVER Moshi. "
+            "Speak casually in 1-2 short sentences. Acknowledge before asking ('Got it', 'Makes sense'). "
+            "Ask ONE question at a time. Never repeat questions you already asked.\n"
+        )
+        clean_sys = identity_prefix + clean_sys
+    else:
+        # Reinforce anti-Moshi identity boundary
+        clean_sys = f"You are {eff_name} at Snapserve, never Moshi.\n" + clean_sys
+
     compiled_body = clean_sys.strip()
     final_prompt = wrap_system_prompt(compiled_body)
 

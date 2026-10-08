@@ -116,13 +116,53 @@ class PersonaPlexWorkerClient:
         voice = persona.get_normalized_voice_prompt()
         if not voice.endswith(".pt") and not voice.endswith(".wav"):
             voice = f"{voice}.pt"
-        if voice not in OFFICIAL_VOICE_PRESETS and not voice.endswith(".wav"):
-            logger.warning(f"Voice preset '{voice}' is not an official PersonaPlex preset. Falling back to 'NATF2.pt'")
-            voice = "NATF2.pt"
+
+        # Check if the requested voice is an official preset or an existing valid .pt file
+        is_official = voice in OFFICIAL_VOICE_PRESETS
+        valid_pt_on_disk = False
+
+        if not is_official:
+            stem = voice.replace(".wav", "").replace(".pt", "")
+            candidate_pt_paths = [
+                os.path.join("voices", f"{stem}.pt"),
+                os.path.join("/workspace/voices", f"{stem}.pt"),
+                os.path.join("/workspace/orchestration_ai/voices", f"{stem}.pt"),
+            ]
+            hf_h = os.environ.get("HF_HOME")
+            if hf_h:
+                candidate_pt_paths.append(os.path.join(hf_h, "voices", f"{stem}.pt"))
+
+            for cp in candidate_pt_paths:
+                if os.path.exists(cp) and os.path.getsize(cp) > 1024:
+                    try:
+                        with open(cp, "rb") as f:
+                            header = f.read(4)
+                        # Valid PyTorch files are zip archives (b'PK\x03\x04') or pickles (b'\x80\x02'..)
+                        # They are NEVER WAV files (b'RIFF')
+                        if header != b"RIFF":
+                            valid_pt_on_disk = True
+                            voice = f"{stem}.pt"
+                            break
+                    except Exception:
+                        pass
+
+        if not is_official and not valid_pt_on_disk:
+            # Map cloned voice to closest official preset so PersonaPlex S2S worker never crashes
+            # Check gender preference from persona or cloned voice metadata
+            is_female = "female" in getattr(persona, "gender", "").lower()
+            if not is_female and hasattr(persona, "name"):
+                name_l = persona.name.lower()
+                if any(fn in name_l for fn in ("ananya", "priya", "sarah", "emma", "maria")):
+                    is_female = True
+
+            fallback = "NATF0.pt" if is_female else "NATM1.pt"
+            logger.info(
+                f"[VOICE ROUTING] Cloned voice profile '{voice}' mapped to base S2S preset '{fallback}' "
+                f"for PersonaPlex full-duplex session."
+            )
+            voice = fallback
 
         # Upstream moshi.server accepts ONLY text_prompt, voice_prompt, etc.
-        # Upstream moshi/server.py line 171 has a known bug: `request["seed"]` instead of `request.query["seed"]`,
-        # which raises KeyError in aiohttp if seed is present in the query string.
         query_params = {
             "text_prompt": clean_prompt,
             "voice_prompt": voice,
@@ -148,7 +188,7 @@ class PersonaPlexWorkerClient:
         url = self.build_url(persona)
 
         # Fresh Opus codecs per session to guarantee valid Ogg container headers
-        allow_raw_pcm = os.environ.get("WORKER_ALLOW_RAW_PCM", "0") == "1"
+        allow_raw_pcm = os.environ.get("WORKER_ALLOW_RAW_PCM", "0").lower() in ("1", "true", "yes")
         try:
             import sphn
             self._opus_writer = sphn.OpusStreamWriter(self.sample_rate)
@@ -171,7 +211,7 @@ class PersonaPlexWorkerClient:
                     "Fail-fast triggered to prevent sending raw PCM to Opus-only worker."
                 )
                 raise WorkerConnectionError(
-                    f"sphn library is required for PersonaPlex Opus audio streaming, but import failed: {e}. "
+                    f"Worker {self.worker_id}: sphn library is required for PersonaPlex Opus audio streaming, but import failed: {e}. "
                     "Install sphn (`pip install sphn`) or run inside the Linux environment. "
                     "For unit tests only, set WORKER_ALLOW_RAW_PCM=1."
                 ) from e
@@ -280,6 +320,10 @@ class PersonaPlexWorkerClient:
             async for raw in self._ws:
                 if isinstance(raw, bytes):
                     self.frames_received += 1
+                    now = time.perf_counter()
+                    if self._last_frame_recv_time > 0:
+                        self.last_frame_step_ms = round((now - self._last_frame_recv_time) * 1000, 2)
+                    self._last_frame_recv_time = now
                     yield raw
         except websockets.ConnectionClosedOK:
             logger.info(f"Worker {self.worker_id} connection closed cleanly (1000 OK)")
