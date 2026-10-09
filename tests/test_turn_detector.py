@@ -105,3 +105,21 @@ def test_turn_detector_extension_and_merge():
 
     # Merged audio contains both Part 1 and Part 2 frames!
     assert len(merged_audio) >= len(audio1) + (2 * 1920)
+
+
+def test_end_of_call_detector_on_user_speech_end():
+    """Verify that on_user_speech_end resets silence timer and does not throw AttributeError."""
+    from orchestration.pipeline.end_detector import EndOfCallDetector
+
+    detector = EndOfCallDetector(silence_timeout_sec=5.0)
+    t0 = 100.0
+    detector.start_session(t0)
+
+    # User finishes speaking at t0 + 4.0
+    detector.on_user_speech_end(t0 + 4.0)
+
+    # At t0 + 7.0 (3s after speech end), silence timeout should NOT trigger (threshold is 5s)
+    assert detector.check_termination(t0 + 7.0) is None
+
+    # At t0 + 9.5 (5.5s after speech end), silence timeout triggers
+    assert detector.check_termination(t0 + 9.5) == "silence_timeout"

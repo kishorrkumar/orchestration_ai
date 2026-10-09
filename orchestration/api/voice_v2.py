@@ -599,7 +599,8 @@ async def voice_v2_endpoint(
     def trigger_stop(reason: str):
         nonlocal disconnect_reason
         logger.warning(f"[VoiceSession {call_session_id}] Triggering voice session stop: {reason}")
-        disconnect_reason = reason
+        if disconnect_reason == "normal":
+            disconnect_reason = reason
         stop_event.set()
 
     turn_counter = 0
@@ -771,35 +772,38 @@ async def voice_v2_endpoint(
                             commit_agent_turn()
                             agent_turn_yielded = False
                         elif mtype in ("user_transcript", "transcript"):
-                            user_text = msg_json.get("text", "").strip()
-                            is_final = bool(msg_json.get("is_final", True))
-                            if user_text:
-                                user_has_responded = True
-                                last_user_speech_time = time.time()
-                                last_user_speech_end_time = time.time()
-                                detector.on_user_speech(last_user_speech_time)
-                                if is_final:
-                                    detector.on_user_speech_end(last_user_speech_end_time)
-                                if agent_turn_yielded:
-                                    agent_turn_yielded = False
-                                commit_agent_turn()
+                            try:
+                                user_text = msg_json.get("text", "").strip()
+                                is_final = bool(msg_json.get("is_final", True))
+                                if user_text:
+                                    user_has_responded = True
+                                    last_user_speech_time = time.time()
+                                    last_user_speech_end_time = time.time()
+                                    detector.on_user_speech(last_user_speech_time)
+                                    if is_final and hasattr(detector, "on_user_speech_end"):
+                                        detector.on_user_speech_end(last_user_speech_end_time)
+                                    if agent_turn_yielded:
+                                        agent_turn_yielded = False
+                                    commit_agent_turn()
 
-                                # Deduplicate partial turns: if preceding turn was user and unfinalized, update in place
-                                if conversation_turns and conversation_turns[-1].get("role") == "user" and not conversation_turns[-1].get("is_final", True):
-                                    conversation_turns[-1]["text"] = user_text
-                                    conversation_turns[-1]["is_final"] = is_final
-                                    conversation_turns[-1]["ended_ms"] = round((time.time() - call_start_time) * 1000.0, 1)
-                                else:
-                                    now_ms = (time.time() - call_start_time) * 1000.0
-                                    conversation_turns.append({
-                                        "role": "user",
-                                        "text": user_text,
-                                        "is_final": is_final,
-                                        "started_ms": round(now_ms, 1),
-                                        "ended_ms": round(now_ms, 1),
-                                        "time_offset_sec": round(time.time() - call_start_time, 2),
-                                        "timestamp": time.time(),
-                                    })
+                                    # Deduplicate partial turns: if preceding turn was user and unfinalized, update in place
+                                    if conversation_turns and conversation_turns[-1].get("role") == "user" and not conversation_turns[-1].get("is_final", True):
+                                        conversation_turns[-1]["text"] = user_text
+                                        conversation_turns[-1]["is_final"] = is_final
+                                        conversation_turns[-1]["ended_ms"] = round((time.time() - call_start_time) * 1000.0, 1)
+                                    else:
+                                        now_ms = (time.time() - call_start_time) * 1000.0
+                                        conversation_turns.append({
+                                            "role": "user",
+                                            "text": user_text,
+                                            "is_final": is_final,
+                                            "started_ms": round(now_ms, 1),
+                                            "ended_ms": round(now_ms, 1),
+                                            "time_offset_sec": round(time.time() - call_start_time, 2),
+                                            "timestamp": time.time(),
+                                        })
+                            except Exception as text_err:
+                                logger.warning(f"[VoiceSession {call_session_id}] Transcript processing warning: {text_err}")
                         elif mtype == "client_info":
                             telemetry["client_audio_context_state"] = msg_json.get("audio_context_state", "unknown")
                     except json.JSONDecodeError:
@@ -1401,7 +1405,8 @@ async def voice_v2_endpoint(
         close_code = status.WS_1000_NORMAL_CLOSURE
         if "exc" in disconnect_reason or "fail" in disconnect_reason or "worker_stream_ended" in disconnect_reason:
             close_code = status.WS_1011_INTERNAL_ERROR
-        await websocket.close(code=close_code)
+        clean_reason = str(disconnect_reason).replace("\n", " ")[:120]
+        await websocket.close(code=close_code, reason=clean_reason)
     except Exception:
         pass
 

@@ -300,7 +300,7 @@ export const TestCallModal: React.FC<TestCallModalProps> = ({ agent, onClose }) 
           if (!isCleanedUp) {
             if (e.code !== 1000 && e.code !== 1001 && e.code !== 1005) {
               setErrorMessage(
-                (prev) => prev || e.reason || `Server disconnected (code ${e.code})`
+                (prev) => prev || (e.reason ? `Server error: ${e.reason} (code ${e.code})` : `Server disconnected (code ${e.code})`)
               )
               setCallStatus('error')
             } else {
@@ -685,7 +685,7 @@ export const TestCallModal: React.FC<TestCallModalProps> = ({ agent, onClose }) 
             </div>
             <AudioIndicator rms={speakerRms} isSpeaking={speakerRms > 0.015} isListening={false} size={36} />
             <span className="text-[10px] font-mono text-[#8C8980]">
-              {isAgentSpeaking ? `${Math.round(speakerRms * 100)}%` : 'SILENT'}
+              {isAgentSpeaking || speakerRms > 0.015 ? `${Math.round(speakerRms * 100)}%` : 'SILENT'}
             </span>
           </div>
         </div>

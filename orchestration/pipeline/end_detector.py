@@ -164,6 +164,13 @@ class EndOfCallDetector:
 
         return canceled
 
+    def on_user_speech_end(self, now: float) -> None:
+        """
+        Called when the user finishes speaking (speech ended / final transcript received).
+        Resets silence timer to prevent premature silence timeout.
+        """
+        self.last_speech_time = now
+
     def check_termination(self, now: float) -> str | None:
         """
         Polls termination status.
