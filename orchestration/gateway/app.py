@@ -961,6 +961,22 @@ def create_app(
     frontend_dist = Path(__file__).resolve().parent.parent.parent / "frontend" / "dist"
     if (frontend_dist / "index.html").exists():
         assets_dir = frontend_dist / "assets"
+
+        @app.get("/assets/{asset_name}", include_in_schema=False)
+        async def serve_asset_with_fallback(asset_name: str):
+            target = assets_dir / asset_name
+            if target.exists() and target.is_file():
+                media = "application/javascript" if target.suffix == ".js" else ("text/css" if target.suffix == ".css" else None)
+                return FileResponse(str(target), media_type=media)
+            # Resilient fallback: if an older bundle JS/CSS was requested by a cached browser, serve the active bundle
+            if asset_name.endswith(".js"):
+                for js_file in sorted(assets_dir.glob("index-*.js")):
+                    return FileResponse(str(js_file), media_type="application/javascript")
+            if asset_name.endswith(".css"):
+                for css_file in sorted(assets_dir.glob("index-*.css")):
+                    return FileResponse(str(css_file), media_type="text/css")
+            raise HTTPException(status_code=404, detail="Asset not found")
+
         if assets_dir.exists():
             app.mount("/assets", StaticFiles(directory=str(assets_dir)), name="assets")
 
@@ -992,7 +1008,14 @@ def create_app(
         @app.get("/design-system", response_class=FileResponse, tags=["UI"])
         @app.get("/providers", response_class=FileResponse, tags=["UI"])
         async def react_app():
-            return FileResponse(str(frontend_dist / "index.html"))
+            return FileResponse(
+                str(frontend_dist / "index.html"),
+                headers={
+                    "Cache-Control": "no-cache, no-store, must-revalidate",
+                    "Pragma": "no-cache",
+                    "Expires": "0",
+                },
+            )
     else:
         @app.get("/", response_class=HTMLResponse, tags=["UI"])
         async def root_redirect():
