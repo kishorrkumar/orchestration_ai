@@ -70,12 +70,21 @@ class AudioCaptureProcessor extends AudioWorkletProcessor {
       }
     }
 
-    // Drain fixed-size 320-sample frames (640 bytes PCM16)
+    // Drain fixed-size 320-sample frames (640 bytes PCM16) with adaptive speech gain boost
     while (this.buffer.length >= this.frameSize) {
       const chunk = this.buffer.splice(0, this.frameSize);
+      let chunkSq = 0;
+      for (let i = 0; i < this.frameSize; i++) {
+        chunkSq += chunk[i] * chunk[i];
+      }
+      const cRms = Math.sqrt(chunkSq / this.frameSize);
+      // Adaptive software gain: boost soft speech smoothly up to 3.5x
+      const boost = cRms > 0.0015 && cRms < 0.035 ? Math.min(3.5, 0.035 / cRms) : 1.0;
+
       const pcm16 = new Int16Array(this.frameSize);
       for (let i = 0; i < this.frameSize; i++) {
-        const s = Math.max(-1.0, Math.min(1.0, chunk[i]));
+        const val = chunk[i] * boost;
+        const s = Math.max(-0.98, Math.min(0.98, val));
         pcm16[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
       }
       this.port.postMessage({ type: 'pcm16', data: pcm16.buffer }, [pcm16.buffer]);
@@ -329,8 +338,8 @@ export const TestCallModal: React.FC<TestCallModalProps> = ({ agent, onClose }) 
           if (data.type === 'mic_rms') {
             setMicRms((prev) => prev * 0.7 + data.rms * 0.3)
 
-            // Interruption & Barge-in detection
-            if (data.rms > 0.035) {
+            // Interruption & Barge-in detection (responsive threshold)
+            if (data.rms > 0.012) {
               userSpeechConsecutive++
               // Re-sync playback cursor to current audio context time to prevent turn delay buildup
               nextPlayTimeRef.current = audioCtx.currentTime

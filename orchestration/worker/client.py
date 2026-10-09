@@ -164,6 +164,7 @@ class PersonaPlexWorkerClient:
                     candidate_pt_paths.append(os.path.join(hf_h, "voices", f"{stem}.pt"))
                     candidate_wav_paths.append(os.path.join(hf_h, "voices", f"{stem}.wav"))
 
+                found_pt_path = None
                 for cp in candidate_pt_paths:
                     if os.path.exists(cp) and os.path.getsize(cp) > 1024:
                         try:
@@ -171,6 +172,7 @@ class PersonaPlexWorkerClient:
                                 header = f.read(4)
                             if header != b"RIFF":
                                 valid_pt_on_disk = True
+                                found_pt_path = cp
                                 voice = f"{stem}.pt"
                                 break
                         except Exception:
@@ -184,8 +186,10 @@ class PersonaPlexWorkerClient:
                             voice = f"{stem}.wav"
                             break
 
-            # Mirror the valid WAV to all worker directories so Moshi finds it inside --voice-prompt-dir
-            if valid_wav_on_disk and found_wav_path:
+            # Mirror the valid artifact (.pt or .wav) to all worker directories so Moshi finds it inside --voice-prompt-dir
+            found_artifact_path = found_pt_path if valid_pt_on_disk else found_wav_path
+            artifact_ext = ".pt" if valid_pt_on_disk else ".wav"
+            if found_artifact_path:
                 target_dirs = [
                     "voices",
                     "/workspace/voices",
@@ -201,9 +205,9 @@ class PersonaPlexWorkerClient:
                 for tdir in target_dirs:
                     try:
                         if os.path.isdir(tdir):
-                            dest = os.path.join(tdir, f"{stem}.wav")
-                            if not os.path.exists(dest) or os.path.getsize(dest) != os.path.getsize(found_wav_path):
-                                shutil.copy2(found_wav_path, dest)
+                            dest = os.path.join(tdir, f"{stem}{artifact_ext}")
+                            if not os.path.exists(dest) or os.path.getsize(dest) != os.path.getsize(found_artifact_path):
+                                shutil.copy2(found_artifact_path, dest)
                     except Exception:
                         pass
 

@@ -293,15 +293,22 @@ async def voice_v2_endpoint(
     clean_stem = raw_v.replace(".pt", "").replace(".wav", "")
 
     matched_voice = None
-    # 1. Direct check against VoiceCloner artifacts
-    if default_voice_cloner.has_voice(clean_stem) or default_voice_cloner.get_voice_path(clean_stem):
+    # 1. Direct check against VoiceCloner artifacts - prefer .pt embeddings for instant (<100ms) priming!
+    v_path = default_voice_cloner.get_voice_path(clean_stem)
+    if v_path and v_path.suffix == ".pt":
+        matched_voice = f"{clean_stem}.pt"
+    elif f"{clean_stem}.pt" in available_voices:
+        matched_voice = f"{clean_stem}.pt"
+    elif v_path and v_path.with_suffix(".pt").exists():
+        matched_voice = f"{clean_stem}.pt"
+    elif default_voice_cloner.has_voice(clean_stem) or v_path:
         matched_voice = f"{clean_stem}.wav"
     elif raw_v in available_voices:
         matched_voice = raw_v
-    elif f"{raw_v}.wav" in available_voices:
-        matched_voice = f"{raw_v}.wav"
     elif f"{raw_v}.pt" in available_voices:
         matched_voice = f"{raw_v}.pt"
+    elif f"{raw_v}.wav" in available_voices:
+        matched_voice = f"{raw_v}.wav"
     elif raw_v.endswith(".pt") and raw_v.replace(".pt", ".wav") in available_voices:
         matched_voice = raw_v.replace(".pt", ".wav")
     elif raw_v.endswith(".wav") and raw_v.replace(".wav", ".pt") in available_voices:
@@ -720,7 +727,7 @@ async def voice_v2_endpoint(
                         event_type, frames_24k, f32_samples = inbound_processor.process_frame(data)
                         if event_type == "audio" and f32_samples is not None:
                             rms = compute_rms(f32_samples)
-                            if rms > 0.012:
+                            if rms > 0.0025:
                                 user_has_responded = True
                                 last_user_speech_time = time.time()
                                 detector.on_user_speech(last_user_speech_time)
@@ -729,9 +736,21 @@ async def voice_v2_endpoint(
                                 if current_agent_buffer:
                                     commit_agent_turn()
                                     agent_turn_yielded = False
+
+                            # Inbound Speech AGC: boost soft speech so Mimi reliably encodes speech codebooks
+                            if rms > 0.0015:
+                                # Target nominal conversational speech (~0.04 RMS) with soft clipping limit
+                                gain_boost = min(6.0, max(1.0, 0.04 / max(rms, 0.004)))
+                            else:
+                                gain_boost = 1.0
+
                             for frame_24k in frames_24k:
-                                audio_recorder.record_inbound(frame_24k)
-                                await audio_frame_queue.put(frame_24k)
+                                if gain_boost > 1.0:
+                                    boosted_frame = np.clip(frame_24k * gain_boost, -0.98, 0.98).astype(np.float32)
+                                else:
+                                    boosted_frame = frame_24k
+                                audio_recorder.record_inbound(boosted_frame)
+                                await audio_frame_queue.put(boosted_frame)
                         elif event_type == "interrupt":
                             logger.info(f"[VoiceSession {call_session_id}] User binary interrupt noted (handled locally)")
                             commit_agent_turn()
@@ -759,6 +778,8 @@ async def voice_v2_endpoint(
                                 last_user_speech_time = time.time()
                                 last_user_speech_end_time = time.time()
                                 detector.on_user_speech(last_user_speech_time)
+                                if is_final:
+                                    detector.on_user_speech_end(last_user_speech_end_time)
                                 if agent_turn_yielded:
                                     agent_turn_yielded = False
                                 commit_agent_turn()

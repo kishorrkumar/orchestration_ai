@@ -473,15 +473,15 @@ class VoiceCloner:
         # Silence trimming
         trimmed = self._trim_silence(selected_audio, 24000)
 
-        # Optimal length selection for PersonaPlex (5 - 12 seconds)
-        target_samples = int(24000 * 10.0)
+        # Optimal length selection for PersonaPlex (5.0s conditioning window for low priming latency & sharp acoustic formants)
+        target_samples = int(24000 * 5.0)
         if len(trimmed) > target_samples:
             trimmed = trimmed[:target_samples]
         elif len(trimmed) < int(24000 * 4.0):
             trimmed = selected_audio[:target_samples]
 
-        # Normalize to -24 LUFS
-        final_audio = self._normalize_loudness(trimmed, target_lufs=-24.0)
+        # Normalize to -22 LUFS (optimal energy for PersonaPlex conditioning)
+        final_audio = self._normalize_loudness(trimmed, target_lufs=-22.0)
 
         # Generate unique voice ID
         clean_name = "".join(c for c in voice_name if c.isalnum() or c in ("-", "_")).lower()
