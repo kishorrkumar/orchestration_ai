@@ -838,7 +838,11 @@ export const AgentEditorView: React.FC<AgentEditorViewProps> = ({
                   {voices
                     .filter((v) => v.is_cloned)
                     .map((v) => {
-                      const isSelected = voiceId === v.id
+                      const isSelected =
+                        voiceId === v.id ||
+                        voiceId === v.id.replace(/\.(wav|pt)$/i, '') ||
+                        v.id === `${voiceId}.wav` ||
+                        v.id === `${voiceId}.pt`
                       const isPlaying = playingVoiceId === v.id
                       return (
                         <div
@@ -914,7 +918,11 @@ export const AgentEditorView: React.FC<AgentEditorViewProps> = ({
                 {voices
                   .filter((v) => !v.is_cloned)
                   .map((v) => {
-                    const isSelected = voiceId === v.id
+                    const isSelected =
+                      voiceId === v.id ||
+                      voiceId === v.id.replace(/\.(wav|pt)$/i, '') ||
+                      v.id === `${voiceId}.wav` ||
+                      v.id === `${voiceId}.pt`
                     return (
                       <button
                         key={v.id}
@@ -966,6 +974,28 @@ export const AgentEditorView: React.FC<AgentEditorViewProps> = ({
                 </button>
               )}
             </div>
+
+            {/* Cloned Voice Switcher Banner */}
+            {voices.some((v) => v.is_cloned) && (
+              <div className="p-3 bg-[#FBEFEA] border border-[rgba(194,96,63,0.25)] rounded-xl flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div className="text-[12px] text-[#6B6963]">
+                  <span className="font-semibold text-[#1F1E1D] flex items-center gap-1.5 mb-0.5">
+                    <Sparkles className="w-3.5 h-3.5 text-[#C2603F]" />
+                    Looking for your cloned voice ({voices.find((v) => v.is_cloned)?.name || 'Custom Voice'})?
+                  </span>
+                  Cloned neural voices run directly on the low-latency <strong>PersonaPlex S2S (GPU)</strong> architecture.
+                </div>
+                <Button
+                  type="button"
+                  variant="primary"
+                  size="compact"
+                  onClick={() => setEngine('personaplex_s2s')}
+                  className="shrink-0 self-start sm:self-auto bg-[#C2603F] hover:bg-[#A84F32] text-white"
+                >
+                  Switch to PersonaPlex S2S
+                </Button>
+              </div>
+            )}
 
             {/* Language & Indian English Rules Toggle */}
             <div className="space-y-3">

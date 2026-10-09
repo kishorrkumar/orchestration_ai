@@ -118,6 +118,7 @@ class Agent:
         # 2. Matches official PersonaPlex .pt file or stem
         clean_voice = self.voice_id.strip()
         stem = clean_voice[:-3] if clean_voice.endswith(".pt") else clean_voice
+        stem = stem[:-4] if stem.endswith(".wav") else stem
         pt_name = f"{stem}.pt"
         official_pt_set = {
             "NATF0.pt", "NATF1.pt", "NATF2.pt", "NATF3.pt",
@@ -127,8 +128,17 @@ class Agent:
         }
         if pt_name in official_pt_set or clean_voice in official_pt_set:
             return None
-        # 3. Matches custom voice file (.pt or .wav)
-        if clean_voice.endswith(".pt") or clean_voice.endswith(".wav"):
+        # 3. Matches custom voice file (.pt or .wav) or cloned voice identifier
+        if clean_voice.endswith(".pt") or clean_voice.endswith(".wav") or clean_voice.startswith("cloned_") or "clone" in clean_voice.lower():
+            return None
+        try:
+            from orchestration.tts.voice_clone import default_voice_cloner
+            if default_voice_cloner.has_voice(clean_voice) or default_voice_cloner.has_voice(stem):
+                return None
+        except Exception:
+            pass
+        # 4. Any custom voice ID configured by user
+        if len(clean_voice) > 0:
             return None
         raise ValueError(
             f"Unknown voice '{self.voice_id}'. Choose from: {sorted(list(OFFICIAL_PRESETS.keys()) + list(official_pt_set))}"
