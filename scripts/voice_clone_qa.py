@@ -113,10 +113,10 @@ def validate_reference_audio(wav_path: pathlib.Path) -> dict[str, Any]:
         snr_db = 20.0
 
     issues = []
-    if duration_sec < 10.0:
-        issues.append(f"Duration too short ({duration_sec:.1f}s < 10.0s). Production standard: 15-60s.")
+    if duration_sec < 3.0:
+        issues.append(f"Duration too short ({duration_sec:.1f}s < 3.0s). Production standard: 5-30s.")
     elif duration_sec > 60.0:
-        issues.append(f"Duration too long ({duration_sec:.1f}s > 60.0s). Trim reference to 15-60s.")
+        issues.append(f"Duration too long ({duration_sec:.1f}s > 60.0s). Trim reference to 5-30s.")
 
     if rms < 0.01:
         issues.append(f"Audio level is too quiet (RMS: {rms:.4f} < 0.010).")

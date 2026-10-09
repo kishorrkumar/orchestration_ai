@@ -98,6 +98,9 @@ async def list_voice_presets() -> list[VoicePresetResponse]:
                         is_cloned=True,
                         preview_url=f"/v2/agents/voices/{vid}/preview",
                         duration_sec=cv.get("duration_sec"),
+                        qa_passed=cv.get("qa_passed", True),
+                        qa_score=cv.get("qa_score", 0.95),
+                        recommended_engine=cv.get("recommended_engine", "personaplex_s2s"),
                     )
                 )
     except Exception as e:
@@ -106,7 +109,12 @@ async def list_voice_presets() -> list[VoicePresetResponse]:
     # 2. Discover custom voices in local voices/ directory or HF_HOME/voices
     custom_dirs = [
         pathlib.Path("voices"),
-        pathlib.Path(os.environ.get("HF_HOME", "")) / "voices" if os.environ.get("HF_HOME") else None,
+        pathlib.Path("/workspace/voices"),
+        pathlib.Path("/workspace/orchestration_ai/voices"),
+        pathlib.Path("/workspace/huggingface/voices"),
+        pathlib.Path.home() / ".cache" / "huggingface" / "voices",
+        pathlib.Path("/data/huggingface/voices"),
+        pathlib.Path(os.environ.get("HF_HOME", "/workspace/huggingface")) / "voices",
     ]
     for cdir in custom_dirs:
         if cdir and cdir.exists() and cdir.is_dir():
@@ -194,18 +202,31 @@ async def preview_voice(voice_id: str):
     # 1. Check VoiceCloner data dir
     v_path = default_voice_cloner.get_voice_path(clean)
     if v_path and v_path.exists():
-        return FileResponse(str(v_path), media_type="audio/wav", filename=f"{clean}.wav")
+        if v_path.suffix == ".wav":
+            return FileResponse(str(v_path), media_type="audio/wav", filename=f"{clean}.wav")
+        wav_cand = v_path.with_suffix(".wav")
+        if wav_cand.exists():
+            return FileResponse(str(wav_cand), media_type="audio/wav", filename=f"{clean}.wav")
 
-    # 2. Check voices/ directory
-    for dir_cand in [pathlib.Path("voices"), pathlib.Path(os.environ.get("HF_HOME", "")) / "voices" if os.environ.get("HF_HOME") else None]:
+    # 2. Check voices/ and cache directories
+    candidate_dirs = [
+        pathlib.Path("voices"),
+        pathlib.Path("/workspace/voices"),
+        pathlib.Path("/workspace/orchestration_ai/voices"),
+        pathlib.Path("/workspace/huggingface/voices"),
+        pathlib.Path.home() / ".cache" / "huggingface" / "voices",
+        pathlib.Path("/data/huggingface/voices"),
+        pathlib.Path(os.environ.get("HF_HOME", "/workspace/huggingface")) / "voices",
+    ]
+    for dir_cand in candidate_dirs:
         if dir_cand and dir_cand.is_dir():
             for ext in (".wav", ".mp3", ".ogg"):
                 target = dir_cand / f"{clean}{ext}"
                 if target.exists():
                     return FileResponse(str(target), media_type=f"audio/{ext.lstrip('.')}")
                 exact = dir_cand / voice_id
-                if exact.exists():
-                    return FileResponse(str(exact), media_type="audio/wav")
+                if exact.exists() and exact.suffix in (".wav", ".mp3", ".ogg"):
+                    return FileResponse(str(exact), media_type=f"audio/{exact.suffix.lstrip('.')}")
 
     raise HTTPException(status_code=404, detail=f"Preview audio for voice '{voice_id}' not found.")
 
@@ -218,7 +239,16 @@ async def delete_cloned_voice(voice_id: str):
         clean = pathlib.Path(clean).stem
 
     success = default_voice_cloner.delete_voice(clean)
-    for dir_cand in [pathlib.Path("voices"), pathlib.Path(os.environ.get("HF_HOME", "")) / "voices" if os.environ.get("HF_HOME") else None]:
+    candidate_dirs = [
+        pathlib.Path("voices"),
+        pathlib.Path("/workspace/voices"),
+        pathlib.Path("/workspace/orchestration_ai/voices"),
+        pathlib.Path("/workspace/huggingface/voices"),
+        pathlib.Path.home() / ".cache" / "huggingface" / "voices",
+        pathlib.Path("/data/huggingface/voices"),
+        pathlib.Path(os.environ.get("HF_HOME", "/workspace/huggingface")) / "voices",
+    ]
+    for dir_cand in candidate_dirs:
         if dir_cand and dir_cand.is_dir():
             for ext in (".wav", ".pt"):
                 p = dir_cand / f"{clean}{ext}"

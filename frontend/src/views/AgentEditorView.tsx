@@ -484,6 +484,7 @@ export const AgentEditorView: React.FC<AgentEditorViewProps> = ({
 
   const tokenCount = compileResult?.token_count ?? 0
   const isEngineB = engine === 'cascaded_cloud'
+  const effectiveVoiceId = isEngineB ? ttsVoice : voiceId
   // On Engine B, 350-token hard limit is relaxed; on Engine A, it is strictly enforced
   const canPublish = !isNew && (isEngineB ? name.trim().length > 0 : (tokenCount > 0 && tokenCount <= 350))
 
@@ -549,7 +550,7 @@ export const AgentEditorView: React.FC<AgentEditorViewProps> = ({
                 variant="primary"
                 size="regular"
                 leftIcon={<Phone className="w-4 h-4" />}
-                onClick={() => onStartCall(agent)}
+                onClick={() => onStartCall({ ...agent, voice_id: effectiveVoiceId, engine: engine })}
               >
                 Test Call
               </Button>
@@ -858,17 +859,17 @@ export const AgentEditorView: React.FC<AgentEditorViewProps> = ({
                               {v.qa_score !== undefined && v.qa_score !== null ? (
                                 <span
                                   className={`text-[9px] px-1.5 py-0.5 rounded-full font-mono font-medium ${
-                                    v.qa_passed
+                                    v.qa_passed !== false
                                       ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
                                       : 'bg-amber-50 text-amber-700 border border-amber-200'
                                   }`}
-                                  title={`Acoustic similarity: ${v.qa_score}. Route: ${v.recommended_engine || 'cascaded'}`}
+                                  title={`Acoustic similarity: ${v.qa_score}. Route: ${v.recommended_engine || 'PersonaPlex S2S'}`}
                                 >
-                                  {v.qa_passed ? `QA ${v.qa_score}` : `Route: Cascaded`}
+                                  {v.qa_passed !== false ? `QA ${v.qa_score}` : (v.recommended_engine === 'cascaded' ? 'Cascaded' : 'S2S')}
                                 </span>
                               ) : (
-                                <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-stone-100 text-stone-600 font-mono">
-                                  Cascaded
+                                <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200 font-mono">
+                                  PersonaPlex S2S
                                 </span>
                               )}
                               <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-[#C2603F]/10 text-[#C2603F] font-medium shrink-0">

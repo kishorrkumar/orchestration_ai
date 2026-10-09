@@ -37,8 +37,11 @@ def get_existing_voice_files() -> list[str]:
     """Return all voice preset filenames on disk, unioned with official presets."""
     dirs_to_check = [
         Path("voices"),
+        Path("/workspace/voices"),
+        Path("/workspace/orchestration_ai/voices"),
         Path(os.environ.get("HF_HOME", "/workspace/huggingface")) / "voices",
         Path.home() / ".cache" / "huggingface" / "voices",
+        Path("/data/huggingface/voices"),
         Path("data/cloned_voices"),
     ]
     voices = set(OFFICIAL_VOICE_PRESETS)
@@ -52,6 +55,18 @@ def get_existing_voice_files() -> list[str]:
                 voices.add(p.name)
             for p in d.glob("*/*.pt"):
                 voices.add(p.name)
+
+    # Union registered voices from default_voice_cloner
+    try:
+        from ..tts.voice_clone import default_voice_cloner
+        for cv in default_voice_cloner.list_cloned_voices():
+            vid = cv.get("id")
+            if vid:
+                voices.add(f"{vid}.wav")
+                voices.add(vid)
+    except Exception:
+        pass
+
     return sorted(voices)
 
 

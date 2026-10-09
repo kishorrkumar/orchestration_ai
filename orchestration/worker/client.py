@@ -121,48 +121,94 @@ class PersonaPlexWorkerClient:
         is_official = voice in OFFICIAL_VOICE_PRESETS
         valid_pt_on_disk = False
         valid_wav_on_disk = False
+        found_wav_path: str | None = None
 
         if not is_official:
             stem = voice.replace(".wav", "").replace(".pt", "")
-            candidate_pt_paths = [
-                os.path.join("voices", f"{stem}.pt"),
-                os.path.join("/workspace/voices", f"{stem}.pt"),
-                os.path.join("/workspace/orchestration_ai/voices", f"{stem}.pt"),
-            ]
-            candidate_wav_paths = [
-                os.path.join("voices", f"{stem}.wav"),
-                os.path.join("/workspace/voices", f"{stem}.wav"),
-                os.path.join("/workspace/orchestration_ai/voices", f"{stem}.wav"),
-            ]
-            hf_h = os.environ.get("HF_HOME")
-            if hf_h:
-                candidate_pt_paths.append(os.path.join(hf_h, "voices", f"{stem}.pt"))
-                candidate_wav_paths.append(os.path.join(hf_h, "voices", f"{stem}.wav"))
 
-            for cp in candidate_pt_paths:
-                if os.path.exists(cp) and os.path.getsize(cp) > 1024:
-                    try:
-                        with open(cp, "rb") as f:
-                            header = f.read(4)
-                        # Valid PyTorch files are zip archives (b'PK\x03\x04') or pickles (b'\x80\x02'..)
-                        # They are NEVER WAV files (b'RIFF')
-                        if header != b"RIFF":
-                            valid_pt_on_disk = True
-                            voice = f"{stem}.pt"
+            # 1. Check VoiceCloner registry and data dir
+            try:
+                from ..tts.voice_clone import default_voice_cloner
+                cloner_path = default_voice_cloner.get_voice_path(stem)
+                if cloner_path and cloner_path.exists() and cloner_path.stat().st_size > 1024:
+                    if cloner_path.suffix == ".wav":
+                        valid_wav_on_disk = True
+                        found_wav_path = str(cloner_path)
+                        voice = f"{stem}.wav"
+                    elif cloner_path.suffix == ".pt":
+                        valid_pt_on_disk = True
+                        voice = f"{stem}.pt"
+            except Exception:
+                pass
+
+            if not valid_pt_on_disk and not valid_wav_on_disk:
+                candidate_pt_paths = [
+                    os.path.join("voices", f"{stem}.pt"),
+                    os.path.join("/workspace/voices", f"{stem}.pt"),
+                    os.path.join("/workspace/orchestration_ai/voices", f"{stem}.pt"),
+                    os.path.join("/workspace/huggingface/voices", f"{stem}.pt"),
+                    os.path.join(os.path.expanduser("~/.cache/huggingface"), "voices", f"{stem}.pt"),
+                ]
+                candidate_wav_paths = [
+                    os.path.join("voices", f"{stem}.wav"),
+                    os.path.join("/workspace/voices", f"{stem}.wav"),
+                    os.path.join("/workspace/orchestration_ai/voices", f"{stem}.wav"),
+                    os.path.join("/workspace/huggingface/voices", f"{stem}.wav"),
+                    os.path.join(os.path.expanduser("~/.cache/huggingface"), "voices", f"{stem}.wav"),
+                    os.path.join("/data/huggingface/voices", f"{stem}.wav"),
+                    os.path.join("data", "cloned_voices", stem, f"{stem}.wav"),
+                    os.path.join("/workspace/orchestration_ai", "data", "cloned_voices", stem, f"{stem}.wav"),
+                ]
+                hf_h = os.environ.get("HF_HOME")
+                if hf_h:
+                    candidate_pt_paths.append(os.path.join(hf_h, "voices", f"{stem}.pt"))
+                    candidate_wav_paths.append(os.path.join(hf_h, "voices", f"{stem}.wav"))
+
+                for cp in candidate_pt_paths:
+                    if os.path.exists(cp) and os.path.getsize(cp) > 1024:
+                        try:
+                            with open(cp, "rb") as f:
+                                header = f.read(4)
+                            if header != b"RIFF":
+                                valid_pt_on_disk = True
+                                voice = f"{stem}.pt"
+                                break
+                        except Exception:
+                            pass
+
+                if not valid_pt_on_disk:
+                    for cw in candidate_wav_paths:
+                        if os.path.exists(cw) and os.path.getsize(cw) > 1024:
+                            valid_wav_on_disk = True
+                            found_wav_path = cw
+                            voice = f"{stem}.wav"
                             break
+
+            # Mirror the valid WAV to all worker directories so Moshi finds it inside --voice-prompt-dir
+            if valid_wav_on_disk and found_wav_path:
+                target_dirs = [
+                    "voices",
+                    "/workspace/voices",
+                    "/workspace/orchestration_ai/voices",
+                    "/workspace/huggingface/voices",
+                    os.path.join(os.path.expanduser("~/.cache/huggingface"), "voices"),
+                    "/data/huggingface/voices",
+                ]
+                hf_h = os.environ.get("HF_HOME")
+                if hf_h:
+                    target_dirs.append(os.path.join(hf_h, "voices"))
+                import shutil
+                for tdir in target_dirs:
+                    try:
+                        if os.path.isdir(tdir):
+                            dest = os.path.join(tdir, f"{stem}.wav")
+                            if not os.path.exists(dest) or os.path.getsize(dest) != os.path.getsize(found_wav_path):
+                                shutil.copy2(found_wav_path, dest)
                     except Exception:
                         pass
 
-            if not valid_pt_on_disk:
-                for cw in candidate_wav_paths:
-                    if os.path.exists(cw) and os.path.getsize(cw) > 1024:
-                        valid_wav_on_disk = True
-                        voice = f"{stem}.wav"
-                        break
-
         if not is_official and not valid_pt_on_disk and not valid_wav_on_disk:
-            # Map cloned voice to closest official preset so PersonaPlex S2S worker never crashes
-            # Check gender preference from persona or cloned voice metadata
+            # Map unknown non-existent voice to closest official preset so PersonaPlex S2S worker never crashes
             is_female = "female" in getattr(persona, "gender", "").lower()
             if not is_female and hasattr(persona, "name"):
                 name_l = persona.name.lower()

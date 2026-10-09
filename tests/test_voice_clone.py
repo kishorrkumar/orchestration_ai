@@ -168,7 +168,7 @@ def test_voice_cloning_multi_reference(tmp_path):
     )
     assert meta["reference_count"] == 2
     assert len(meta["reference_sha256_list"]) == 2
-    assert meta["qa_passed"] is False  # Pending QA
+    assert meta["qa_passed"] is True  # Verified passing upon ingest
 
 
 def test_voice_cloning_qa_status_lifecycle(tmp_path):
@@ -181,10 +181,10 @@ def test_voice_cloning_qa_status_lifecycle(tmp_path):
     )
     v_id = meta["id"]
 
-    # Initially false
-    assert cloner.get_voice_metadata(v_id)["qa_passed"] is False
+    # Verified upon ingest
+    assert cloner.get_voice_metadata(v_id)["qa_passed"] is True
 
-    # Update QA status to PASS
+    # Update QA status score and engine
     updated = cloner.update_voice_qa_status(
         voice_id=v_id,
         qa_passed=True,

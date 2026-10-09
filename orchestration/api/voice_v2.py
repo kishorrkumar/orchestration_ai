@@ -287,11 +287,16 @@ async def voice_v2_endpoint(
     resolved_voice = voice_prompt or voice_id or agent_voice or pipeline_cfg.get("voice_id") or pipeline_cfg.get("voice") or "NATM1.pt"
 
     from ..persona.registry import OFFICIAL_VOICE_PRESETS, get_existing_voice_files
+    from ..tts.voice_clone import default_voice_cloner
     available_voices = get_existing_voice_files()
     raw_v = str(resolved_voice).strip() if resolved_voice else "NATM1.pt"
+    clean_stem = raw_v.replace(".pt", "").replace(".wav", "")
 
     matched_voice = None
-    if raw_v in available_voices:
+    # 1. Direct check against VoiceCloner artifacts
+    if default_voice_cloner.has_voice(clean_stem) or default_voice_cloner.get_voice_path(clean_stem):
+        matched_voice = f"{clean_stem}.wav"
+    elif raw_v in available_voices:
         matched_voice = raw_v
     elif f"{raw_v}.wav" in available_voices:
         matched_voice = f"{raw_v}.wav"
@@ -304,7 +309,6 @@ async def voice_v2_endpoint(
 
     if matched_voice is None:
         # Determine appropriate gender-matching fallback instead of blindly picking available_voices[0] (which is NATF0.pt)
-        clean_stem = raw_v.replace(".pt", "").replace(".wav", "")
         v_meta = default_voice_cloner.get_voice_metadata(clean_stem)
         v_gender = (v_meta.get("gender") or v_meta.get("preferred_gender") or "").lower() if v_meta else ""
 
