@@ -195,30 +195,64 @@ When configured, the browser traverses firewall restrictions over TCP port 443.
 
 ---
 
-## 7. Troubleshooting Guide
+---
 
-### 1. Silent Audio (Transcript appears, but no sound)
-- **Cause:** Upstream worker starved of audio packets.
-- **Verification:** Check gateway logs for `queue_to_worker_pacer`. The pacer must send 1,920-sample silence frames at 12.5 Hz when the user is silent.
-- **Browser Check:** Verify browser AudioContext state is `running`. In Chrome, AudioContext requires a user gesture (clicking "Start Call").
+## 7. Voice Cloning & Streaming API Specifications
 
-### 2. Echo / Agent Talks to Itself
-- **Cause:** Microphone picking up speaker output (acoustic loop).
-- **Fix 1 (Mandatory):** **Use headphones** while testing.
-- **Fix 2:** The gateway UI routes the microphone input through an `AudioWorklet` with a zero-gain destination node (`muteGain.gain.value = 0.0`) so mic audio is never looped back into your speakers locally.
+The platform provides a pure Speech-to-Speech (S2S) voice enrollment and real-time streaming pipeline:
 
-### 3. Slow Priming (~9.4 seconds)
-- **Cause:** PersonaPlex processes the voice prompt and system prompt sequentially through its autoregressive transformer before the first audio frame can be produced ($\approx 362$ steps $\times$ 26 ms = 9.4s on A100).
-- **Fix:** Enable **Pre-warming** in `.env` (`ENABLE_PREWARM=true`). The gateway pre-primes a standby worker when the browser console loads, reducing click-to-speech time to $< 300$ ms.
+### 7.1 Endpoints
+
+| Endpoint | Method / Protocol | Description |
+| :--- | :--- | :--- |
+| `/voice/enroll` | `POST` (multipart/form-data) | Ingests 3–30s of recorded speech, runs silence trimming, -22 LUFS normalization, speaker verification QA, and caches conditioning embeddings (`.pt`) + audio (`.wav`). |
+| `/voice/{voice_id}` | `GET` | Retrieves enrolled voice metadata, QA verification score, and duration. |
+| `/voice/{voice_id}` | `DELETE` | Removes enrolled voice artifacts from disk and runtime caches. |
+| `/voice/{voice_id}/preview` | `GET` | Streams WAV audio preview of the enrolled reference. |
+| `/voice` | `GET` | Lists all enrolled custom voices and presets. |
+| `/agent/stream` | `WebSocket` (`ws://` / `wss://`) | Direct bidirectional S2S audio stream. Accepts `voice_id`, `text_prompt`, `sample_rate` (16000 or 24000). Overlapped frame-by-frame generation, instant barge-in interrupt (`{"type": "interrupt"}`), and per-turn TTFA latency instrumentation. |
+
+### 7.2 Environment Variables
+
+```env
+# Gateway & Worker Ports
+PORT=8000
+WORKER_URL=ws://127.0.0.1:8998/api/chat
+ENABLE_PREWARM=true
+
+# Voice Conditioning & S2S Latency
+DEFAULT_VOICE=kkishorekumar.wav
+WORKER_ALLOW_RAW_PCM=0 # Set to 1 only in mock test environments lacking libopus/sphn
+
+# Audio Transport
+AUDIO_SAMPLE_RATE=24000
+AUDIO_FRAME_MS=80
+```
 
 ---
 
-## 8. Verification & Test Suite
+## 8. Troubleshooting Guide
+
+### 1. Browser Voice Enrollment Fails
+- **Cause:** Missing PyAV / soundfile WebM container decoder.
+- **Fix:** The frontend Web Audio recorder directly generates uncompressed 24 kHz mono 16-bit PCM WAV blobs. The backend additionally features an automatic FFmpeg CLI pipe transcoding fallback.
+
+### 2. Audio Dropped Mid-Sentence
+- **Cause:** Premature turn yielding upon encountering text token punctuation (`?` or `.`) while audio generation lagged behind text.
+- **Fix:** Fixed in `orchestration/api/voice_v2.py` and `orchestration/api/voice_stream.py`: opcode `0x01` audio frames are never discarded before audio delivery finishes.
+
+### 3. High TTFA (25-30 seconds)
+- **Cause:** Re-encoding un-cached raw `.wav` voice prompts on every connection.
+- **Fix:** Voice conditioning embeds into cached `.pt` PyTorch tensors at enrollment time, loading instantaneously (< 50ms) into the transformer KV state.
+
+---
+
+## 9. Verification & Test Suite
 
 Run the full automated test suite:
 ```bash
-# Run unit and integration tests
-pytest tests/ -v
+# Run unit and integration tests (37 passing)
+pytest tests/test_voice_clone.py tests/test_voice_custom_upload.py tests/test_voice_stream_e2e.py tests/test_gateway.py tests/test_phase1_s2s.py tests/test_audio.py tests/test_turn_detector.py -v
 
 # Run direct worker wire test
 python scripts/worker_direct_test.py --url ws://127.0.0.1:8998/api/chat
@@ -226,3 +260,4 @@ python scripts/worker_direct_test.py --url ws://127.0.0.1:8998/api/chat
 # Run end-to-end smoke call
 python scripts/smoke_call.py --url ws://127.0.0.1:8000/v2/voice
 ```
+

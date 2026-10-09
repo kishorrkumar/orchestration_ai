@@ -264,7 +264,38 @@ class VoiceCloner:
         except Exception:
             pass
 
-        # 3. Fallback to raw linear PCM
+        # 3. Try ffmpeg CLI (handles WebM, Opus, MP4, AAC, AMR, and all browser container formats)
+        try:
+            import shutil
+            import subprocess
+            ffmpeg_bin = shutil.which("ffmpeg")
+            if ffmpeg_bin:
+                proc = subprocess.Popen(
+                    [
+                        ffmpeg_bin,
+                        "-v", "error",
+                        "-i", "pipe:0",
+                        "-f", "wav",
+                        "-acodec", "pcm_s16le",
+                        "-ac", "1",
+                        "-ar", "24000",
+                        "pipe:1",
+                    ],
+                    stdin=subprocess.PIPE,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                )
+                out, _ = proc.communicate(input=audio_bytes, timeout=10.0)
+                if out and len(out) > 44:
+                    with io.BytesIO(out) as bio:
+                        data, sr = sf.read(bio, dtype="float32")
+                        if data.ndim > 1:
+                            data = np.mean(data, axis=1)
+                        return data.astype(np.float32), sr
+        except Exception as ffmpeg_err:
+            logger.debug(f"ffmpeg decode notice: {ffmpeg_err}")
+
+        # 4. Fallback to raw linear PCM
         try:
             n_bytes = len(audio_bytes) - (len(audio_bytes) % 4)
             if n_bytes > 0:

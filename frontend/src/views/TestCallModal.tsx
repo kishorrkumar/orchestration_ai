@@ -112,6 +112,9 @@ export const TestCallModal: React.FC<TestCallModalProps> = ({ agent, onClose }) 
   const [endReason, setEndReason] = useState<string | null>(null)
   const [sttSupported, setSttSupported] = useState<boolean>(true)
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null)
+  const [showLatencyHud, setShowLatencyHud] = useState(false)
+  const [turnTtfaMs, setTurnTtfaMs] = useState<number | null>(null)
+  const [greetingTtfaMs, setGreetingTtfaMs] = useState<number | null>(null)
 
   const wsRef = useRef<WebSocket | null>(null)
   const audioContextRef = useRef<AudioContext | null>(null)
@@ -270,7 +273,11 @@ export const TestCallModal: React.FC<TestCallModalProps> = ({ agent, onClose }) 
                     setIsAgentSpeaking(false)
                   }
                 }, 600)
+              } else if (msg.type === 'latency' || msg.type === 'metrics' || msg.type === 'timing') {
+                if (msg.ttfa_ms !== undefined) setTurnTtfaMs(Math.round(msg.ttfa_ms))
+                if (msg.greeting_ttfa_ms !== undefined) setGreetingTtfaMs(Math.round(msg.greeting_ttfa_ms))
               } else if (msg.type === 'call_ended') {
+                if (msg.stats?.avg_ttfa_ms) setTurnTtfaMs(Math.round(msg.stats.avg_ttfa_ms))
                 setEndReason(msg.reason || 'Call ended')
                 setCallStatus('ended')
                 cleanupAudio()
@@ -741,15 +748,61 @@ export const TestCallModal: React.FC<TestCallModalProps> = ({ agent, onClose }) 
         </div>
 
         {/* Echo Suppression Option */}
-        <label className="flex items-center gap-2 text-[12px] text-[#6B6963] cursor-pointer select-none">
-          <input
-            type="checkbox"
-            checked={muteWhileSpeaking}
-            onChange={(e) => setMuteWhileSpeaking(e.target.checked)}
-            className="rounded border-[rgba(31,30,29,0.2)] text-[#1F1E1D] focus:ring-0"
-          />
-          <span>Mute mic while agent speaks (prevents self-talk feedback)</span>
-        </label>
+        <div className="flex items-center justify-between w-full text-[12px]">
+          <label className="flex items-center gap-2 text-[#6B6963] cursor-pointer select-none">
+            <input
+              type="checkbox"
+              checked={muteWhileSpeaking}
+              onChange={(e) => setMuteWhileSpeaking(e.target.checked)}
+              className="rounded border-[rgba(31,30,29,0.2)] text-[#1F1E1D] focus:ring-0"
+            />
+            <span>Mute mic while agent speaks (prevents feedback)</span>
+          </label>
+          <button
+            type="button"
+            onClick={() => setShowLatencyHud(!showLatencyHud)}
+            className="text-[11px] text-[#C2603F] hover:underline font-medium cursor-pointer"
+          >
+            {showLatencyHud ? 'Hide Latency HUD' : 'Latency Debug Panel'}
+          </button>
+        </div>
+
+        {/* Latency Debug Panel (HUD) */}
+        {showLatencyHud && (
+          <div className="w-full bg-[#FAF9F5] border border-[rgba(31,30,29,0.1)] rounded-xl p-3 text-left space-y-2 text-[11px] font-mono animate-in fade-in duration-100">
+            <div className="flex items-center justify-between font-semibold text-[#1F1E1D] border-b border-[rgba(31,30,29,0.06)] pb-1">
+              <span>S2S Real-Time Latency Metrics</span>
+              <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-800">
+                Target: &lt; 1000ms
+              </span>
+            </div>
+            <div className="grid grid-cols-2 gap-2 text-[#4A4843]">
+              <div>
+                <span className="text-[#8C8980]">Last Turn TTFA:</span>{' '}
+                <span className={`font-bold ${turnTtfaMs && turnTtfaMs < 1000 ? 'text-emerald-600' : 'text-amber-600'}`}>
+                  {turnTtfaMs ? `${turnTtfaMs}ms` : 'Awaiting turn'}
+                </span>
+              </div>
+              <div>
+                <span className="text-[#8C8980]">Priming / Greeting:</span>{' '}
+                <span className="font-bold text-[#1F1E1D]">
+                  {greetingTtfaMs ? `${greetingTtfaMs}ms` : `${primingElapsedSec}s`}
+                </span>
+              </div>
+              <div className="truncate">
+                <span className="text-[#8C8980]">Voice Conditioning:</span>{' '}
+                <span className="font-semibold text-[#1F1E1D] truncate">{agent.voice_id || 'kkishorekumar.wav'}</span>
+              </div>
+              <div>
+                <span className="text-[#8C8980]">Audio Transport:</span>{' '}
+                <span>16 kHz PCM &rarr; 24 kHz Mimi</span>
+              </div>
+              <div className="col-span-2 text-[10px] text-[#8C8980]">
+                Pipeline: Native Speech-to-Speech (Pure S2S, Zero Cascaded Lag)
+              </div>
+            </div>
+          </div>
+        )}
 
         {!sttSupported && (
           <p className="text-[11px] text-[#8C8980]">

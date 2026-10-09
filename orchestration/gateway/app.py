@@ -169,10 +169,12 @@ def create_app(
     # Mount S2S Voice Agent Platform API routers
     from ..api.agents import router as agents_router
     from ..api.prompts import router as prompts_router
+    from ..api.voice_stream import router as voice_stream_router
     from ..api.voice_v2 import router as voice_v2_router
     from ..api.webrtc import router as webrtc_router
     app.include_router(agents_router)
     app.include_router(prompts_router)
+    app.include_router(voice_stream_router)
     app.include_router(voice_v2_router)
     app.include_router(webrtc_router)
 

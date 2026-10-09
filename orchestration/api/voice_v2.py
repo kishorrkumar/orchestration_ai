@@ -927,9 +927,6 @@ async def voice_v2_endpoint(
 
                 elif opcode == 0x01:
                     # Audio payload from worker
-                    if agent_turn_yielded:
-                        # Turn yielded to caller; suppress further assistant audio until user responds
-                        continue
 
                     last_agent_token_time = time.time()
                     worker_audio_frame_count += 1
