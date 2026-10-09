@@ -117,9 +117,10 @@ class PersonaPlexWorkerClient:
         if not voice.endswith(".pt") and not voice.endswith(".wav"):
             voice = f"{voice}.pt"
 
-        # Check if the requested voice is an official preset or an existing valid .pt file
+        # Check if the requested voice is an official preset or an existing valid .pt / .wav file
         is_official = voice in OFFICIAL_VOICE_PRESETS
         valid_pt_on_disk = False
+        valid_wav_on_disk = False
 
         if not is_official:
             stem = voice.replace(".wav", "").replace(".pt", "")
@@ -128,9 +129,15 @@ class PersonaPlexWorkerClient:
                 os.path.join("/workspace/voices", f"{stem}.pt"),
                 os.path.join("/workspace/orchestration_ai/voices", f"{stem}.pt"),
             ]
+            candidate_wav_paths = [
+                os.path.join("voices", f"{stem}.wav"),
+                os.path.join("/workspace/voices", f"{stem}.wav"),
+                os.path.join("/workspace/orchestration_ai/voices", f"{stem}.wav"),
+            ]
             hf_h = os.environ.get("HF_HOME")
             if hf_h:
                 candidate_pt_paths.append(os.path.join(hf_h, "voices", f"{stem}.pt"))
+                candidate_wav_paths.append(os.path.join(hf_h, "voices", f"{stem}.wav"))
 
             for cp in candidate_pt_paths:
                 if os.path.exists(cp) and os.path.getsize(cp) > 1024:
@@ -146,7 +153,14 @@ class PersonaPlexWorkerClient:
                     except Exception:
                         pass
 
-        if not is_official and not valid_pt_on_disk:
+            if not valid_pt_on_disk:
+                for cw in candidate_wav_paths:
+                    if os.path.exists(cw) and os.path.getsize(cw) > 1024:
+                        valid_wav_on_disk = True
+                        voice = f"{stem}.wav"
+                        break
+
+        if not is_official and not valid_pt_on_disk and not valid_wav_on_disk:
             # Map cloned voice to closest official preset so PersonaPlex S2S worker never crashes
             # Check gender preference from persona or cloned voice metadata
             is_female = "female" in getattr(persona, "gender", "").lower()
