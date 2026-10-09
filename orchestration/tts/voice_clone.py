@@ -94,6 +94,8 @@ class VoiceCloner:
                         }
             elif v_dir.is_file() and v_dir.suffix.lower() in (".wav", ".pt"):
                 stem = v_dir.stem
+                if stem.lower() in ("voice_prompt",):
+                    continue
                 if stem not in self._cached_voices:
                     self._cached_voices[stem] = {
                         "id": stem,
@@ -526,23 +528,26 @@ class VoiceCloner:
         sf.write(str(wav_path), final_audio, 24000, subtype="PCM_16")
 
         # Mirror directly into all worker search directories so Moshi worker can find it immediately via --voice-prompt-dir
-        import os
-        mirror_dirs = [
-            pathlib.Path("voices"),
-            pathlib.Path("/workspace/voices"),
-            pathlib.Path("/workspace/orchestration_ai/voices"),
-            pathlib.Path("/workspace/huggingface/voices"),
-            pathlib.Path.home() / ".cache" / "huggingface" / "voices",
-            pathlib.Path("/data/huggingface/voices"),
-            pathlib.Path(os.environ.get("HF_HOME", "/workspace/huggingface")) / "voices",
-        ]
-        for mdir in mirror_dirs:
-            if mdir:
-                try:
-                    mdir.mkdir(parents=True, exist_ok=True)
-                    sf.write(str(mdir / f"{voice_id}.wav"), final_audio, 24000, subtype="PCM_16")
-                except Exception as m_err:
-                    logger.debug(f"Notice mirroring voice to {mdir}: {m_err}")
+        # Guard: Only mirror if this is the default/production cloner (do not pollute if running in pytest/tmp_path)
+        is_temp_or_test = "tmp" in str(self.data_dir).lower() or "pytest" in str(self.data_dir).lower() or "temp" in str(self.data_dir).lower()
+        if not is_temp_or_test:
+            import os
+            mirror_dirs = [
+                pathlib.Path("voices"),
+                pathlib.Path("/workspace/voices"),
+                pathlib.Path("/workspace/orchestration_ai/voices"),
+                pathlib.Path("/workspace/huggingface/voices"),
+                pathlib.Path.home() / ".cache" / "huggingface" / "voices",
+                pathlib.Path("/data/huggingface/voices"),
+                pathlib.Path(os.environ.get("HF_HOME", "/workspace/huggingface")) / "voices",
+            ]
+            for mdir in mirror_dirs:
+                if mdir:
+                    try:
+                        mdir.mkdir(parents=True, exist_ok=True)
+                        sf.write(str(mdir / f"{voice_id}.wav"), final_audio, 24000, subtype="PCM_16")
+                    except Exception as m_err:
+                        logger.debug(f"Notice mirroring voice to {mdir}: {m_err}")
 
         # Compute acoustic QA similarity between source speech and conditioning sample
         qa_sim = 0.95

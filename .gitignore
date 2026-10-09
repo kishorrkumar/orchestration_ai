@@ -26,11 +26,21 @@ output*.wav
 output*.json
 *.tmp
 
+# Exceptions: Core cloned voice profiles and conditioning audio
+!voices/kkishorekumar.wav
+!voices/voice_prompt.wav
+!data/cloned_voices/kkishorekumar/
+!data/cloned_voices/kkishorekumar/**
+
 # Large Model weights and cache
 models/
 
 # Local data and eval artifacts
-data/
+data/*
+!data/cloned_voices/
+data/cloned_voices/*
+!data/cloned_voices/kkishorekumar/
+!data/cloned_voices/kkishorekumar/**
 eval_out/
 node_modules/
 .agents/

@@ -78,6 +78,7 @@ async def list_voice_presets() -> list[VoicePresetResponse]:
 
     seen_ids = {p.id for p in presets}
     official_stems = {pathlib.Path(p.id).stem for p in presets}
+    ignored_stems = {"voice_prompt"}
 
     # 1. Discover custom cloned voices registered in VoiceCloner
     try:
@@ -86,7 +87,7 @@ async def list_voice_presets() -> list[VoicePresetResponse]:
             vid = cv.get("id", "")
             fname = f"{vid}.wav" if not (vid.endswith(".wav") or vid.endswith(".pt")) else vid
             stem = pathlib.Path(vid).stem
-            if stem not in official_stems and fname not in seen_ids and vid not in seen_ids:
+            if stem not in official_stems and stem not in ignored_stems and fname not in seen_ids and vid not in seen_ids:
                 seen_ids.add(fname)
                 seen_ids.add(vid)
                 seen_ids.add(stem)
@@ -127,7 +128,7 @@ async def list_voice_presets() -> list[VoicePresetResponse]:
             for fpath in cdir.glob("**/*"):
                 if fpath.is_file() and fpath.suffix.lower() in (".wav", ".pt"):
                     stem = fpath.stem
-                    if stem in official_stems or fpath.name in seen_ids or stem in seen_ids:
+                    if stem in official_stems or stem in ignored_stems or fpath.name in seen_ids or stem in seen_ids:
                         continue
                     seen_ids.add(fpath.name)
                     seen_ids.add(stem)

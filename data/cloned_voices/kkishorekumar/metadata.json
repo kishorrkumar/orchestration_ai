@@ -1,0 +1,17 @@
+{
+  "id": "kkishorekumar",
+  "name": "Kishore Kumar",
+  "owner": "default_user",
+  "created_at": 1791533995.0,
+  "consent": true,
+  "consent_statement": "I confirm that this is my own voice recording for AI conversational speech.",
+  "duration_sec": 5.0,
+  "gender": "Male",
+  "style": "cloned",
+  "tag": "Custom Cloned Voice",
+  "description": "Kishore Kumar - Finest Cloned Voice (5.0s, 24kHz, -22 LUFS)",
+  "artifact_wav": "data\\cloned_voices\\kkishorekumar\\kkishorekumar.wav",
+  "qa_passed": true,
+  "qa_score": 1.0,
+  "recommended_engine": "personaplex_s2s"
+}
