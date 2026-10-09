@@ -60,16 +60,6 @@ async def _run_gateway_cmd(args):
             spawned_servers.append(server)
             pool.register_worker(WorkerNodeConfig(id=m_id, host="127.0.0.1", port=m_port))
             logger.info(f"Attached Mock Worker {m_id} on port {m_port}")
-        base_port = args.mock_port_start
-        count = getattr(args, "mock_workers", 1) or 1
-        for i in range(count):
-            m_port = base_port + i
-            m_id = f"mock-worker-{i}"
-            server = PersonaPlexMockServer(host="127.0.0.1", port=m_port)
-            await server.start()
-            spawned_servers.append(server)
-            pool.register_worker(WorkerNodeConfig(id=m_id, host="127.0.0.1", port=m_port))
-            logger.info(f"Attached Mock Worker {m_id} on port {m_port}")
 
     # Register any explicit real GPU workers (--worker [id:]host:port[:gpu])
     if getattr(args, "worker", None):

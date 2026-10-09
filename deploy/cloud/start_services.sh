@@ -174,11 +174,35 @@ if [ "$WORKER_READY" -eq 1 ]; then
         --worker 127.0.0.1:8998 \
         --worker-type personaplex
 else
-    echo " ⚠️ Falling back to Local Voice Engine..."
-    echo " ✨ CONSOLE: Click 'HTTP Service [Port 8000]' in Krutrim Cloud"
+    echo " ❌ REAL WORKER FAILED TO START ON GPU"
     echo "=============================================================================="
-    "$PYTHON_BIN" -m orchestration.cli run-gateway \
-        --host 0.0.0.0 \
-        --port 8000 \
-        --worker-type mock
+    if grep -iq "GatedRepoError\|401 Client Error" worker.log 2>/dev/null; then
+        echo " [ROOT CAUSE] Hugging Face 401 Unauthorized / GatedRepoError"
+        echo " Access to 'nvidia/personaplex-7b-v1' is gated."
+        echo ""
+        echo " ACTION REQUIRED TO UNLOCK REAL MODEL:"
+        echo " 1. Open https://huggingface.co/nvidia/personaplex-7b-v1 and accept the license terms."
+        echo " 2. Get an access token from https://huggingface.co/settings/tokens"
+        echo " 3. In your terminal run:"
+        echo "      export HF_TOKEN=\"hf_your_token_here\""
+        echo " 4. Re-run deploy/cloud/start_services.sh"
+        echo "=============================================================================="
+    fi
+
+    if [[ "${1:-}" == "--allow-mock" || "${ALLOW_MOCK:-}" == "1" ]]; then
+        echo " [FALLBACK] Starting Mock Worker as requested by --allow-mock..."
+        kill -9 $(lsof -t -i:8998 2>/dev/null) 2>/dev/null || true
+        fuser -k 8998/tcp 2>/dev/null || true
+        sleep 1
+        "$PYTHON_BIN" -m orchestration.cli run-gateway \
+            --host 0.0.0.0 \
+            --port 8000 \
+            --worker-type mock
+    else
+        echo " Worker log output (tail):"
+        tail -n 20 worker.log 2>/dev/null || true
+        echo ""
+        echo " [STOP] To test the platform UI without GPU weights, re-run with: bash deploy/cloud/start_services.sh --allow-mock"
+        exit 1
+    fi
 fi
