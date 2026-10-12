@@ -144,13 +144,16 @@ class AcousticEchoCanceller:
         aligned_ref = recent_ref[peak_idx : peak_idx + len(mic_f32)]
         if len(aligned_ref) < len(mic_f32):
             aligned_ref = np.pad(aligned_ref, (0, len(mic_f32) - len(aligned_ref)))
+        elif len(aligned_ref) > len(mic_f32):
+            aligned_ref = aligned_ref[: len(mic_f32)]
 
         # NLMS Error Estimation
         sub_len = min(self.filter_length, len(mic_f32))
         x_block = aligned_ref[:sub_len]
         d_block = mic_f32[:sub_len]
+        w_sub = self._weights[:sub_len]
 
-        y_est = np.convolve(x_block, self._weights, mode="same")
+        y_est = np.convolve(x_block, w_sub, mode="same")[:sub_len]
         error = d_block - y_est
 
         err_energy = np.sum(error ** 2)
