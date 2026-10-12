@@ -78,8 +78,8 @@ class AudioCaptureProcessor extends AudioWorkletProcessor {
         chunkSq += chunk[i] * chunk[i];
       }
       const cRms = Math.sqrt(chunkSq / this.frameSize);
-      // Adaptive software gain: boost soft speech smoothly up to 3.5x
-      const boost = cRms > 0.0015 && cRms < 0.035 ? Math.min(3.5, 0.035 / cRms) : 1.0;
+      // Adaptive software gain: boost soft speech smoothly up to 2.2x, ignore sub-noise floor (<0.010 RMS)
+      const boost = cRms >= 0.010 && cRms < 0.035 ? Math.min(2.2, 0.035 / cRms) : 1.0;
 
       const pcm16 = new Int16Array(this.frameSize);
       for (let i = 0; i < this.frameSize; i++) {
@@ -273,6 +273,9 @@ export const TestCallModal: React.FC<TestCallModalProps> = ({ agent, onClose }) 
                     setIsAgentSpeaking(false)
                   }
                 }, 600)
+              } else if (msg.type === 'interrupted') {
+                flushPlaybackBuffer()
+                setIsAgentSpeaking(false)
               } else if (msg.type === 'latency' || msg.type === 'metrics' || msg.type === 'timing') {
                 if (msg.ttfa_ms !== undefined) setTurnTtfaMs(Math.round(msg.ttfa_ms))
                 if (msg.greeting_ttfa_ms !== undefined) setGreetingTtfaMs(Math.round(msg.greeting_ttfa_ms))

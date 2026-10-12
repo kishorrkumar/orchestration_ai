@@ -101,13 +101,19 @@ def create_app(
     session_manager: SessionManager | None = None,
     worker_type: str = "auto",
     active_server = None,
+    enable_standby: bool | None = None,
 ) -> FastAPI:
     import os
 
     from fastapi import Response
     worker_pool = pool or WorkerPool(probe_on_acquire=True)
     persona_registry = registry or default_registry
-    mgr = session_manager or SessionManager(pool=worker_pool)
+    enable_standby_flag = (
+        enable_standby
+        if enable_standby is not None
+        else (os.environ.get("ENABLE_STANDBY_WORKER", "0").lower() in ("1", "true", "yes"))
+    )
+    mgr = session_manager or SessionManager(pool=worker_pool, enable_standby=enable_standby_flag)
 
     # Resolve active server / worker type
     resolved_server = active_server
@@ -143,6 +149,15 @@ def create_app(
             logger.info("Database initialized and seeded successfully")
         except Exception as e:
             logger.warning("Database init notice: %s", e)
+
+        # Background pre-prime standby worker session for instant TTFA (<1.5s)
+        try:
+            enable_standby_env = os.environ.get("ENABLE_STANDBY_WORKER", "0").lower() in ("1", "true", "yes")
+            if (mgr.enable_standby or enable_standby_env) and (worker_pool.get_stats()["total_workers"] > 1 or enable_standby_env):
+                logger.info("Triggering background standby session pre-prime for low-latency TTFA (<1.5s)...")
+                asyncio.create_task(mgr.preprime_standby())
+        except Exception as e:
+            logger.debug("Standby pre-prime schedule note: %s", e)
 
         yield
         logger.info("PersonaPlex Orchestration Gateway shutting down")

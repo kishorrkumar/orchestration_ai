@@ -647,9 +647,17 @@ class SessionManager:
                         self._active_sessions[sid] = session
                         logger.info(f"[STANDBY] Claimed pre-primed session for {sid}! TTFA will be < 1.5s.")
 
-                        # Automatically trigger background replacement priming
-                        asyncio.create_task(self.preprime_standby(persona))
+                        # Automatically trigger background replacement priming if extra worker capacity exists
+                        if self.enable_standby and self.pool.get_stats()["idle_workers"] > 0:
+                            asyncio.create_task(self.preprime_standby(persona))
                         return session
+                    elif self.pool.get_stats()["idle_workers"] <= 0:
+                        # Mismatched voice and pool has no other idle workers:
+                        # Yield standby worker immediately so caller is not starved!
+                        logger.info(f"[STANDBY] Releasing standby worker for mismatched voice request ({standby_voice} -> {req_voice})")
+                        old_standby = self._standby_session
+                        self._standby_session = None
+                        await old_standby.close()
 
         worker = await self.pool.acquire_worker(session_id=sid, timeout=timeout)
         session = VoiceSession(
@@ -675,8 +683,8 @@ class SessionManager:
             if len(self._session_history) > 1000:
                 self._session_history.pop(0)
 
-            # Auto-prime replacement standby session in background if enabled
-            if self.enable_standby:
+            # Auto-prime replacement standby session in background if enabled and capacity allows
+            if self.enable_standby and self.pool.get_stats().get("idle_workers", 0) > 0:
                 asyncio.create_task(self.preprime_standby())
             return metrics_dict
         return None

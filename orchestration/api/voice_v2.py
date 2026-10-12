@@ -15,6 +15,7 @@ from typing import Any
 import numpy as np
 from fastapi import APIRouter, Header, HTTPException, Query, WebSocket, WebSocketDisconnect, status
 
+from ..audio.cleaner import CallerAudioCleaner
 from ..audio.codecs import decode_ulaw, encode_ulaw
 from ..audio.detokenizer import detokenize_sentencepiece_stream, stitch_token
 from ..audio.dsp import compute_rms, float32_to_int16, int16_to_float32, normalize_speech_loudness, soft_clip
@@ -438,13 +439,24 @@ async def voice_v2_endpoint(
         max_duration_sec=effective_max_duration,
     )
 
-    # 5. Initialize Inbound Framing Processor & Outbound Resampler
+    # 5. Initialize Inbound Framing Processor, CallerAudioCleaner & Outbound Resampler
     # Moshi PersonaPlex operates on exact 1920-sample frames (80ms at 24kHz = 12.5Hz frame rate)
     inbound_processor = InboundAudioFrameProcessor(
         codec=codec,
         sample_rate=sample_rate,
         model_sample_rate=MODEL_SAMPLE_RATE,
         out_frame_samples=1920,
+    )
+    cleaner = CallerAudioCleaner(
+        sample_rate=MODEL_SAMPLE_RATE,
+        frame_size=MODEL_FRAME_SAMPLES,
+        mode="isolation",
+        noise_suppression=True,
+        speaker_isolation=True,
+        suppression_strength=0.75,
+        vad_hangover_sec=0.35,
+        vad_threshold=0.45,
+        min_speech_rms=0.010,
     )
     out_resampler = AudioResampler(in_rate=MODEL_SAMPLE_RATE, out_rate=sample_rate, quality="QQ")
 
@@ -614,15 +626,18 @@ async def voice_v2_endpoint(
     last_user_speech_end_time: float = 0.0
     turn_latencies: list[float] = []
 
-    def commit_agent_turn():
+    def commit_agent_turn(interrupted: bool = False):
         nonlocal current_agent_buffer, current_agent_start_ms, current_agent_turn_start_time
         if current_agent_buffer:
             text = detokenize_sentencepiece_stream(current_agent_buffer, agent_name=agent.name).strip()
             now_ms = (time.time() - call_start_time) * 1000.0
             if text:
+                if interrupted and not text.endswith("[Interrupted]"):
+                    text = f"{text} [Interrupted]"
                 conversation_turns.append({
                     "role": "assistant",
                     "text": text,
+                    "interrupted": interrupted,
                     "started_ms": round(current_agent_start_ms, 1),
                     "ended_ms": round(now_ms, 1),
                     "duration_ms": round(now_ms - current_agent_start_ms, 1),
@@ -727,35 +742,70 @@ async def voice_v2_endpoint(
                         # Robust PCM16 / G.711 processing with carryover & control separation
                         event_type, frames_24k, f32_samples = inbound_processor.process_frame(data)
                         if event_type == "audio" and f32_samples is not None:
-                            rms = compute_rms(f32_samples)
-                            if rms > 0.0025:
+                            # 1. Multi-Stage Caller Audio Cleaning (80Hz HPF + RNNoise Neural Denoising + Silero VAD + Silence Gating)
+                            cleaned_frames_24k = cleaner.process_chunk(f32_samples)
+
+                            # 2. Voice Activity & Direct-Field Speech Detection
+                            if cleaner.is_speech_active:
                                 user_has_responded = True
                                 last_user_speech_time = time.time()
+                                last_user_speech_end_time = time.time()
                                 detector.on_user_speech(last_user_speech_time)
-                                if agent_turn_yielded:
-                                    agent_turn_yielded = False
-                                if current_agent_buffer:
-                                    commit_agent_turn()
-                                    agent_turn_yielded = False
 
-                            # Inbound Speech AGC: boost soft speech so Mimi reliably encodes speech codebooks
-                            if rms > 0.0015:
-                                # Target nominal conversational speech (~0.04 RMS) with soft clipping limit
-                                gain_boost = min(6.0, max(1.0, 0.04 / max(rms, 0.004)))
+                                # 3. Dynamic Barge-In: if caller interrupts assistant speech
+                                if current_agent_buffer or not agent_turn_yielded:
+                                    logger.info(f"[VoiceSession {call_session_id}] Barge-in detected from caller voice activity: flushing agent speech")
+                                    # Clear worker-to-client queue to immediately silence assistant
+                                    while not worker_message_queue.empty():
+                                        try:
+                                            worker_message_queue.get_nowait()
+                                        except asyncio.QueueEmpty:
+                                            break
+                                    # Clear stale audio in input queue so caller's active speech is processed with 0ms lag
+                                    while audio_frame_queue.qsize() > 2:
+                                        try:
+                                            audio_frame_queue.get_nowait()
+                                        except asyncio.QueueEmpty:
+                                            break
+                                    commit_agent_turn(interrupted=True)
+                                    agent_turn_yielded = True
+                                    try:
+                                        await websocket.send_json({"type": "interrupted", "reason": "barge_in"})
+                                    except Exception:
+                                        pass
                             else:
-                                gain_boost = 1.0
+                                if user_has_responded and last_user_speech_end_time > 0:
+                                    if hasattr(detector, "on_user_speech_end"):
+                                        detector.on_user_speech_end(last_user_speech_end_time)
 
-                            for frame_24k in frames_24k:
-                                if gain_boost > 1.0:
-                                    boosted_frame = np.clip(frame_24k * gain_boost, -0.98, 0.98).astype(np.float32)
-                                else:
-                                    boosted_frame = frame_24k
-                                audio_recorder.record_inbound(boosted_frame)
-                                await audio_frame_queue.put(boosted_frame)
+                            for frame_24k in cleaned_frames_24k:
+                                audio_recorder.record_inbound(frame_24k)
+                                # Tightly bound audio frame queue (max 3 frames = 240ms) to eliminate inter-turn latency
+                                if audio_frame_queue.qsize() >= 3:
+                                    try:
+                                        audio_frame_queue.get_nowait()
+                                    except asyncio.QueueEmpty:
+                                        pass
+                                await audio_frame_queue.put(frame_24k)
+
                         elif event_type == "interrupt":
-                            logger.info(f"[VoiceSession {call_session_id}] User binary interrupt noted (handled locally)")
-                            commit_agent_turn()
-                            agent_turn_yielded = False
+                            logger.info(f"[VoiceSession {call_session_id}] User binary interrupt noted: flushing queues")
+                            while not worker_message_queue.empty():
+                                try:
+                                    worker_message_queue.get_nowait()
+                                except asyncio.QueueEmpty:
+                                    break
+                            while audio_frame_queue.qsize() > 2:
+                                try:
+                                    audio_frame_queue.get_nowait()
+                                except asyncio.QueueEmpty:
+                                    break
+                            commit_agent_turn(interrupted=True)
+                            agent_turn_yielded = True
+                            try:
+                                await websocket.send_json({"type": "interrupted", "reason": "client_binary_interrupt"})
+                            except Exception:
+                                pass
 
                 elif "text" in raw and raw["text"]:
                     try:
@@ -768,9 +818,23 @@ async def voice_v2_endpoint(
                         elif mtype == "ping":
                             await websocket.send_json({"type": "pong", "time": time.time()})
                         elif mtype == "interrupt":
-                            logger.info(f"[VoiceSession {call_session_id}] User JSON interrupt noted (handled locally)")
-                            commit_agent_turn()
-                            agent_turn_yielded = False
+                            logger.info(f"[VoiceSession {call_session_id}] User explicit JSON interrupt noted: flushing queues")
+                            while not worker_message_queue.empty():
+                                try:
+                                    worker_message_queue.get_nowait()
+                                except asyncio.QueueEmpty:
+                                    break
+                            while audio_frame_queue.qsize() > 2:
+                                try:
+                                    audio_frame_queue.get_nowait()
+                                except asyncio.QueueEmpty:
+                                    break
+                            commit_agent_turn(interrupted=True)
+                            agent_turn_yielded = True
+                            try:
+                                await websocket.send_json({"type": "interrupted", "reason": "client_json_interrupt"})
+                            except Exception:
+                                pass
                         elif mtype in ("user_transcript", "transcript"):
                             try:
                                 user_text = msg_json.get("text", "").strip()
@@ -836,14 +900,14 @@ async def voice_v2_endpoint(
             while not stop_event.is_set():
                 next_deadline += frame_interval
 
-                # Bound check: allow up to 20 frames (1.6s) jitter buffer before dropping oldest frames
+                # Bound check: allow up to 3 frames (240ms) jitter buffer before dropping oldest frames
                 q_size = audio_frame_queue.qsize()
                 if q_size > telemetry["performance"]["max_queue_depth"]:
                     telemetry["performance"]["max_queue_depth"] = q_size
 
-                if q_size > 20:
+                if q_size > 3:
                     dropped = 0
-                    while audio_frame_queue.qsize() > 10:
+                    while audio_frame_queue.qsize() > 2:
                         try:
                             audio_frame_queue.get_nowait()
                             dropped += 1
@@ -851,9 +915,8 @@ async def voice_v2_endpoint(
                             break
                     if dropped > 0:
                         telemetry["performance"]["dropped_frames"] += dropped
-                        logger.warning(
-                            f"[VoiceSession {call_session_id}] Audio queue backlog ({q_size} frames): "
-                            f"dropped {dropped} oldest frames to preserve real-time lockstep"
+                        logger.debug(
+                            f"[VoiceSession {call_session_id}] Audio queue latency trimmed ({q_size} -> 2 frames, dropped {dropped} stale frames)"
                         )
 
                 frame_to_send: np.ndarray | None = None
