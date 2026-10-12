@@ -211,8 +211,9 @@ class PersonaPlexWorkerClient:
                     except Exception:
                         pass
 
-        if not is_official and not valid_pt_on_disk and not valid_wav_on_disk:
-            # Map unknown non-existent voice to closest official preset so PersonaPlex S2S worker never crashes
+        if not is_official and not valid_pt_on_disk:
+            # Moshi's --voice-prompt-dir accepts ONLY PyTorch .pt tensor files.
+            # If the voice is a raw .wav file without an extracted .pt tensor, map to the closest official preset.
             is_female = "female" in getattr(persona, "gender", "").lower()
             if not is_female and hasattr(persona, "name"):
                 name_l = persona.name.lower()
@@ -221,7 +222,7 @@ class PersonaPlexWorkerClient:
 
             fallback = "NATF0.pt" if is_female else "NATM1.pt"
             logger.info(
-                f"[VOICE ROUTING] Cloned voice profile '{voice}' mapped to base S2S preset '{fallback}' "
+                f"[VOICE ROUTING] Cloned/audio voice profile '{voice}' mapped to base S2S preset '{fallback}' "
                 f"for PersonaPlex full-duplex session."
             )
             voice = fallback

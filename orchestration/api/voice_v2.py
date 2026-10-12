@@ -1388,14 +1388,35 @@ async def voice_v2_endpoint(
 
     # 9. Finalize Call Session in DB, Telemetry, and Conversation JSON file
     commit_agent_turn()
-    duration_sec = max(0.0, time.time() - call_start_time)
-    telemetry["duration_sec"] = round(duration_sec, 2)
-    telemetry["close_reason"] = disconnect_reason
-    telemetry["closed_by"] = "client" if ("client" in disconnect_reason or "user" in disconnect_reason) else "server"
+    active_duration_sec = max(0.0, time.time() - call_stream_start)
+    session_duration_sec = max(0.0, time.time() - call_start_time)
 
     # Finalize dual-channel session audio recording
     rec_summary = audio_recorder.close()
+    rec_duration = rec_summary.get("duration_sec", round(active_duration_sec, 2))
+    effective_duration = rec_duration if (rec_duration and rec_duration > 0) else round(active_duration_sec, 2)
+
+    telemetry["duration_sec"] = effective_duration
+    telemetry["session_duration_sec"] = round(session_duration_sec, 2)
+    telemetry["close_reason"] = disconnect_reason
+    telemetry["closed_by"] = "client" if ("client" in disconnect_reason or "user" in disconnect_reason) else "server"
     telemetry["recording"] = rec_summary
+
+    # Ensure conversation turns are never completely empty if speech tokens were received
+    if not conversation_turns and current_agent_turn_text:
+        recovered = detokenize_sentencepiece_stream(current_agent_turn_text, agent_name=agent.name).strip()
+        if recovered:
+            conversation_turns.append({
+                "role": "assistant",
+                "text": recovered,
+                "interrupted": False,
+                "started_ms": 0.0,
+                "ended_ms": round(effective_duration * 1000.0, 1),
+                "duration_ms": round(effective_duration * 1000.0, 1),
+                "time_offset_sec": 0.0,
+                "timestamp": call_stream_start,
+                "words": len(recovered.split()),
+            })
 
     # Save complete conversation recording to JSON file
     convo_payload = {
@@ -1404,10 +1425,12 @@ async def voice_v2_endpoint(
         "agent_name": agent.name,
         "voice_id": resolved_voice,
         "status": "completed",
-        "started_at": call_start_time,
+        "started_at": call_stream_start,
+        "connected_at": call_start_time,
         "ended_at": time.time(),
-        "created_at_iso": datetime.datetime.fromtimestamp(call_start_time, tz=datetime.timezone.utc).isoformat(),
-        "duration_sec": round(duration_sec, 2),
+        "created_at_iso": datetime.datetime.fromtimestamp(call_stream_start, tz=datetime.timezone.utc).isoformat(),
+        "duration_sec": effective_duration,
+        "session_duration_sec": round(session_duration_sec, 2),
         "disconnect_reason": disconnect_reason,
         "closed_by": telemetry["closed_by"],
         "system_prompt": system_prompt,

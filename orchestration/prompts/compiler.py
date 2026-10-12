@@ -375,9 +375,19 @@ def compile_prompt(
                 "Ask ONE question at a time. Never repeat questions you already asked.\n"
             )
             clean_sys = identity_prefix + clean_sys
-        else:
-            # Reinforce anti-Moshi identity boundary
-            clean_sys = f"You are {eff_name} at Snapserve, never Moshi.\n" + clean_sys
+    # 4. Regional Accent & Cadence Alignment for Indian Personas
+    is_indian = any(fn in eff_name.lower() for fn in ("ananya", "priya", "kishore", "aarav", "rohan", "vikram", "neha", "divya")) or "india" in clean_sys.lower()
+    if is_indian:
+        # Strip conflicting American filler instructions if present
+        clean_sys = re.sub(r'Use natural fillers sparingly \([^)]+\)\.?', 'Speak in polite, articulate Indian English.', clean_sys, flags=re.IGNORECASE)
+        if "indian english" not in clean_sys.lower():
+            indian_accent_rules = (
+                "\n\n[Speech & Accent Directives]\n"
+                "You speak in authentic, polite, and natural Indian English. "
+                "Use clear Indian English cadence, vocabulary, and discourse markers ('Sure', 'Definitely', 'Understood', 'I will share the details', 'Right, right'). "
+                "Do NOT use American slang, drawls, or American conversational fillers like 'so', 'honestly', 'hmm'."
+            )
+            clean_sys = clean_sys.strip() + indian_accent_rules
 
     compiled_body = clean_sys.strip()
     final_prompt = wrap_system_prompt(compiled_body)
