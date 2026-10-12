@@ -616,6 +616,39 @@ class SessionManager:
             finally:
                 self._is_prepriming = False
 
+    async def claim_standby_if_matched(self, persona: PersonaConfig, session_id: str) -> VoiceSession | None:
+        """
+        Fast-claim pre-primed standby session if voice prompts match.
+        If voice prompts do NOT match, releases standby worker back to IDLE so it can be acquired cleanly.
+        Returns VoiceSession if claimed, or None.
+        """
+        async with self._standby_lock:
+            if self._standby_session is not None and self._standby_session.state == SessionState.ACTIVE:
+                standby_voice = self._standby_session.persona.get_normalized_voice_prompt()
+                req_voice = persona.get_normalized_voice_prompt()
+                if standby_voice == req_voice:
+                    session = self._standby_session
+                    self._standby_session = None
+                    session.session_id = session_id
+                    session.metrics.session_id = session_id
+                    session.metrics.persona_id = persona.id
+                    session.metrics.claimed_from_standby = True
+                    session.is_standby = False
+                    session.is_claimed_from_standby = True
+                    session.persona = persona
+                    self._active_sessions[session_id] = session
+                    logger.info(f"[STANDBY] Fast-claimed pre-primed standby session for {session_id} (<10ms lease)!")
+                    if self.enable_standby and self.pool.get_stats()["idle_workers"] > 0:
+                        asyncio.create_task(self.preprime_standby(persona))
+                    return session
+                else:
+                    logger.info(f"[STANDBY] Standby voice mismatch ({standby_voice} != {req_voice}); yielding worker to pool for fresh connect.")
+                    old_standby = self._standby_session
+                    self._standby_session = None
+                    await old_standby.close()
+                    return None
+            return None
+
     async def create_session(
         self,
         persona: PersonaConfig,

@@ -512,13 +512,11 @@ async def voice_v2_endpoint(
 
     if session_manager and session_manager.has_standby():
         try:
-            candidate = await session_manager.create_session(
+            candidate = await session_manager.claim_standby_if_matched(
                 persona=persona_cfg,
                 session_id=call_session_id,
-                timeout=0.1,
-                use_standby=True,
             )
-            if candidate.is_claimed_from_standby:
+            if candidate is not None:
                 standby_claimed_session = candidate
                 claimed_from_standby = True
                 worker_client = candidate.worker
@@ -528,7 +526,7 @@ async def voice_v2_endpoint(
 
     if worker_client is None:
         try:
-            worker_client = await worker_pool.acquire_worker(session_id=call_session_id, timeout=2.0)
+            worker_client = await worker_pool.acquire_worker(session_id=call_session_id, timeout=10.0)
         except Exception as e:
             priming_stop.set()
             priming_ticker.cancel()
