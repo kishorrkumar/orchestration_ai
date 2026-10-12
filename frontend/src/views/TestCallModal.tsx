@@ -604,7 +604,9 @@ export const TestCallModal: React.FC<TestCallModalProps> = ({ agent, onClose }) 
       mediaStreamRef.current = null
     }
     if (audioContextRef.current) {
-      audioContextRef.current.close().catch(console.error)
+      if (audioContextRef.current.state !== 'closed') {
+        audioContextRef.current.close().catch(() => {})
+      }
       audioContextRef.current = null
     }
   }

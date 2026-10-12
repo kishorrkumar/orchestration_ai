@@ -1319,7 +1319,7 @@ LEAN_STUDIO_HTML = r"""<!DOCTYPE html>
               <div>
                 <div style={{ fontWeight: 700, fontSize: 16 }}>{agent?.name || "Voice Agent"}</div>
                 <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>
-                  16 kHz Full-Duplex S2S • {formatDuration(callDuration)}
+                  Full-Duplex S2S • {formatDuration(callDuration)}
                 </div>
               </div>
               <div className="badge badge-published" style={{ padding: '4px 10px' }}>

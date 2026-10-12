@@ -17,9 +17,10 @@ __pycache__/
 .coverage
 htmlcov/
 build/
-dist/
+/dist/
 *.egg-info/
-frontend/dist/
+!frontend/dist/
+!frontend/dist/**
 
 # Logs and outputs
 *.log

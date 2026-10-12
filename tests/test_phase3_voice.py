@@ -8,7 +8,10 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import uuid
+
+os.environ["WORKER_ALLOW_RAW_PCM"] = "1"
 
 import numpy as np
 import pytest
