@@ -1094,6 +1094,7 @@ LEAN_STUDIO_HTML = r"""<!DOCTYPE html>
       const audioCtxRef = useRef(null);
       const micStreamRef = useRef(null);
       const processorRef = useRef(null);
+      const scheduledTimeRef = useRef(0);
       const transcriptBoxRef = useRef(null);
       const timerRef = useRef(null);
 
@@ -1110,8 +1111,12 @@ LEAN_STUDIO_HTML = r"""<!DOCTYPE html>
 
       const startCallSession = async () => {
         try {
+          scheduledTimeRef.current = 0;
           const AudioContext = window.AudioContext || window.webkitAudioContext;
           const audioCtx = new AudioContext({ sampleRate: 16000 });
+          if (audioCtx.state === "suspended") {
+            await audioCtx.resume();
+          }
           audioCtxRef.current = audioCtx;
 
           // Microphone 16kHz
@@ -1126,6 +1131,11 @@ LEAN_STUDIO_HTML = r"""<!DOCTYPE html>
           });
           micStreamRef.current = stream;
 
+          // Double check audioCtx state after async mic permission prompt
+          if (audioCtx.state === "suspended") {
+            await audioCtx.resume();
+          }
+
           // Connect WebSocket to /v2/voice
           const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
           const wsUrl = `${protocol}//${window.location.host}/v2/voice?agent_id=${agent.id}&sample_rate=16000&codec=pcm16`;
@@ -1133,7 +1143,10 @@ LEAN_STUDIO_HTML = r"""<!DOCTYPE html>
           wsRef.current = ws;
           ws.binaryType = "arraybuffer";
 
-          ws.onopen = () => {
+          ws.onopen = async () => {
+            if (audioCtx.state === "suspended") {
+              await audioCtx.resume();
+            }
             setStatus("Connected • Listening");
             // Start timer
             const t0 = Date.now();
@@ -1149,6 +1162,7 @@ LEAN_STUDIO_HTML = r"""<!DOCTYPE html>
             if (typeof event.data === "string") {
               try {
                 const msg = JSON.parse(event.data);
+                console.log("[WS MSG]", msg.type, msg);
                 if (msg.type === "transcript") {
                   setIsAgentSpeaking(true);
                   setTranscripts(prev => {
@@ -1163,10 +1177,21 @@ LEAN_STUDIO_HTML = r"""<!DOCTYPE html>
                 } else if (msg.type === "call_ended") {
                   setCallEndedInfo(msg);
                   setStatus(`Call Ended (${msg.reason})`);
+                } else if (msg.type === "status") {
+                  if (msg.message) setStatus(msg.message);
+                } else if (msg.type === "session_started") {
+                  setStatus("Live • Listening");
+                } else if (msg.type === "error") {
+                  setStatus("Error: " + (msg.message || "Server error"));
+                } else if (msg.type === "interrupted") {
+                  setIsAgentSpeaking(false);
                 }
               } catch (e) {}
             } else if (event.data instanceof ArrayBuffer) {
               // Playback 16 kHz PCM
+              if (audioCtx.state === "suspended") {
+                audioCtx.resume().catch(() => {});
+              }
               setIsAgentSpeaking(true);
               playPCM16(event.data, audioCtx);
               setTimeout(() => setIsAgentSpeaking(false), 500);
@@ -1191,6 +1216,7 @@ LEAN_STUDIO_HTML = r"""<!DOCTYPE html>
         const processor = audioCtx.createScriptProcessor(bufferSize, 1, 1);
 
         let accumulator = [];
+        let framesCount = 0;
         processor.onaudioprocess = (e) => {
           if (ws.readyState !== WebSocket.OPEN) return;
           const inputData = e.inputBuffer.getChannelData(0);
@@ -1214,6 +1240,10 @@ LEAN_STUDIO_HTML = r"""<!DOCTYPE html>
               pcm16[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
             }
             ws.send(pcm16.buffer);
+            framesCount++;
+            if (framesCount === 1) {
+              console.log("[MIC] First audio frame sent to server (16kHz PCM16)");
+            }
           }
         };
 
@@ -1222,8 +1252,10 @@ LEAN_STUDIO_HTML = r"""<!DOCTYPE html>
         processorRef.current = processor;
       };
 
-      let scheduledTime = 0;
       const playPCM16 = (arrayBuffer, audioCtx) => {
+        if (audioCtx.state === "suspended") {
+          audioCtx.resume().catch(() => {});
+        }
         const pcm16 = new Int16Array(arrayBuffer);
         const float32 = new Float32Array(pcm16.length);
         for (let i = 0; i < pcm16.length; i++) {
@@ -1238,9 +1270,11 @@ LEAN_STUDIO_HTML = r"""<!DOCTYPE html>
         node.connect(audioCtx.destination);
 
         const now = audioCtx.currentTime;
-        if (scheduledTime < now) scheduledTime = now + 0.02;
-        node.start(scheduledTime);
-        scheduledTime += buffer.duration;
+        if (scheduledTimeRef.current < now || scheduledTimeRef.current > now + 0.3) {
+          scheduledTimeRef.current = now + 0.02;
+        }
+        node.start(scheduledTimeRef.current);
+        scheduledTimeRef.current += buffer.duration;
       };
 
       const endCallSession = () => {
