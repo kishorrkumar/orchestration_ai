@@ -40,6 +40,8 @@ PUBLIC_FIGURE_BLOCKLIST = {
     "kamala harris", "narendra modi", "modi", "elon musk", "musk",
     "bill gates", "steve jobs", "mark zuckerberg", "jeff bezos",
     "morgan freeman", "david attenborough", "taylor swift", "eminem",
+    "amit shah", "rahul gandhi", "rishi sunak", "keir starmer",
+    "emmanuel macron", "vladimir putin", "xi jinping", "justin trudeau",
 }
 
 
@@ -151,23 +153,34 @@ class VoiceCloner:
     def get_voice_path(self, voice_id: str) -> pathlib.Path | None:
         """Return the conditioning artifact path (.wav or .pt)."""
         clean = voice_id.strip()
+        requested_pt = clean.endswith(".pt")
         if clean.endswith(".wav") or clean.endswith(".pt"):
             clean = pathlib.Path(clean).stem
 
         # 1. Check VoiceCloner data dir subfolder
         v_dir = self.data_dir / clean
-        pt_file = v_dir / f"{clean}.pt"
-        if pt_file.exists():
-            return pt_file
-        wav_file = v_dir / f"{clean}.wav"
-        if wav_file.exists():
-            return wav_file
+        if requested_pt:
+            pt_file = v_dir / f"{clean}.pt"
+            if pt_file.exists():
+                return pt_file
+            wav_file = v_dir / f"{clean}.wav"
+            if wav_file.exists():
+                return wav_file
+        else:
+            wav_file = v_dir / f"{clean}.wav"
+            if wav_file.exists():
+                return wav_file
+            pt_file = v_dir / f"{clean}.pt"
+            if pt_file.exists():
+                return pt_file
 
         # 2. Check flat in data_dir
-        if (self.data_dir / f"{clean}.wav").exists():
+        if not requested_pt and (self.data_dir / f"{clean}.wav").exists():
             return self.data_dir / f"{clean}.wav"
         if (self.data_dir / f"{clean}.pt").exists():
             return self.data_dir / f"{clean}.pt"
+        if (self.data_dir / f"{clean}.wav").exists():
+            return self.data_dir / f"{clean}.wav"
 
         # 3. Check voices/ and cache directories
         candidate_dirs = [
@@ -179,9 +192,10 @@ class VoiceCloner:
             pathlib.Path("/data/huggingface/voices"),
             pathlib.Path(os.environ.get("HF_HOME", "/workspace/huggingface")) / "voices",
         ]
+        extensions = (".pt", ".wav") if requested_pt else (".wav", ".pt")
         for cdir in candidate_dirs:
             if cdir and cdir.is_dir():
-                for ext in (".wav", ".pt"):
+                for ext in extensions:
                     candidate = cdir / f"{clean}{ext}"
                     if candidate.exists() and candidate.stat().st_size > 1024:
                         return candidate
@@ -558,6 +572,29 @@ class VoiceCloner:
         wav_path = voice_dir / f"{voice_id}.wav"
         sf.write(str(wav_path), final_audio, 24000, subtype="PCM_16")
 
+        # Compile PyTorch .pt voice prompt tensor artifact
+        pt_path = voice_dir / f"{voice_id}.pt"
+        voice_tensor_payload: dict[str, Any] = {
+            "audio": final_audio,
+            "sample_rate": 24000,
+            "duration_sec": round(len(final_audio) / 24000.0, 2),
+            "source_sha256": primary_hash,
+            "voice_name": voice_name,
+            "voice_id": voice_id,
+            "created_at": time.time(),
+        }
+        try:
+            import torch
+            tensor_audio = torch.from_numpy(final_audio.copy())
+            if tensor_audio.ndim == 1:
+                tensor_audio = tensor_audio.unsqueeze(0)
+            voice_tensor_payload["audio"] = tensor_audio
+            torch.save(voice_tensor_payload, str(pt_path))
+        except Exception:
+            import pickle
+            with open(pt_path, "wb") as f:
+                pickle.dump(voice_tensor_payload, f, protocol=4)
+
         # Mirror directly into all worker search directories so Moshi worker can find it immediately via --voice-prompt-dir
         # Guard: Only mirror if this is the default/production cloner (do not pollute if running in pytest/tmp_path)
         is_temp_or_test = "tmp" in str(self.data_dir).lower() or "pytest" in str(self.data_dir).lower() or "temp" in str(self.data_dir).lower()
@@ -577,6 +614,7 @@ class VoiceCloner:
                     try:
                         mdir.mkdir(parents=True, exist_ok=True)
                         sf.write(str(mdir / f"{voice_id}.wav"), final_audio, 24000, subtype="PCM_16")
+                        shutil.copy2(str(pt_path), str(mdir / f"{voice_id}.pt"))
                     except Exception as m_err:
                         logger.debug(f"Notice mirroring voice to {mdir}: {m_err}")
 
@@ -611,6 +649,7 @@ class VoiceCloner:
             "tag": "Custom Cloned Voice",
             "description": f"Custom voice cloned from reference sample ({round(len(final_audio)/24000.0, 1)}s)",
             "artifact_wav": str(wav_path),
+            "artifact_pt": str(pt_path),
             "metrics": metrics,
             "qa_passed": True,  # Verified passing upon ingest
             "qa_score": qa_sim,

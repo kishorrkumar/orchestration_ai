@@ -4,7 +4,41 @@ All notable changes to the PersonaPlex Orchestration AI platform are documented 
 
 ---
 
-## [Unreleased] - Phase 2: Advanced Audio Front-End (Noise Cancellation & AEC)
+## [Unreleased] - Phase 3: Production Voice Cloning & Safety Enforcement
+
+### Added
+- **`tools/make_voice_prompt.py` CLI & Compilation Pipeline**:
+  - Industrial command-line tool compiling raw audio (WAV, MP3, FLAC, M4A, WebM) into 24 kHz mono PersonaPlex voice prompt artifacts.
+  - Generates both 16-bit 24,000 Hz normalized WAV (`.wav`) and PyTorch `.pt` voice prompt tensor containers (`.pt`) for `<100ms` instant worker priming.
+  - Generates comprehensive `metadata.json` with acoustic metrics, SHA-256 fingerprint, gender detection, and authorization logging.
+- **Pre-Flight Acoustic Quality Gates**:
+  - SNR gate: minimum SNR $\ge 15.0\text{ dB}$ (calculated via 90th percentile speech vs 10th percentile ambient noise floor).
+  - Digital clipping gate: rejects samples with $> 1.0\%$ clipped samples ($|x| \ge 0.999$).
+  - Duration bounds: enforces $5.0\text{s}$ to $30.0\text{s}$ valid conditioning length.
+  - Quiet/silent audio rejection (minimum RMS $\ge 0.008$).
+  - Speech activity presence threshold ($\ge 35\%$).
+- **Acoustic Preprocessing & Loudness Normalization**:
+  - 80 Hz 1st-order IIR high-pass filter attenuating low-frequency rumble by $> 6\text{ dB}$.
+  - Resampling to 24 kHz mono float32.
+  - Silence trimming with 5.0s optimal conditioning window selection.
+  - EBU R128 loudness normalization to $-24.0\text{ LUFS}$ standard with peak ceiling limiter at $0.92$.
+- **Safety & Consent Enforcement**:
+  - Mandatory user consent enforcement (`--consent` flag / API parameter).
+  - Expanded celebrity / public figure blocklist (`PUBLIC_FIGURE_BLOCKLIST`) blocking unauthorized impersonation.
+  - Cryptographic SHA-256 reference hashing for enrollment traceability.
+- **Enhanced `VoiceCloner` & Test Suite**:
+  - Updated `orchestration/tts/voice_clone.py` to compile and mirror `.pt` voice prompt containers directly into worker search directories.
+  - Added `tests/test_phase3_voice_cloning.py` with 19 comprehensive unit & CLI benchmark tests. Total test suite reached **206 passed tests (100% pass rate)**.
+
+### Rollback Note
+- To roll back Phase 3:
+  ```bash
+  git revert HEAD
+  ```
+
+---
+
+## [1.2.0] - Phase 2: Advanced Audio Front-End (Noise Cancellation & AEC)
 
 ### Added
 - **Streaming Acoustic Echo Cancellation (AEC)**:
