@@ -86,6 +86,12 @@ async def test_gateway_rest_routes():
         assert len(workers) == 1
         assert workers[0]["id"] == "gpu-node-0"
 
+        # 5b. Readiness check with registered worker
+        r = await client.get("/readyz")
+        assert r.status_code == 200
+        assert r.json()["status"] == "ready"
+        assert r.json()["pool"]["total_workers"] == 1
+
         # 6. Delete custom agent
         r = await client.delete("/v1/agents/drone_support")
         assert r.status_code == 200

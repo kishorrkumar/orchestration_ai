@@ -11,7 +11,7 @@ Skippable in CI or environments without 16GB+ VRAM GPU.
 import os
 
 import pytest
-import torch
+torch = pytest.importorskip("torch")
 
 
 @pytest.mark.gpu

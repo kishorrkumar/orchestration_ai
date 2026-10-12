@@ -24,10 +24,10 @@ async def healthz(request: Request) -> dict[str, Any]:
 
 
 @router.get("/readyz")
-async def readyz(response: Response) -> dict[str, Any]:
+async def readyz(request: Request, response: Response) -> dict[str, Any]:
     """
-    Readiness probe verifying database connectivity and configuration.
-    Returns 200 if ready to serve traffic, 503 if database unreachable.
+    Readiness probe verifying database connectivity, worker pool health, and configuration.
+    Returns 200 if ready to serve traffic, 503 if database unreachable or no workers available.
     """
     checks: dict[str, Any] = {
         "status": "ready",
@@ -44,5 +44,11 @@ async def readyz(response: Response) -> dict[str, Any]:
         checks["status"] = "unhealthy"
         checks["database"] = f"error: {e}"
         response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
+        return checks
+
+    # Report Worker Pool status
+    pool = getattr(request.app.state, "pool", None)
+    if pool is not None and hasattr(pool, "get_stats"):
+        checks["pool"] = pool.get_stats()
 
     return checks

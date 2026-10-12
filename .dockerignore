@@ -1,0 +1,52 @@
+# Git & GitHub
+.git/
+.gitignore
+.github/
+
+# Virtual Environments
+.venv/
+.venv-*/
+env/
+venv/
+
+# Python caches & build artifacts
+__pycache__/
+*.py[cod]
+*$py.class
+*.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+build/
+dist/
+*.egg-info/
+
+# Node modules & frontend builds
+node_modules/
+**/node_modules/
+frontend/dist/
+frontend/node_modules/
+
+# Secrets, configs & certs
+.env
+.env*.local
+.secrets/
+ssl/
+*.pem
+*.key
+*.crt
+
+# Evaluation outputs, logs, conversations
+logs/
+*.log
+conversations/
+recordings/
+eval_out/
+*.tmp
+
+# Upstream reference clone
+_personaplex_upstream/
+
+# Large model downloads (mounted as volume if needed)
+models/

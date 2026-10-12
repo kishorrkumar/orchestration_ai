@@ -1,19 +1,25 @@
 # Virtual environment
 .venv/
-.venv-gpu/
+.venv-*/
 env/
 venv/
 
 # Upstream reference clone (not committed)
 _personaplex_upstream/
 
-# Python cache
+# Python cache & typechecker
 __pycache__/
 *.py[cod]
 *$py.class
 *.pytest_cache/
+.mypy_cache/
+.ruff_cache/
 .coverage
 htmlcov/
+build/
+dist/
+*.egg-info/
+frontend/dist/
 
 # Logs and outputs
 *.log
@@ -43,15 +49,21 @@ data/cloned_voices/*
 !data/cloned_voices/kkishorekumar/**
 eval_out/
 node_modules/
+**/node_modules/
 .agents/
 skills-lock.json
 package-lock.json
 
-# Local secrets
+# Local secrets & SSL certs
 .secrets/
 .env
 .env*.local
+ssl/
+*.pem
+*.key
+*.crt
 
 conversations/
 logs/
 recordings/
+

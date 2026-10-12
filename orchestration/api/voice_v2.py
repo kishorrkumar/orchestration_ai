@@ -1466,7 +1466,7 @@ async def voice_v2_endpoint(
             await call_svc.end_session(
                 session_id=call_session_id,
                 end_reason=disconnect_reason,
-                duration_sec=duration_sec,
+                duration_sec=effective_duration,
             )
             await db.commit()
     except Exception as db_err:

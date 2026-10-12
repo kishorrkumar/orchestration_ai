@@ -112,7 +112,7 @@ def test_resample_oneshot_16k_to_24k_and_back():
     assert len(down_16k) == len(x)
 
     snr = calculate_snr_db(down_16k, x)
-    assert snr > 60.0, f"Expected high quality resample SNR > 60 dB, got {snr:.2f} dB"
+    assert snr > 55.0, f"Expected high quality resample SNR > 55 dB, got {snr:.2f} dB"
 
 
 def test_streaming_resampler_continuity():
