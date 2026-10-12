@@ -175,6 +175,17 @@ class Settings(BaseSettings):
     # 7. Configuration Paths
     AGENT_YAML_PATH: str = Field(default="agent.yaml", description="Path to agent configuration YAML file")
 
+    # 8. Phase 1: Session Lifecycle, Timeouts & Backpressure
+    IDLE_SOFT_SILENCE_SEC: float = Field(default=10.0, description="Inactivity seconds before conversational soft nudge")
+    IDLE_HARD_SILENCE_SEC: float = Field(default=25.0, description="Inactivity seconds before terminating call")
+    MAX_CALL_DURATION_SEC: float = Field(default=900.0, description="Max session duration cap in seconds (15m)")
+    POOL_ACQUIRE_TIMEOUT_SEC: float = Field(default=8.0, description="Max seconds to wait in queue for an idle GPU worker")
+    POOL_MAX_WAIT_QUEUE: int = Field(default=5, description="Max queued requests waiting for a worker before fast reject")
+    WORKER_RETRY_ATTEMPTS: int = Field(default=3, description="Retry attempts for transient worker failures")
+    WORKER_RETRY_BACKOFF_SEC: float = Field(default=0.5, description="Initial backoff for worker retries")
+    ENABLE_CPU_OFFLOAD: bool = Field(default=False, description="Flag for upstream CPU offload support")
+    ENABLE_STRUCTURED_LOGGING: bool = Field(default=True, description="Emit JSON formatted logs")
+
     # Active Agent Configuration instance
     agent: AgentConfig = Field(default_factory=AgentConfig)
 

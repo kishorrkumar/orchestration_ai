@@ -33,6 +33,8 @@ from ..protocol.audio import (
     MODEL_SAMPLE_RATE,
 )
 from ..protocol.messages import AudioMessage, ControlAction, TextMessage
+from ..shared.logging import bind_session_context, clear_session_context
+from ..telemetry.metrics import metrics_collector
 from ..tts.voice_clone import default_voice_cloner
 from ..worker.client import PersonaPlexWorkerClient
 from ..worker.pool import WorkerPool
@@ -422,6 +424,8 @@ async def voice_v2_endpoint(
         oldest_k = next(iter(SESSION_DEBUG_LOGS))
         del SESSION_DEBUG_LOGS[oldest_k]
     SESSION_DEBUG_LOGS[call_session_id] = telemetry
+    bind_session_context(session_id=call_session_id, agent_id=agent.id)
+    metrics_collector.record_session_start()
 
     # Dual-channel blackbox audio recorder (Channel 0: Caller, Channel 1: Assistant)
     audio_recorder = SessionAudioRecorder(
@@ -430,13 +434,17 @@ async def voice_v2_endpoint(
         enabled=record_session,
     )
 
-    # 4. Initialize EndOfCallDetector
-    effective_silence_sec = float(end_silence_sec) if (end_silence_sec and float(end_silence_sec) > 0) else 1800.0
-    effective_max_duration = float(max_duration_sec) if (max_duration_sec and float(max_duration_sec) > 0) else 1800.0
+    # 4. Initialize EndOfCallDetector with dual idle/silence timeouts
+    default_hard_silence = float(getattr(app_settings, "IDLE_HARD_SILENCE_SEC", 25.0))
+    default_soft_silence = float(getattr(app_settings, "IDLE_SOFT_SILENCE_SEC", 10.0))
+    default_max_duration = float(getattr(app_settings, "MAX_CALL_DURATION_SEC", 900.0))
+    effective_silence_sec = float(end_silence_sec) if (end_silence_sec and float(end_silence_sec) > 0) else default_hard_silence
+    effective_max_duration = float(max_duration_sec) if (max_duration_sec and float(max_duration_sec) > 0) else default_max_duration
     detector = EndOfCallDetector(
         ending_text=ending_text,
         silence_timeout_sec=effective_silence_sec,
         max_duration_sec=effective_max_duration,
+        soft_silence_timeout_sec=default_soft_silence,
     )
 
     # 5. Initialize Inbound Framing Processor, CallerAudioCleaner & Outbound Resampler
@@ -525,8 +533,9 @@ async def voice_v2_endpoint(
             logger.debug(f"Standby claim bypass note: {e}")
 
     if worker_client is None:
+        acquire_timeout = float(getattr(app_settings, "POOL_ACQUIRE_TIMEOUT_SEC", 8.0))
         try:
-            worker_client = await worker_pool.acquire_worker(session_id=call_session_id, timeout=10.0)
+            worker_client = await worker_pool.acquire_worker(session_id=call_session_id, timeout=acquire_timeout)
         except Exception as e:
             priming_stop.set()
             priming_ticker.cancel()
@@ -539,7 +548,16 @@ async def voice_v2_endpoint(
             return
 
         try:
-            connect_task = asyncio.create_task(worker_client.connect(session_id=call_session_id, persona=persona_cfg))
+            retry_attempts = int(getattr(app_settings, "WORKER_RETRY_ATTEMPTS", 3))
+            retry_backoff = float(getattr(app_settings, "WORKER_RETRY_BACKOFF_SEC", 0.5))
+            connect_task = asyncio.create_task(
+                worker_client.connect_with_retry(
+                    session_id=call_session_id,
+                    persona=persona_cfg,
+                    max_attempts=retry_attempts,
+                    backoff_sec=retry_backoff,
+                )
+            )
             await connect_task
         except asyncio.CancelledError:
             logger.info("Worker connect cancelled due to early client disconnect.")
@@ -1301,6 +1319,20 @@ async def voice_v2_endpoint(
             while not stop_event.is_set():
                 await asyncio.sleep(0.1)
 
+                # Soft silence check (conversational nudge event to caller)
+                if detector.check_soft_silence(time.time()):
+                    silence_sec = round(detector.get_silence_duration(time.time()), 1)
+                    logger.info(f"[VoiceSession {call_session_id}] Soft silence threshold reached ({silence_sec}s). Emitting soft_silence_prompt event.")
+                    try:
+                        await websocket.send_json({
+                            "type": "telemetry",
+                            "event": "soft_silence_prompt",
+                            "message": "Caller inactivity detected. Soft re-engagement recommended.",
+                            "silence_sec": silence_sec,
+                        })
+                    except Exception:
+                        pass
+
                 term_reason = detector.check_termination(time.time())
                 if term_reason:
                     logger.warning(f"[VoiceSession {call_session_id}] EndOfCallDetector termination triggered: {term_reason}")
@@ -1313,6 +1345,7 @@ async def voice_v2_endpoint(
                         pass
                     trigger_stop(term_reason)
                     break
+
 
                 # Seamless Session Rollover check (trigger background rollover before 240s LM context limit)
                 if (
@@ -1490,4 +1523,8 @@ async def voice_v2_endpoint(
         await websocket.close(code=close_code, reason=clean_reason)
     except Exception:
         pass
+    finally:
+        metrics_collector.record_session_end(reason=disconnect_reason)
+        clear_session_context()
+
 

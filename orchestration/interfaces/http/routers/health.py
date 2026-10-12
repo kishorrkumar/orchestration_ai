@@ -52,3 +52,13 @@ async def readyz(request: Request, response: Response) -> dict[str, Any]:
         checks["pool"] = pool.get_stats()
 
     return checks
+
+
+@router.get("/metrics", status_code=status.HTTP_200_OK)
+async def metrics(request: Request) -> dict[str, Any]:
+    """Operational Prometheus/Datadog compatible metrics endpoint."""
+    from orchestration.telemetry.metrics import metrics_collector
+    pool = getattr(request.app.state, "pool", None)
+    pool_stats = pool.get_stats() if (pool is not None and hasattr(pool, "get_stats")) else {}
+    return metrics_collector.get_summary(pool_stats=pool_stats)
+

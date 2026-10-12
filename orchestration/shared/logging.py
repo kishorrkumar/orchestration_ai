@@ -67,3 +67,19 @@ def get_logger(name: str | None = None) -> Any:
     if structlog is not None:
         return structlog.get_logger(name)
     return logging.getLogger(name or "root")
+
+
+def bind_session_context(session_id: str, agent_id: str | None = None, **kwargs: Any) -> None:
+    """Bind correlation identifiers into thread/task local contextvars for all downstream logs."""
+    if structlog is not None:
+        ctx: dict[str, Any] = {"session_id": session_id}
+        if agent_id:
+            ctx["agent_id"] = agent_id
+        ctx.update(kwargs)
+        structlog.contextvars.bind_contextvars(**ctx)
+
+
+def clear_session_context() -> None:
+    """Clear correlation identifiers from current contextvars."""
+    if structlog is not None:
+        structlog.contextvars.clear_contextvars()

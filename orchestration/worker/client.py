@@ -333,6 +333,33 @@ class PersonaPlexWorkerClient:
             err_desc = f"{type(e).__name__}: {e!s}" if str(e).strip() else type(e).__name__
             raise WorkerConnectionError(f"Failed to connect worker {self.worker_id}: {err_desc}") from e
 
+    async def connect_with_retry(
+        self,
+        session_id: str,
+        persona: PersonaConfig,
+        max_attempts: int = 3,
+        backoff_sec: float = 0.5,
+    ) -> None:
+        """
+        Attempt connection with exponential backoff on transient connection failures.
+        """
+        last_err: Exception | None = None
+        for attempt in range(1, max_attempts + 1):
+            try:
+                await self.connect(session_id=session_id, persona=persona)
+                return
+            except Exception as e:
+                last_err = e
+                logger.warning(
+                    f"Worker {self.worker_id} connection attempt {attempt}/{max_attempts} failed: {e}"
+                )
+                await self.close(mark_idle=False)
+                if attempt < max_attempts:
+                    await asyncio.sleep(backoff_sec * (2 ** (attempt - 1)))
+        raise WorkerConnectionError(
+            f"Worker {self.worker_id} failed to connect after {max_attempts} attempts: {last_err}"
+        ) from last_err
+
     async def send_audio(self, audio_data: bytes | np.ndarray) -> int:
         """
         Send audio frame upstream (Kind 0x01).

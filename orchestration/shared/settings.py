@@ -63,6 +63,18 @@ class Settings(BaseSettings):
     api_key: str | None = Field(default=None, description="Optional bearer token / API key")
     rate_limit_per_minute: int = Field(default=60, description="Max API requests per minute per IP")
 
+    # Phase 1: Session Lifecycle & Timeouts
+    idle_soft_silence_sec: float = Field(default=10.0, description="Inactivity seconds before conversational soft nudge")
+    idle_hard_silence_sec: float = Field(default=25.0, description="Inactivity seconds before terminating call")
+    max_call_duration_sec: float = Field(default=900.0, description="Max session duration cap in seconds (15m)")
+    pool_acquire_timeout_sec: float = Field(default=8.0, description="Max seconds to wait in queue for an idle GPU worker")
+    pool_max_wait_queue: int = Field(default=5, description="Max queued requests waiting for a worker before fast reject")
+    worker_retry_attempts: int = Field(default=3, description="Retry attempts for transient worker failures")
+    worker_retry_backoff_sec: float = Field(default=0.5, description="Initial backoff for worker retries")
+    enable_cpu_offload: bool = Field(default=False, description="Flag for upstream CPU offload support")
+    enable_structured_logging: bool = Field(default=True, description="Emit JSON formatted logs")
+    enable_standby_worker: bool = Field(default=True, description="Pre-prime warm worker in background")
+
 
 # Global singleton settings instance
 settings = Settings()

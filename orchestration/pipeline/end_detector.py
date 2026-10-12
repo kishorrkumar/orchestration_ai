@@ -49,6 +49,7 @@ class EndOfCallDetector:
         max_duration_sec: float = 1800.0,
         fuzzy_threshold: float = 0.80,
         min_call_duration_sec: float = 0.0,
+        soft_silence_timeout_sec: float | None = None,
     ):
         self.ending_text = ending_text
         self.quiet_window_sec = quiet_window_sec
@@ -56,6 +57,7 @@ class EndOfCallDetector:
         self.max_duration_sec = max_duration_sec
         self.fuzzy_threshold = fuzzy_threshold
         self.min_call_duration_sec = min_call_duration_sec
+        self.soft_silence_timeout_sec = soft_silence_timeout_sec
 
         # Extract target closing clauses from ending text
         self.target_clauses = self._extract_target_clauses(ending_text)
@@ -68,6 +70,7 @@ class EndOfCallDetector:
         self.last_speech_time = 0.0
         self.session_start_time = 0.0
         self.is_active = False
+        self.soft_silence_triggered = False
 
     def _extract_target_clauses(self, text: str) -> List[str]:
         """Splits ending text into candidate closing phrases."""
@@ -94,6 +97,7 @@ class EndOfCallDetector:
         self.pending_hangup = False
         self.hangup_target_time = None
         self.is_active = True
+        self.soft_silence_triggered = False
 
     def on_agent_token(self, token: str, now: float) -> bool:
         """
@@ -153,6 +157,7 @@ class EndOfCallDetector:
         Returns True if a pending hangup was canceled.
         """
         self.last_speech_time = now
+        self.soft_silence_triggered = False
         canceled = False
 
         if self.pending_hangup:
@@ -170,6 +175,25 @@ class EndOfCallDetector:
         Resets silence timer to prevent premature silence timeout.
         """
         self.last_speech_time = now
+        self.soft_silence_triggered = False
+
+    def check_soft_silence(self, now: float) -> bool:
+        """
+        Checks if soft silence threshold has been reached without prior notification.
+        Returns True once per silent epoch until user speaks again.
+        """
+        if not self.is_active or self.soft_silence_timeout_sec is None:
+            return False
+        if not self.soft_silence_triggered and (now - self.last_speech_time) >= self.soft_silence_timeout_sec:
+            self.soft_silence_triggered = True
+            return True
+        return False
+
+    def get_silence_duration(self, now: float) -> float:
+        """Returns the current duration in seconds since user speech was last heard."""
+        if not self.is_active:
+            return 0.0
+        return max(0.0, now - self.last_speech_time)
 
     def check_termination(self, now: float) -> str | None:
         """
@@ -196,3 +220,4 @@ class EndOfCallDetector:
             return "max_duration"
 
         return None
+

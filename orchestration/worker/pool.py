@@ -40,12 +40,19 @@ class WorkerPool:
     to idle workers and managing their full-duplex session leases.
     """
 
-    def __init__(self, wait_timeout: float = 30.0, probe_on_acquire: bool = False):
+    def __init__(
+        self,
+        wait_timeout: float = 30.0,
+        probe_on_acquire: bool = False,
+        max_queue_size: int = 5,
+    ):
         self.wait_timeout = wait_timeout
         self.probe_on_acquire = probe_on_acquire
+        self.max_queue_size = max_queue_size
         self._workers: dict[str, PersonaPlexWorkerClient] = {}
         self._configs: dict[str, WorkerNodeConfig] = {}
         self._condition = asyncio.Condition()
+        self._waiting_count: int = 0
 
     def register_worker(self, config: WorkerNodeConfig) -> PersonaPlexWorkerClient:
         """Register a worker node with the pool."""
@@ -111,6 +118,14 @@ class WorkerPool:
                         logger.info(f"Leased worker {worker.worker_id} to session {session_id}")
                         return worker
 
+                # All workers currently busy or unhealthy
+                # Check bounded backpressure queue limit
+                if self._waiting_count >= self.max_queue_size:
+                    raise PoolCapacityExceededError(
+                        f"Worker wait queue saturated ({self._waiting_count}/{self.max_queue_size}). "
+                        f"Backpressure engaged to protect server capacity."
+                    )
+
                 remaining = deadline - time.time()
                 if remaining <= 0:
                     raise PoolCapacityExceededError(
@@ -118,12 +133,15 @@ class WorkerPool:
                         f"Please retry later."
                     )
 
+                self._waiting_count += 1
                 try:
                     await asyncio.wait_for(self._condition.wait(), timeout=remaining)
                 except TimeoutError:
                     raise PoolCapacityExceededError(
                         f"Timed out waiting for available worker ({wait_limit:.1f}s). All workers busy or unhealthy."
                     )
+                finally:
+                    self._waiting_count = max(0, self._waiting_count - 1)
 
     async def release_worker(self, worker_id: str, success: bool = True) -> None:
         """Release a worker back to the pool. Probes health if call failed."""
@@ -181,6 +199,8 @@ class WorkerPool:
             "idle_workers": idle,
             "busy_workers": busy,
             "unhealthy_workers": unhealthy,
+            "waiting_queue_depth": self._waiting_count,
+            "max_queue_size": self.max_queue_size,
             "utilization_pct": round((busy / total * 100.0) if total > 0 else 0.0, 1),
         }
 
