@@ -184,7 +184,11 @@ async def voice_v2_endpoint(
     audio_topk: int | None = Query(None, description="Audio top-k sampling"),
     text_topk: int | None = Query(None, description="Text top-k sampling"),
     record_session: bool = Query(True, description="Enable dual-channel 24kHz blackbox audio recording"),
+    denoise: bool = Query(True, description="Enable server-side neural noise suppression"),
+    denoise_mode: str = Query("rnnoise", description="Noise suppression mode: 'rnnoise', 'isolation', or 'bypass'"),
+    enable_aec: bool = Query(True, description="Enable acoustic echo cancellation against loudspeaker bleed"),
 ):
+
     """
     Production S2S WebSocket endpoint.
     Streaming 16 kHz (web) or 8 kHz (telephony G.711) full-duplex conversational voice.
@@ -455,17 +459,20 @@ async def voice_v2_endpoint(
         model_sample_rate=MODEL_SAMPLE_RATE,
         out_frame_samples=1920,
     )
+    effective_mode = denoise_mode if denoise else "bypass"
     cleaner = CallerAudioCleaner(
         sample_rate=MODEL_SAMPLE_RATE,
         frame_size=MODEL_FRAME_SAMPLES,
-        mode="isolation",
-        noise_suppression=True,
-        speaker_isolation=True,
-        suppression_strength=0.75,
+        mode=effective_mode,
+        noise_suppression=denoise,
+        speaker_isolation=(effective_mode == "isolation"),
+        suppression_strength=0.70,
         vad_hangover_sec=0.35,
         vad_threshold=0.45,
         min_speech_rms=0.010,
+        enable_aec=enable_aec,
     )
+
     out_resampler = AudioResampler(in_rate=MODEL_SAMPLE_RATE, out_rate=sample_rate, quality="QQ")
 
     # 5b. Conversation Turns & Instant Branded Greeting Playout (<150ms TTFA)
@@ -1094,6 +1101,9 @@ async def voice_v2_endpoint(
 
                             # Record assistant speech into dual-channel blackbox recorder (Channel 1)
                             audio_recorder.record_outbound(normalized_pcm)
+
+                            # Push reference signal to caller cleaner AEC for loudspeaker echo suppression
+                            cleaner.push_agent_reference(normalized_pcm)
 
                             resampled = out_resampler.resample_chunk(normalized_pcm, last=False)
                             clipped = soft_clip(resampled, threshold=0.92)

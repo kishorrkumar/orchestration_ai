@@ -31,10 +31,12 @@ from ..protocol.audio import (
     high_pass_filter,
     int16_to_float32,
 )
+from .aec import AcousticEchoCanceller
 
 logger = logging.getLogger("orchestration.audio.cleaner")
 
 RNNOISE_FRAME_SIZE_48K = 480  # 10 ms at 48 kHz
+
 
 
 class CallerAudioCleaner:
@@ -58,6 +60,7 @@ class CallerAudioCleaner:
         vad_hangover_sec: float = 0.35,
         vad_threshold: float = 0.45,
         min_speech_rms: float = 0.010,
+        enable_aec: bool = True,
     ) -> None:
         self.sample_rate = sample_rate
         self.frame_size = frame_size
@@ -73,6 +76,18 @@ class CallerAudioCleaner:
         self.vad_hangover_sec = vad_hangover_sec
         self.vad_threshold = vad_threshold
         self.min_speech_rms = min_speech_rms
+        self.enable_aec = enable_aec
+
+        # Acoustic Echo Canceller (AEC)
+        self.aec: AcousticEchoCanceller | None = (
+            AcousticEchoCanceller(
+                sample_rate=sample_rate,
+                frame_size=frame_size,
+                enabled=enable_aec,
+            )
+            if enable_aec
+            else None
+        )
 
         # State tracking
         self.last_speech_time: float = 0.0
@@ -80,6 +95,7 @@ class CallerAudioCleaner:
         self.last_vad_prob: float = 0.0
         self.last_rms: float = 0.0
         self.processing_latency_ms: float = 0.0
+
 
         # Accumulated input/output buffers
         self._accumulator = np.empty(0, dtype=np.float32)
@@ -144,6 +160,11 @@ class CallerAudioCleaner:
     def set_suppression_strength(self, strength: float) -> None:
         self.suppression_strength = max(0.0, min(1.0, strength))
 
+    def push_agent_reference(self, ref_audio: np.ndarray | bytes) -> None:
+        """Register agent outbound synthesized audio frame for acoustic echo cancellation."""
+        if self.aec is not None:
+            self.aec.push_reference(ref_audio)
+
     def process_chunk(self, raw_audio: np.ndarray | bytes) -> list[np.ndarray]:
         """
         Process incoming audio array (int16, float32, or raw bytes).
@@ -173,21 +194,26 @@ class CallerAudioCleaner:
             self.processing_latency_ms = (time.perf_counter() - t0) * 1000.0
             return frames
 
+        # 0. Acoustic Echo Cancellation (AEC) against agent speaker output
+        if self.aec is not None and self.aec.enabled:
+            samples_f32 = self.aec.process_inbound(samples_f32)
+
         # 1. High-Pass filter to strip rumble / 50Hz hum
         filtered = high_pass_filter(samples_f32, cutoff_hz=80.0, fs=self.sample_rate)
 
-        # 2. Resample 24k -> 48k for RNNoise
-        upsampled_48k = np.empty(len(filtered) * 2, dtype=np.float32)
-        upsampled_48k[0::2] = filtered
-        if len(filtered) > 1:
-            upsampled_48k[1:-1:2] = 0.5 * (filtered[:-1] + filtered[1:])
-            upsampled_48k[-1] = filtered[-1]
-        elif len(filtered) == 1:
-            upsampled_48k[1] = filtered[0]
 
-        # 3. RNNoise Recurrent Neural Suppression
+        # 2. Recurrent Neural Suppression (RNNoise) or Direct 24kHz Spectral Gate
         if self.noise_suppression:
             if self._rnnoise_state is not None and self._rnnoise_module is not None:
+                # Up-sample 24k -> 48k for librnnoise C engine
+                upsampled_48k = np.empty(len(filtered) * 2, dtype=np.float32)
+                upsampled_48k[0::2] = filtered
+                if len(filtered) > 1:
+                    upsampled_48k[1:-1:2] = 0.5 * (filtered[:-1] + filtered[1:])
+                    upsampled_48k[-1] = filtered[-1]
+                elif len(filtered) == 1:
+                    upsampled_48k[1] = filtered[0]
+
                 pcm_48k_i16 = (np.clip(upsampled_48k, -1.0, 1.0) * 32767.0).astype(np.int16)
                 cleaned_i16 = np.empty_like(pcm_48k_i16)
                 idx = 0
@@ -205,14 +231,14 @@ class CallerAudioCleaner:
                     (1.0 - self.suppression_strength) * upsampled_48k
                     + self.suppression_strength * cleaned_f32_48k
                 )
+                # Downsample 48k -> 24k
+                n_24k = len(cleaned_48k) // 2
+                cleaned_24k = cleaned_48k[::2][:n_24k].astype(np.float32)
             else:
-                cleaned_48k = self._apply_spectral_gate(upsampled_48k, 48000)
+                # Direct 24kHz spectral gating fallback (zero decimation/aliasing artifacts)
+                cleaned_24k = self._apply_spectral_gate(filtered, self.sample_rate)
         else:
-            cleaned_48k = upsampled_48k
-
-        # 4. Downsample 48k -> 24k
-        n_24k = len(cleaned_48k) // 2
-        cleaned_24k = cleaned_48k[::2][:n_24k].astype(np.float32)
+            cleaned_24k = filtered
 
         # 5. Silero VAD Speech Probability
         vad_prob = self._compute_silero_vad_prob(cleaned_24k)
@@ -297,8 +323,8 @@ class CallerAudioCleaner:
         fft_vals = np.fft.rfft(audio)
         mag = np.abs(fft_vals)
         phase = np.angle(fft_vals)
-        noise_floor = np.median(mag) * self.suppression_strength * 2.6
-        cleaned_mag = np.maximum(mag - noise_floor, 0.02 * mag)
+        noise_floor = np.median(mag) * self.suppression_strength * 2.0
+        cleaned_mag = np.maximum(mag - noise_floor, 0.05 * mag)
         reconstructed = np.fft.irfft(cleaned_mag * np.exp(1j * phase), n=len(audio))
         return reconstructed.astype(np.float32)
 
@@ -334,3 +360,6 @@ class CallerAudioCleaner:
         self.last_speech_time = 0.0
         self.last_vad_prob = 0.0
         self.last_rms = 0.0
+        if self.aec is not None:
+            self.aec.reset()
+

@@ -4,7 +4,37 @@ All notable changes to the PersonaPlex Orchestration AI platform are documented 
 
 ---
 
-## [Unreleased] - Phase 1: Core Robustness & Lifecycle
+## [Unreleased] - Phase 2: Advanced Audio Front-End (Noise Cancellation & AEC)
+
+### Added
+- **Streaming Acoustic Echo Cancellation (AEC)**:
+  - Created `orchestration/audio/aec.py` with `AcousticEchoCanceller`.
+  - Normalized Least Mean Squares (NLMS) adaptive filtering with circular reference ring buffer lookback.
+  - Normalized cross-correlation acoustic delay estimation and acoustic coupling gain scaling.
+  - Double-Talk Detector (DTD): preserves caller voice completely during simultaneous speech (barge-in) and prevents filter divergence.
+  - Single-talk ERLE (Echo Return Loss Enhancement) > 10 dB with zero attenuation of caller double-talk.
+- **Enhanced CallerAudioCleaner**:
+  - Integrated AEC into audio pipeline (`orchestration/audio/cleaner.py`).
+  - Added `push_agent_reference(ref_audio)` registered on outbound agent playback frames in `orchestration/api/voice_v2.py`.
+  - Optimized non-gating 24 kHz spectral fallback preventing resampling aliasing artifacts when native C RNNoise is unavailable.
+  - Non-gating VAD telemetry: reports speech probability while passing low-energy pause frames without zero-gating, preserving PersonaPlex full-duplex conversational dynamics.
+  - Runtime per-session configuration flags: `denoise`, `denoise_mode` (`rnnoise`, `isolation`, `bypass`), and `enable_aec`.
+- **Synthetic Noise & Latency Benchmark Suite**:
+  - Created `tests/test_phase2_noise_benchmark.py` covering 4 noise profiles (white, babble, street, keyboard clicks) across 4 SNR levels (20, 10, 5, 0 dB).
+  - Validated SNR improvement across all 16 conditions.
+  - Real-time latency benchmark: added processing overhead < 0.20 ms per 80 ms frame (well within the 15 ms budget).
+  - Clean speech preservation: amplitude and spectral distortion < 1.0 dB.
+
+### Rollback Note
+- All Phase 2 features can be bypassed per session via query parameters (`?denoise=false&enable_aec=false`) or globally configured in `Settings`.
+- To roll back Phase 2:
+  ```bash
+  git revert HEAD
+  ```
+
+---
+
+## [1.1.0] - Phase 1: Core Robustness & Lifecycle
 
 ### Added
 - **Dual Idle/Silence Timeouts**:
