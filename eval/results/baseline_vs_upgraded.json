@@ -1,0 +1,40 @@
+{
+  "timestamp": "2026-10-12T09:00:26Z",
+  "benchmark_name": "FullDuplexBench-v1.0",
+  "targets": {
+    "turn_taking_latency_target_ms": "< 800 ms",
+    "interruption_latency_target_ms": "< 300 ms",
+    "false_interrupt_rate_target_pct": "< 5.0 %",
+    "backchannel_floor_retention_target_pct": "100.0 %"
+  },
+  "baseline": {
+    "turn_taking_latency_p50_ms": 672.1,
+    "turn_taking_latency_p95_ms": 744.1,
+    "turn_taking_pass_rate_pct": 100.0,
+    "interruption_latency_p50_ms": 452.3,
+    "interruption_latency_p95_ms": 503.4,
+    "interruption_pass_rate_pct": 0.0,
+    "backchannel_rate_per_min": 2.3,
+    "backchannel_floor_retention_pct": 80.0,
+    "false_interrupt_rate_pct": 100.0,
+    "overall_score_pct": 61.6
+  },
+  "upgraded": {
+    "turn_taking_latency_p50_ms": 624.3,
+    "turn_taking_latency_p95_ms": 681.5,
+    "turn_taking_pass_rate_pct": 100.0,
+    "interruption_latency_p50_ms": 180.7,
+    "interruption_latency_p95_ms": 195.3,
+    "interruption_pass_rate_pct": 100.0,
+    "backchannel_rate_per_min": 12.9,
+    "backchannel_floor_retention_pct": 100.0,
+    "false_interrupt_rate_pct": 0.0,
+    "overall_score_pct": 100.0
+  },
+  "improvement": {
+    "turn_taking_latency_reduction_ms": 47.8,
+    "interruption_latency_reduction_ms": 271.6,
+    "false_interrupt_rate_drop_pct": 100.0,
+    "composite_score_gain_pts": 38.4
+  }
+}

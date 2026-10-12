@@ -25,7 +25,8 @@ TRAILING_INCOMPLETE_WORDS = {
     "like", "or", "for", "that", "if", "when", "which", "as", "than",
     "then", "into", "onto", "from", "by", "my", "your", "his", "her",
     "their", "our", "its", "a", "an", "is", "are", "was", "were",
-    "am", "be", "being", "been", "what", "who", "whom", "how", "why", "where"
+    "am", "be", "being", "been", "what", "who", "whom", "how", "why", "where",
+    "any", "some", "every", "either", "neither", "each"
 }
 
 # Common English verbs to detect whether a multi-word fragment contains an action
@@ -136,6 +137,7 @@ class TurnDetector:
         frame: np.ndarray,
         rms: float | None = None,
         is_agent_speaking: bool = False,
+        now: float | None = None,
     ) -> tuple[bool, bool, np.ndarray | None]:
         """
         Process a single audio frame (typically 80 ms).
@@ -143,7 +145,8 @@ class TurnDetector:
         Returns:
             (is_speaking_now, turn_completed, completed_audio_if_any)
         """
-        now = time.time()
+        if now is None:
+            now = time.time()
         if rms is None:
             rms = float(np.sqrt(np.mean(np.square(frame))))
 
@@ -224,19 +227,22 @@ class TurnDetector:
 
             return (self.is_speaking, False, None)
 
-    def extend_turn(self, extra_sec: float | None = None) -> None:
+    def extend_turn(self, extra_sec: float | None = None, now: float | None = None) -> None:
         """
         Extend the silence window when the transcript is detected as unfinished.
         Preserves active utterance frames and waits for additional speech.
         """
+        curr = now if now is not None else time.time()
         add_time = extra_sec if extra_sec is not None else self.extra_silence_sec
         self.waiting_for_extension = True
-        self.extension_deadline = time.time() + add_time
+        self.extension_deadline = curr + add_time
 
-    def append_audio_and_extend(self, audio: np.ndarray, extra_sec: float | None = None) -> None:
+    def append_audio_and_extend(
+        self, audio: np.ndarray, extra_sec: float | None = None, now: float | None = None
+    ) -> None:
         """Put back previously emitted audio and extend deadline for merging."""
         self._active_utterance_frames.insert(0, audio)
-        self.extend_turn(extra_sec)
+        self.extend_turn(extra_sec, now=now)
 
     def reset(self) -> None:
         """Reset turn detector state."""
