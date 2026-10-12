@@ -1093,6 +1093,7 @@ LEAN_STUDIO_HTML = r"""<!DOCTYPE html>
       const wsRef = useRef(null);
       const audioCtxRef = useRef(null);
       const micStreamRef = useRef(null);
+      const processorRef = useRef(null);
       const transcriptBoxRef = useRef(null);
       const timerRef = useRef(null);
 
@@ -1218,6 +1219,7 @@ LEAN_STUDIO_HTML = r"""<!DOCTYPE html>
 
         source.connect(processor);
         processor.connect(audioCtx.destination);
+        processorRef.current = processor;
       };
 
       let scheduledTime = 0;
@@ -1242,18 +1244,31 @@ LEAN_STUDIO_HTML = r"""<!DOCTYPE html>
       };
 
       const endCallSession = () => {
-        if (timerRef.current) clearInterval(timerRef.current);
-        if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-          try {
-            wsRef.current.send(JSON.stringify({ type: "hangup" }));
-            wsRef.current.close();
-          } catch (e) {}
+        if (timerRef.current) {
+          clearInterval(timerRef.current);
+          timerRef.current = null;
+        }
+        if (wsRef.current) {
+          if (wsRef.current.readyState === WebSocket.OPEN) {
+            try { wsRef.current.send(JSON.stringify({ type: "hangup" })); } catch (e) {}
+          }
+          try { wsRef.current.close(); } catch (e) {}
+          wsRef.current = null;
+        }
+        if (processorRef.current) {
+          try { processorRef.current.disconnect(); } catch (e) {}
+          processorRef.current = null;
         }
         if (micStreamRef.current) {
-          micStreamRef.current.getTracks().forEach(t => t.stop());
+          try { micStreamRef.current.getTracks().forEach(t => t.stop()); } catch (e) {}
+          micStreamRef.current = null;
         }
         if (audioCtxRef.current) {
-          audioCtxRef.current.close();
+          const ctx = audioCtxRef.current;
+          audioCtxRef.current = null;
+          if (ctx.state !== "closed") {
+            ctx.close().catch(() => {});
+          }
         }
       };
 
