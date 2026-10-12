@@ -389,6 +389,31 @@ async def create_agent(
     return _to_agent_response(agent)
 
 
+@router.post("/from-template/{template_id}", response_model=AgentResponse, status_code=status.HTTP_201_CREATED)
+async def create_agent_from_template(
+    template_id: str,
+    svc: AgentApplicationService = Depends(get_agent_service),
+) -> AgentResponse:
+    """Instantiate a new Voice Agent directly from a pre-tested production domain template."""
+    from orchestration.prompts.templates import get_template_by_id
+    tmpl = get_template_by_id(template_id)
+    if not tmpl:
+        raise HTTPException(status_code=404, detail=f"Agent template '{template_id}' not found.")
+
+    cmd = CreateAgentCommand(
+        name=tmpl.name,
+        voice_id=tmpl.voice_id,
+        greeting=tmpl.greeting,
+        agent_speaks_first=tmpl.agent_speaks_first,
+        system_prompt=tmpl.system_prompt,
+        ending=tmpl.ending,
+        timezone_str=tmpl.timezone_str,
+    )
+    agent = await svc.create_agent(cmd)
+    return _to_agent_response(agent)
+
+
+
 @router.get("", response_model=list[AgentResponse])
 async def list_agents(
     limit: int = 50,

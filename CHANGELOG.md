@@ -4,7 +4,44 @@ All notable changes to the PersonaPlex Orchestration AI platform are documented 
 
 ---
 
-## [Unreleased] - Phase 3: Production Voice Cloning & Safety Enforcement
+## [Unreleased] - Phase 4: Production Agent Templates, Prompt Hygiene & Offline Compiler
+
+### Added
+- **Production Domain Agent Templates (`orchestration/prompts/templates.py`)**:
+  - Implemented standard domain templates designed specifically for full-duplex conversational speech:
+    1. **CitySan Municipal Services (`citysan-waste`)**: Municipal Sanitation & Bulky Waste Dispatch (`America/Chicago`, voice `NATM3.pt`, 138 tokens) with hazardous waste deflection guardrails.
+    2. **Jerusalem Shakshuka (`jerusalem-shakshuka`)**: Middle Eastern Dining Reservations & Takeout (`Asia/Jerusalem`, voice `NATF2.pt`, 128 tokens) with mandatory sesame allergy checks and party size limits.
+    3. **AeroRentals Pro (`aerorentals-pro`)**: Commercial Drone & Cinematography Equipment (`America/Los_Angeles`, voice `NATM2.pt`, 135 tokens) with FAA Part 107 certification checks and weather deflection.
+    4. **Apex Healthcare (`clinic-scheduler`)**: HIPAA-aware clinic appointment scheduling (`America/New_York`, voice `NATF1.pt`, 122 tokens).
+    5. **CloudScale AI (`sales-sdr`)**: Inbound SaaS qualification SDR (`America/San_Francisco`, voice `NATM1.pt`, 138 tokens).
+    6. **TechResolve IT (`it-helpdesk`)**: Internal enterprise IT support & password reset triage (`America/Chicago`, voice `NATM0.pt`, 117 tokens).
+    7. **Grandview Concierge (`hotel-concierge`)**: Luxury hospitality guest relations (`America/Denver`, voice `NATF0.pt`, 116 tokens).
+  - All templates strictly meet the $<200$ token ideal conversational startup budget (average $\sim 130$ tokens) and hard cap $<350$ tokens.
+- **Full-Duplex Prompt Hygiene Enforcement (`orchestration/prompts/compiler.py`)**:
+  - Strict PersonaPlex delimiter wrapping: `<system> ... <system>` (both opening and closing tags are `<system>`).
+  - Plain prose conversational rule enforcement: rejects or sanitizes emojis, markdown formatting (`**`, `##`, `*`), and ordered/bulleted lists (`^\s*\d+\.\s+`).
+  - Template variable validation: ensures zero unrendered `{{...}}` reach the speech-to-speech model.
+  - Multi-line safe regex pattern matching (`re.MULTILINE`) preventing false positives on sentences with trailing numbers (e.g., "call 911.").
+- **Template APIs & Agent Instantiation**:
+  - `GET /v1/templates`: List all available production templates with metadata and token counts.
+  - `GET /v1/templates/{template_id}`: Retrieve detailed template definition, variables, and default configuration.
+  - `POST /v1/templates/{template_id}/compile`: Dry-run compile a template with custom variables and inspect token budget.
+  - `POST /v2/agents/from-template/{template_id}`: Instantiate a ready-to-call production voice agent directly from any template.
+- **Frontend Template Catalog Synchronization (`frontend/src/lib/templates.ts`)**:
+  - Added CitySan, Jerusalem Shakshuka, and AeroRentals Pro to frontend UI template choices.
+- **Comprehensive Test Suite**:
+  - Added `tests/test_phase4_templates_and_hygiene.py` covering all templates, token budgets, hygiene linting, variable resolution, and API endpoints (9 tests).
+  - Total test suite expanded to **215 passing tests (100% pass rate)**.
+
+### Rollback Note
+- To roll back Phase 4:
+  ```bash
+  git revert HEAD
+  ```
+
+---
+
+## [1.3.0] - Phase 3: Production Voice Cloning & Safety Enforcement
 
 ### Added
 - **`tools/make_voice_prompt.py` CLI & Compilation Pipeline**:

@@ -279,7 +279,7 @@ def lint_prompt(
 
     # 2. Markdown / formatting
     full_text = f"{system_prompt} {greeting_text} {ending_text}"
-    if re.search(r"(\*\*|__|\#\#|\* |- |\d+\. )", full_text):
+    if re.search(r"(\*\*|__|\#\#|\* |^\s*[-*+]\s+|^\s*\d+\.\s+)", full_text, flags=re.MULTILINE):
         warnings.append("Remove markdown formatting (asterisks, bullet dashes, numbered lists) meant for spoken text.")
 
     # 3. Emojis

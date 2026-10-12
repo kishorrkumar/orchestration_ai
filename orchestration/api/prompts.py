@@ -99,3 +99,44 @@ async def list_timezones():
             break
 
     return results
+
+
+@router.get("/templates", tags=["Templates"])
+async def list_agent_templates():
+    """List all pre-tested production domain agent templates."""
+    from ..prompts.templates import get_all_templates
+    return [t.to_dict() for t in get_all_templates()]
+
+
+@router.get("/templates/{template_id}", tags=["Templates"])
+async def get_agent_template(template_id: str):
+    """Get a specific domain agent template by ID."""
+    from fastapi import HTTPException
+    from ..prompts.templates import get_template_by_id
+    tmpl = get_template_by_id(template_id)
+    if not tmpl:
+        raise HTTPException(status_code=404, detail=f"Agent template '{template_id}' not found.")
+    return tmpl.to_dict()
+
+
+@router.post("/templates/{template_id}/compile", response_model=CompilePromptResponse, tags=["Templates"])
+async def compile_agent_template(template_id: str):
+    """Compile a domain template into its official PersonaPlex prompt with token count."""
+    from fastapi import HTTPException
+    from ..prompts.templates import get_template_by_id, compile_template
+    tmpl = get_template_by_id(template_id)
+    if not tmpl:
+        raise HTTPException(status_code=404, detail=f"Agent template '{template_id}' not found.")
+    res = compile_template(tmpl)
+    return CompilePromptResponse(
+        compiled_text=res.text,
+        token_count=res.token_count,
+        ideal_limit=IDEAL_SYSTEM_PROMPT_TOKENS,
+        hard_limit=MAX_SYSTEM_PROMPT_TOKENS,
+        can_publish=res.can_publish,
+        warnings=res.warnings,
+        unrendered_variables=res.unrendered_variables,
+        time_line=res.time_line,
+        day_part=res.day_part,
+    )
+
