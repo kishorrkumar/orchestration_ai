@@ -775,8 +775,8 @@ async def voice_v2_endpoint(
                                 last_user_speech_end_time = time.time()
                                 detector.on_user_speech(last_user_speech_time)
 
-                                # 3. Dynamic Barge-In: if caller interrupts assistant speech
-                                if current_agent_buffer or not agent_turn_yielded:
+                                # 3. Dynamic Barge-In: only if caller interrupts while assistant is actively speaking
+                                if current_agent_buffer:
                                     logger.info(f"[VoiceSession {call_session_id}] Barge-in detected from caller voice activity: flushing agent speech")
                                     # Clear worker-to-client queue to immediately silence assistant
                                     while not worker_message_queue.empty():
@@ -796,6 +796,9 @@ async def voice_v2_endpoint(
                                         await websocket.send_json({"type": "interrupted", "reason": "barge_in"})
                                     except Exception:
                                         pass
+                                else:
+                                    # Caller is speaking normally; ensure agent turn is unlocked so model responds
+                                    agent_turn_yielded = False
                             else:
                                 if user_has_responded and last_user_speech_end_time > 0:
                                     if hasattr(detector, "on_user_speech_end"):

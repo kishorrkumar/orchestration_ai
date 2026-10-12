@@ -103,7 +103,7 @@ export const TestCallModal: React.FC<TestCallModalProps> = ({ agent, onClose }) 
   const [primingElapsedSec, setPrimingElapsedSec] = useState(0)
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
   const [isMuted, setIsMuted] = useState(false)
-  const [muteWhileSpeaking, setMuteWhileSpeaking] = useState(false)
+  const [muteWhileSpeaking, setMuteWhileSpeaking] = useState(true)
   const [isAgentSpeaking, setIsAgentSpeaking] = useState(false)
   const [micRms, setMicRms] = useState(0.0)
   const [speakerRms, setSpeakerRms] = useState(0.0)
@@ -348,12 +348,11 @@ export const TestCallModal: React.FC<TestCallModalProps> = ({ agent, onClose }) 
           if (data.type === 'mic_rms') {
             setMicRms((prev) => prev * 0.7 + data.rms * 0.3)
 
-            // Interruption & Barge-in detection (responsive threshold)
-            if (data.rms > 0.012) {
+            // Interruption & Barge-in detection: require solid human speech (RMS > 0.045)
+            // Low thresholds like 0.012 cause false triggers from fan noise, room echo, and speaker bleed
+            if (data.rms > 0.045) {
               userSpeechConsecutive++
-              // Re-sync playback cursor to current audio context time to prevent turn delay buildup
-              nextPlayTimeRef.current = audioCtx.currentTime
-              if (userSpeechConsecutive >= 2 && isAgentSpeakingRef.current) {
+              if (userSpeechConsecutive >= 3 && isAgentSpeakingRef.current) {
                 // User is speaking over agent: flush playback jitter buffer immediately
                 flushPlaybackBuffer()
                 setIsAgentSpeaking(false)
@@ -526,6 +525,9 @@ export const TestCallModal: React.FC<TestCallModalProps> = ({ agent, onClose }) 
   const playPcm16ChunkWithJitterBuffer = (buffer: ArrayBuffer) => {
     const audioCtx = audioContextRef.current
     if (!audioCtx) return
+    if (audioCtx.state === 'suspended') {
+      audioCtx.resume().catch(() => {})
+    }
 
     const int16 = new Int16Array(buffer)
     const float32 = new Float32Array(int16.length)
@@ -537,6 +539,9 @@ export const TestCallModal: React.FC<TestCallModalProps> = ({ agent, onClose }) 
 
     const level = Math.sqrt(sum / int16.length)
     setSpeakerRms((prev) => prev * 0.5 + level * 0.5)
+    if (level > 0.01) {
+      setIsAgentSpeaking(true)
+    }
 
     const audioBuffer = audioCtx.createBuffer(1, float32.length, 16000)
     audioBuffer.copyToChannel(float32, 0)
@@ -546,18 +551,14 @@ export const TestCallModal: React.FC<TestCallModalProps> = ({ agent, onClose }) 
     source.connect(audioCtx.destination)
 
     const now = audioCtx.currentTime
-    // Adaptive ultra-low-latency jitter buffer:
-    // Minimum buffer: 25ms (0.025s) for smooth click-free onset (saves ~95ms vs 120ms)
-    // Maximum lookahead: 85ms (0.085s) to strictly prevent buffer bloat across turns
-    const minBufferDelay = 0.025
-    const maxLookahead = 0.085
+    const minBufferDelay = 0.040
 
     let startAt: number
     if (nextPlayTimeRef.current < now) {
       startAt = now + minBufferDelay
-    } else if (nextPlayTimeRef.current > now + maxLookahead) {
-      // Buffer bloat / packet burst detected: clamp to maxLookahead to prevent latency accumulation
-      startAt = now + maxLookahead
+    } else if (nextPlayTimeRef.current > now + 0.600) {
+      // Buffer bloat / packet burst > 600ms ahead: resync to now + minBufferDelay
+      startAt = now + minBufferDelay
     } else {
       startAt = nextPlayTimeRef.current
     }
