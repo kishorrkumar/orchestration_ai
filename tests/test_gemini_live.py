@@ -60,26 +60,18 @@ async def test_resolve_gemini_api_key_none_when_empty():
 
 @pytest.mark.asyncio
 async def test_gemini_live_session_init():
-    # Test with standard realtime model
     session = GeminiLiveSession(
         api_key="test_api_key",
-        model="gemini-2.0-flash-realtime-exp",
+        model="models/gemini-2.0-flash-exp",
         voice_name="Aoede",
         system_instruction="You are Ananya at Snapserve.",
         sample_rate=16000,
         enable_tools=True,
     )
-    assert session.model == "models/gemini-2.0-flash-realtime-exp"
+    assert session.model == "models/gemini-2.0-flash-exp"
     assert session.voice_name == "Aoede"
     assert session.system_instruction == "You are Ananya at Snapserve."
     assert session.is_connected is False
-
-    # Deprecated 'gemini-2.0-flash-exp' should safely auto-upgrade to realtime-exp
-    upgraded_session = GeminiLiveSession(
-        api_key="test_api_key",
-        model="models/gemini-2.0-flash-exp",
-    )
-    assert upgraded_session.model == "models/gemini-2.0-flash-realtime-exp"
 
 
 @pytest.mark.asyncio

@@ -28,73 +28,38 @@ from ...tools import default_registry
 
 logger = logging.getLogger("orchestration.engines.gemini_live")
 
-GEMINI_LIVE_WS_BASE = "wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent"
+GEMINI_LIVE_ENDPOINTS = [
+    ("v1alpha", "wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateContent"),
+    ("v1beta", "wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent"),
+]
 
-FALLBACK_LIVE_MODELS = [
-    "models/gemini-2.0-flash-realtime-exp",
-    "models/gemini-2.5-flash",
+GEMINI_2_0_MODELS = [
+    "models/gemini-2.0-flash-exp",
     "models/gemini-2.0-flash",
-    "models/gemini-2.5-flash-native-audio-preview",
 ]
 
 
 async def find_supported_live_model(api_key: str, preferred_model: str | None = None) -> str:
-    """
-    Queries Google AI Studio ListModels endpoint to discover active models that support
-    'bidiGenerateContent'. Falls back to known working live model identifiers.
-    """
-    clean_pref = (preferred_model or "").strip()
-    # Normalize and ignore legacy non-live model
-    if clean_pref and clean_pref not in ("models/gemini-2.0-flash-exp", "gemini-2.0-flash-exp"):
-        return clean_pref if clean_pref.startswith("models/") else f"models/{clean_pref}"
-
-    try:
-        import httpx
-        url = f"https://generativelanguage.googleapis.com/v1beta/models?key={api_key.strip()}"
-        async with httpx.AsyncClient(timeout=3.5) as client:
-            resp = await client.get(url)
-            if resp.status_code == 200:
-                data = resp.json()
-                models = data.get("models", [])
-                live_models = [
-                    m["name"]
-                    for m in models
-                    if "bidiGenerateContent" in m.get("supportedGenerationMethods", [])
-                ]
-                logger.info(f"[GeminiLive] Active bidiGenerateContent models for API key: {live_models}")
-                if live_models:
-                    for cand in ("realtime", "2.5-flash", "2.0-flash"):
-                        match = next((m for m in live_models if cand in m), None)
-                        if match:
-                            return match
-                    return live_models[0]
-            else:
-                logger.warning(f"[GeminiLive] ListModels returned {resp.status_code}")
-    except Exception as e:
-        logger.warning(f"[GeminiLive] ListModels discovery note: {e}")
-
-    return "models/gemini-2.0-flash-realtime-exp"
+    """Returns the primary Gemini 2.0 Live model."""
+    return "models/gemini-2.0-flash-exp"
 
 
 class GeminiLiveSession:
     """
-    Manages a single full-duplex real-time voice session with Gemini Multimodal Live API.
+    Manages a single full-duplex real-time voice session with Gemini 2.0 Multimodal Live API.
     """
 
     def __init__(
         self,
         api_key: str,
-        model: str = "models/gemini-2.0-flash-realtime-exp",
+        model: str = "models/gemini-2.0-flash-exp",
         voice_name: str = "Aoede",
         system_instruction: str = "",
         sample_rate: int = 16000,
         enable_tools: bool = True,
     ) -> None:
         self.api_key = api_key.strip()
-        raw_m = model.strip() if model else "models/gemini-2.0-flash-realtime-exp"
-        if "gemini-2.0-flash-exp" in raw_m:
-            raw_m = "models/gemini-2.0-flash-realtime-exp"
-        self.model = raw_m if raw_m.startswith("models/") else f"models/{raw_m}"
+        self.model = "models/gemini-2.0-flash-exp"
         self.voice_name = voice_name
         self.system_instruction = system_instruction
         self.sample_rate = sample_rate
@@ -155,70 +120,74 @@ class GeminiLiveSession:
         return payload
 
     async def connect(self) -> None:
-        """Establish WebSocket connection to Google Gemini Live API and perform setup handshake with fallback."""
-        candidate_models = [self.model]
-        for fallback in FALLBACK_LIVE_MODELS:
-            if fallback not in candidate_models:
-                candidate_models.append(fallback)
-
+        """Establish WebSocket connection to Google Gemini 2.0 Live API across v1alpha/v1beta."""
         last_err = None
-        for cand_model in candidate_models:
-            t0 = time.perf_counter()
-            self.model = cand_model
-            url = f"{GEMINI_LIVE_WS_BASE}?key={self.api_key}"
-            logger.info(f"Connecting to Gemini Live API ({self.model}, voice: {self.voice_name})...")
+        for endpoint_name, base_url in GEMINI_LIVE_ENDPOINTS:
+            for cand_model in GEMINI_2_0_MODELS:
+                t0 = time.perf_counter()
+                self.model = cand_model
+                url = f"{base_url}?key={self.api_key}"
+                logger.info(f"Connecting to Gemini 2.0 Live ({endpoint_name}, model: {self.model}, voice: {self.voice_name})...")
 
-            try:
-                self.ws = await websockets.connect(
-                    url,
-                    ping_interval=15,
-                    ping_timeout=10,
-                    close_timeout=5,
-                    max_size=10 * 1024 * 1024,
-                )
-                self.is_connected = True
-                self.connected_at = time.time()
-            except Exception as e:
-                logger.error(f"Failed to connect to Gemini Live WebSocket: {e}")
-                last_err = e
-                continue
+                try:
+                    self.ws = await websockets.connect(
+                        url,
+                        ping_interval=15,
+                        ping_timeout=10,
+                        close_timeout=5,
+                        max_size=10 * 1024 * 1024,
+                    )
+                    self.is_connected = True
+                    self.connected_at = time.time()
+                except Exception as e:
+                    logger.warning(f"Failed to open socket ({endpoint_name}, {self.model}): {e}")
+                    last_err = e
+                    continue
 
-            setup_payload = self._build_setup_payload()
-            try:
-                await self.ws.send(json.dumps(setup_payload))
-                resp_raw = await asyncio.wait_for(self.ws.recv(), timeout=6.0)
-                resp = json.loads(resp_raw)
-                if "setupComplete" in resp or "serverContent" in resp:
-                    self.is_ready = True
-                    elapsed_ms = round((time.perf_counter() - t0) * 1000, 1)
-                    logger.info(f"Gemini Live session ready using model '{self.model}' in {elapsed_ms} ms!")
-                    return
-                else:
-                    logger.warning(f"Unexpected initial Gemini Live response for {self.model}: {resp}")
-                    self.is_ready = True
-                    return
-            except websockets.exceptions.ConnectionClosed as cc:
-                logger.warning(f"Model {self.model} rejected with close code {cc.code}: {cc.reason}")
-                last_err = cc
-                if self.ws:
-                    try:
-                        await self.ws.close()
-                    except Exception:
-                        pass
-                    self.ws = None
-                continue
-            except Exception as e:
-                logger.warning(f"Setup handshake failed for model {self.model}: {e}")
-                last_err = e
-                if self.ws:
-                    try:
-                        await self.ws.close()
-                    except Exception:
-                        pass
-                    self.ws = None
-                continue
+                setup_payload = self._build_setup_payload()
+                try:
+                    await self.ws.send(json.dumps(setup_payload))
+                    resp_raw = await asyncio.wait_for(self.ws.recv(), timeout=6.0)
+                    resp = json.loads(resp_raw)
+                    if "setupComplete" in resp or "serverContent" in resp:
+                        self.is_ready = True
+                        elapsed_ms = round((time.perf_counter() - t0) * 1000, 1)
+                        logger.info(f"Gemini 2.0 Live ready via {endpoint_name} using '{self.model}' in {elapsed_ms} ms!")
+                        return
+                    else:
+                        logger.warning(f"Unexpected initial Gemini Live response for {self.model}: {resp}")
+                        self.is_ready = True
+                        return
+                except websockets.exceptions.ConnectionClosed as cc:
+                    logger.warning(f"Gemini 2.0 {endpoint_name} ({self.model}) closed: code {cc.code}: {cc.reason}")
+                    last_err = cc
+                    if self.ws:
+                        try:
+                            await self.ws.close()
+                        except Exception:
+                            pass
+                        self.ws = None
+                    continue
+                except Exception as e:
+                    logger.warning(f"Setup handshake failed ({endpoint_name}, {self.model}): {e}")
+                    last_err = e
+                    if self.ws:
+                        try:
+                            await self.ws.close()
+                        except Exception:
+                            pass
+                        self.ws = None
+                    continue
 
-        raise ConnectionError(f"Could not connect to Gemini Live with candidate models: {last_err}")
+        # If all failed with policy violation 1008
+        if last_err and "1008" in str(last_err):
+            raise ConnectionError(
+                f"Google Gemini Live connection error: {last_err}. "
+                "This API key cannot access the Gemini 2.0 Multimodal Live WebSocket API. "
+                "Please verify your key at aistudio.google.com (create a key in a fresh project), "
+                "or switch to PersonaPlex (Local GPU) for free offline voice."
+            )
+        raise ConnectionError(f"Could not connect to Gemini 2.0 Live: {last_err}")
 
     def start_receiving(
         self,
