@@ -1,0 +1,54 @@
+id: gemini_live
+kind: llm
+display_name: "Google Gemini 3.1 Live / 2.0 Flash"
+description: "Ultra-low-latency bidirectional multimodal speech-to-speech with native tools and multilingual Indian support"
+docs_url: "https://ai.google.dev/gemini-api/docs/multimodal-live"
+streaming: true
+native_eot: true
+native_sample_rates:
+  - 16000
+  - 24000
+supported_languages:
+  - en-US
+  - en-IN
+  - hi-IN
+  - ta-IN
+  - te-IN
+default_model: "gemini-2.0-flash-exp"
+model_list_type: static
+auth_fields:
+  - name: api_key
+    label: "Gemini API Key"
+    field_type: password
+    required: true
+    placeholder: "AIzaSy..."
+    description: "Get your free API key from Google AI Studio (aistudio.google.com)"
+models:
+  - id: "gemini-2.0-flash-exp"
+    name: "Gemini 2.0 Flash Live (3.1 Multimodal)"
+    description: "Real-time full-duplex speech-to-speech with <500ms latency and native tool calling"
+    context_window: 1048576
+    latency_profile: "ultra-fast"
+    last_verified: "2026-10-14"
+voices:
+  - id: "Aoede"
+    name: "Aoede (Warm, articulate female)"
+    gender: female
+    language: en-US
+  - id: "Kore"
+    name: "Kore (Empathetic, clear female)"
+    gender: female
+    language: en-US
+  - id: "Puck"
+    name: "Puck (Upbeat, friendly male)"
+    gender: male
+    language: en-US
+  - id: "Charon"
+    name: "Charon (Calm, authoritative male)"
+    gender: male
+    language: en-US
+  - id: "Fenrir"
+    name: "Fenrir (Deep, consultative male)"
+    gender: male
+    language: en-US
+pipecat_service: "orchestration.infrastructure.engines.gemini_live.GeminiLiveService"

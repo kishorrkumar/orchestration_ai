@@ -66,10 +66,12 @@ class CallerAudioCleaner:
         self.frame_size = frame_size
         if bypass:
             self.mode = "bypass"
-        elif speaker_isolation or mode == "isolation":
+        elif mode in ("isolation", "rnnoise", "bypass"):
+            self.mode = mode
+        elif speaker_isolation:
             self.mode = "isolation"
         else:
-            self.mode = mode
+            self.mode = "rnnoise"
         self.noise_suppression = noise_suppression
         self.speaker_isolation = speaker_isolation
         self.suppression_strength = suppression_strength

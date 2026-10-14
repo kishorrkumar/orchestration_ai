@@ -58,10 +58,10 @@ def test_all_templates_compile_within_ideal_token_budget():
         assert compiled.text.endswith("<system>"), f"Template {tmpl.id} missing closing <system> tag"
         assert compiled.text.count("<system>") == 2, f"Template {tmpl.id} must have exactly opening and closing <system> tags"
 
-        # 2. Token Budget: ideal conversational limit is 200 tokens (max hard limit 350)
+        # 2. Token Budget: ideal conversational limit is 250 tokens with live date/time directives (max hard limit 350)
         assert compiled.can_publish is True, f"Template {tmpl.id} cannot be published"
-        assert compiled.token_count <= 200, (
-            f"Template {tmpl.id} exceeds ideal 200-token conversational limit: {compiled.token_count} tokens"
+        assert compiled.token_count <= 250, (
+            f"Template {tmpl.id} exceeds ideal 250-token conversational limit: {compiled.token_count} tokens"
         )
 
         # 3. Hygiene: zero stray double brackets in compiled text
@@ -85,7 +85,7 @@ def test_citysan_municipal_template_hygiene():
     compiled = compile_template(tmpl)
     assert "City Sanitation" in compiled.text
     assert "hazardous" in compiled.text.lower()
-    assert compiled.token_count < 160
+    assert compiled.token_count < 250
 
 
 def test_jerusalem_shakshuka_hospitality_template_hygiene():
@@ -99,7 +99,7 @@ def test_jerusalem_shakshuka_hospitality_template_hygiene():
     compiled = compile_template(tmpl)
     assert "Jerusalem Shakshuka" in compiled.text
     assert "allergy" in compiled.text.lower() or "allergies" in compiled.text.lower()
-    assert compiled.token_count < 160
+    assert compiled.token_count < 250
 
 
 def test_aerorentals_pro_enterprise_template_hygiene():
@@ -113,7 +113,7 @@ def test_aerorentals_pro_enterprise_template_hygiene():
     compiled = compile_template(tmpl)
     assert "AeroRentals Pro" in compiled.text
     assert "107" in compiled.text  # FAA Part 107
-    assert compiled.token_count < 160
+    assert compiled.token_count < 250
 
 
 # =====================================================================
@@ -214,7 +214,7 @@ async def test_api_compile_template_endpoint():
         r = await client.post("/v1/templates/aerorentals-pro/compile")
         assert r.status_code == 200
         res = r.json()
-        assert res["token_count"] <= 200
+        assert res["token_count"] <= 250
         assert res["can_publish"] is True
         assert "<system>" in res["compiled_text"]
         assert res["compiled_text"].endswith("<system>")

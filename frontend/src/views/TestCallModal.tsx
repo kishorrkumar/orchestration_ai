@@ -3,7 +3,7 @@ import type { Agent } from '../lib/types'
 import { AudioIndicator } from '../components/ui/AudioIndicator'
 import { Button } from '../components/ui/Button'
 import { Badge } from '../components/ui/Badge'
-import { Mic, MicOff, PhoneOff, AlertCircle, Headphones, Volume2 } from 'lucide-react'
+import { Mic, MicOff, PhoneOff, AlertCircle, Headphones, Volume2, Key, Sparkles, Server, Check, Eye, EyeOff, ExternalLink } from 'lucide-react'
 
 export interface TestCallModalProps {
   agent: Agent
@@ -116,6 +116,44 @@ export const TestCallModal: React.FC<TestCallModalProps> = ({ agent, onClose }) 
   const [turnTtfaMs, setTurnTtfaMs] = useState<number | null>(null)
   const [greetingTtfaMs, setGreetingTtfaMs] = useState<number | null>(null)
 
+  // Gemini Live & S2S Engine Options
+  const [engine, setEngine] = useState<'gemini' | 'personaplex'>(() => {
+    return (localStorage.getItem('voice_engine') as 'gemini' | 'personaplex') || 'gemini'
+  })
+  const [geminiApiKey, setGeminiApiKey] = useState<string>(() => {
+    return localStorage.getItem('gemini_api_key') || ''
+  })
+  const [geminiVoice, setGeminiVoice] = useState<string>(() => {
+    return localStorage.getItem('gemini_voice') || 'Aoede'
+  })
+  const [isKeyVisible, setIsKeyVisible] = useState(false)
+  const [keySavedNotice, setKeySavedNotice] = useState(false)
+  const [restartCallTrigger, setRestartCallTrigger] = useState(0)
+
+  const handleSaveApiKey = (newKey?: string) => {
+    const cleanKey = (newKey !== undefined ? newKey : geminiApiKey).trim()
+    localStorage.setItem('gemini_api_key', cleanKey)
+    setGeminiApiKey(cleanKey)
+    setKeySavedNotice(true)
+    setTimeout(() => setKeySavedNotice(false), 2500)
+    setErrorMessage(null)
+    setCallStatus('connecting')
+    setRestartCallTrigger((c) => c + 1)
+  }
+
+  const handlePasteKey = async () => {
+    try {
+      const text = await navigator.clipboard.readText()
+      if (text && text.trim()) {
+        const clean = text.trim()
+        setGeminiApiKey(clean)
+        handleSaveApiKey(clean)
+      }
+    } catch (e) {
+      console.warn('Clipboard read error:', e)
+    }
+  }
+
   const wsRef = useRef<WebSocket | null>(null)
   const audioContextRef = useRef<AudioContext | null>(null)
   const mediaStreamRef = useRef<MediaStream | null>(null)
@@ -189,13 +227,24 @@ export const TestCallModal: React.FC<TestCallModalProps> = ({ agent, onClose }) 
           await audioCtx.resume()
         }
 
+        // Check for Gemini API key if Gemini engine selected
+        if (engine === 'gemini' && !geminiApiKey.trim()) {
+          setCallStatus('error')
+          setErrorMessage('Please paste your Google Gemini API key below to enable instant voice.')
+          return
+        }
+
         // Build WebSocket URL
         const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
         const host = window.location.host
         const voiceParam = agent.voice_id ? `&voice_prompt=${encodeURIComponent(agent.voice_id)}` : ''
-        const wsUrl = `${protocol}//${host}/v2/voice?agent_id=${encodeURIComponent(
+        let queryParams = `agent_id=${encodeURIComponent(
           agent.id || 'default'
-        )}${voiceParam}&sample_rate=16000&codec=pcm16`
+        )}${voiceParam}&sample_rate=16000&codec=pcm16&engine=${encodeURIComponent(engine)}`
+        if (engine === 'gemini' && geminiApiKey.trim()) {
+          queryParams += `&gemini_api_key=${encodeURIComponent(geminiApiKey.trim())}&gemini_voice=${encodeURIComponent(geminiVoice)}`
+        }
+        const wsUrl = `${protocol}//${host}/v2/voice?${queryParams}`
 
         const ws = new WebSocket(wsUrl)
         wsRef.current = ws
@@ -273,6 +322,17 @@ export const TestCallModal: React.FC<TestCallModalProps> = ({ agent, onClose }) 
                     setIsAgentSpeaking(false)
                   }
                 }, 600)
+              } else if (msg.type === 'tool_call') {
+                // Structured JSON tool call event from Gemini Live
+                const summaryStr = msg.summary || (msg.data ? JSON.stringify(msg.data) : 'completed')
+                setTurns((prev) => [
+                  ...prev,
+                  {
+                    id: `tool-${Date.now()}-${Math.random()}`,
+                    role: 'assistant',
+                    text: `⚙️ Tool [${msg.name}]: ${summaryStr}`,
+                  },
+                ])
               } else if (msg.type === 'interrupted') {
                 flushPlaybackBuffer()
                 setIsAgentSpeaking(false)
@@ -316,9 +376,11 @@ export const TestCallModal: React.FC<TestCallModalProps> = ({ agent, onClose }) 
             } else {
               setCallStatus((curr) => {
                 if (curr === 'connecting' || curr === 'priming') {
-                  setErrorMessage(
-                    (prev) => prev || 'Call disconnected before audio session could start. Verify that the PersonaPlex worker is running on the server.'
-                  )
+                  const fallbackMsg =
+                    engine === 'gemini'
+                      ? 'Call disconnected. Please verify your Gemini API key and network connection.'
+                      : 'Call disconnected before audio session could start. Verify that the PersonaPlex worker is running on the server.'
+                  setErrorMessage((prev) => prev || fallbackMsg)
                   return 'error'
                 }
                 return 'ended'
@@ -519,7 +581,7 @@ export const TestCallModal: React.FC<TestCallModalProps> = ({ agent, onClose }) 
         wsRef.current.close()
       }
     }
-  }, [agent.id])
+  }, [agent.id, restartCallTrigger])
 
   // Jitter-buffered playback for 16 kHz PCM16 chunks
   const playPcm16ChunkWithJitterBuffer = (buffer: ArrayBuffer) => {
@@ -666,9 +728,142 @@ export const TestCallModal: React.FC<TestCallModalProps> = ({ agent, onClose }) 
             {agent.name}
           </h2>
           <p className="text-[13px] text-[#6B6963]">
-            PersonaPlex 7B Native S2S Voice Agent (24 kHz Mimi)
+            {engine === 'gemini'
+              ? 'Google Gemini 2.0 Flash Multimodal Live (<400ms Sub-Second Voice)'
+              : 'PersonaPlex 7B Native S2S Voice Agent (24 kHz Mimi)'}
           </p>
         </div>
+
+        {/* Engine Toggle: Gemini Live vs PersonaPlex */}
+        <div className="flex items-center justify-center p-1 bg-[#F4F3F0] rounded-xl border border-[rgba(31,30,29,0.08)] w-full">
+          <button
+            type="button"
+            onClick={() => {
+              setEngine('gemini')
+              localStorage.setItem('voice_engine', 'gemini')
+              setCallStatus('connecting')
+              setRestartCallTrigger((c) => c + 1)
+            }}
+            className={`flex-1 py-1.5 px-3 rounded-lg text-[12px] font-medium flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
+              engine === 'gemini'
+                ? 'bg-white text-[#1F1E1D] shadow-xs font-semibold'
+                : 'text-[#6B6963] hover:text-[#1F1E1D]'
+            }`}
+          >
+            <Sparkles className="w-3.5 h-3.5 text-[#C2603F]" />
+            <span>Gemini Live (Cloud • &lt;400ms)</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setEngine('personaplex')
+              localStorage.setItem('voice_engine', 'personaplex')
+              setCallStatus('connecting')
+              setRestartCallTrigger((c) => c + 1)
+            }}
+            className={`flex-1 py-1.5 px-3 rounded-lg text-[12px] font-medium flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
+              engine === 'personaplex'
+                ? 'bg-white text-[#1F1E1D] shadow-xs font-semibold'
+                : 'text-[#6B6963] hover:text-[#1F1E1D]'
+            }`}
+          >
+            <Server className="w-3.5 h-3.5" />
+            <span>PersonaPlex (Local GPU)</span>
+          </button>
+        </div>
+
+        {/* Gemini Live API Key UI Paste Card */}
+        {engine === 'gemini' && (
+          <div className="w-full bg-[#FAF9F5] border border-[rgba(31,30,29,0.12)] rounded-2xl p-3.5 text-left space-y-2.5">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Key className="w-4 h-4 text-[#C2603F]" />
+                <span className="text-[12px] font-semibold text-[#1F1E1D]">Google Gemini API Key</span>
+                {geminiApiKey ? (
+                  <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 font-medium flex items-center gap-1">
+                    <Check className="w-3 h-3" /> Active
+                  </span>
+                ) : (
+                  <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 font-medium">
+                    Paste Key to Enable Voice
+                  </span>
+                )}
+              </div>
+              <a
+                href="https://aistudio.google.com/app/apikey"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-[11px] text-[#C2603F] hover:underline flex items-center gap-1 font-medium"
+              >
+                <span>Get Free Key</span>
+                <ExternalLink className="w-3 h-3" />
+              </a>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <div className="relative flex-1">
+                <input
+                  type={isKeyVisible ? 'text' : 'password'}
+                  value={geminiApiKey}
+                  onChange={(e) => setGeminiApiKey(e.target.value)}
+                  placeholder="Paste AIzaSy... API key here"
+                  className="w-full px-3 py-1.5 pr-8 text-[12px] bg-white border border-[rgba(31,30,29,0.15)] rounded-lg font-mono focus:outline-none focus:ring-1 focus:ring-[#C2603F]"
+                />
+                <button
+                  type="button"
+                  onClick={() => setIsKeyVisible(!isKeyVisible)}
+                  className="absolute right-2.5 top-1/2 -translate-y-1/2 text-[#8C8980] hover:text-[#1F1E1D] cursor-pointer"
+                  title={isKeyVisible ? 'Hide Key' : 'Show Key'}
+                >
+                  {isKeyVisible ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                </button>
+              </div>
+
+              <Button
+                variant="secondary"
+                size="compact"
+                onClick={handlePasteKey}
+                title="Paste API key directly from system clipboard"
+              >
+                Paste
+              </Button>
+
+              <Button
+                variant="primary"
+                size="compact"
+                onClick={() => handleSaveApiKey()}
+                disabled={!geminiApiKey.trim()}
+              >
+                {keySavedNotice ? 'Saved!' : 'Save & Connect'}
+              </Button>
+            </div>
+
+            {/* Voice selector for Gemini Live */}
+            <div className="flex items-center justify-between text-[11px] pt-1 border-t border-[rgba(31,30,29,0.06)]">
+              <span className="text-[#6B6963]">Voice Model:</span>
+              <div className="flex items-center gap-1">
+                {(['Aoede', 'Puck', 'Kore', 'Charon', 'Fenrir'] as const).map((v) => (
+                  <button
+                    key={v}
+                    type="button"
+                    onClick={() => {
+                      setGeminiVoice(v)
+                      localStorage.setItem('gemini_voice', v)
+                      setRestartCallTrigger((c) => c + 1)
+                    }}
+                    className={`px-2 py-0.5 rounded text-[10px] font-medium transition-colors cursor-pointer ${
+                      geminiVoice === v
+                        ? 'bg-[#1F1E1D] text-white font-semibold'
+                        : 'bg-white border border-[rgba(31,30,29,0.1)] text-[#6B6963] hover:text-[#1F1E1D]'
+                    }`}
+                  >
+                    {v}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Headphone Advisory Notice */}
         <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-[#F4F3F0] text-[#6B6963] text-[11px] font-medium border border-[rgba(31,30,29,0.06)]">
@@ -790,21 +985,29 @@ export const TestCallModal: React.FC<TestCallModalProps> = ({ agent, onClose }) 
                 </span>
               </div>
               <div>
+                <span className="text-[#8C8980]">Engine / Mode:</span>{' '}
+                <span className="font-bold text-[#1F1E1D]">
+                  {engine === 'gemini' ? 'Gemini 2.0 Live' : 'PersonaPlex S2S'}
+                </span>
+              </div>
+              <div className="truncate">
+                <span className="text-[#8C8980]">Voice Conditioning:</span>{' '}
+                <span className="font-semibold text-[#1F1E1D] truncate">
+                  {engine === 'gemini' ? `${geminiVoice} (Google Live)` : (agent.voice_id || 'NATF0.pt')}
+                </span>
+              </div>
+              <div>
                 <span className="text-[#8C8980]">Priming / Greeting:</span>{' '}
                 <span className="font-bold text-[#1F1E1D]">
                   {greetingTtfaMs ? `${greetingTtfaMs}ms` : `${primingElapsedSec}s`}
                 </span>
               </div>
-              <div className="truncate">
-                <span className="text-[#8C8980]">Voice Conditioning:</span>{' '}
-                <span className="font-semibold text-[#1F1E1D] truncate">{agent.voice_id || 'kkishorekumar.wav'}</span>
-              </div>
               <div>
                 <span className="text-[#8C8980]">Audio Transport:</span>{' '}
-                <span>16 kHz PCM &rarr; 24 kHz Mimi</span>
+                <span>{engine === 'gemini' ? '16 kHz PCM ↔ 24 kHz Live' : '16 kHz PCM → 24 kHz Mimi'}</span>
               </div>
               <div className="col-span-2 text-[10px] text-[#8C8980]">
-                Pipeline: Native Speech-to-Speech (Pure S2S, Zero Cascaded Lag)
+                Pipeline: {engine === 'gemini' ? 'Google Gemini Multimodal Live (Sub-400ms TTFA, Native Audio-to-Audio)' : 'Native Speech-to-Speech (Pure S2S, Zero Cascaded Lag)'}
               </div>
             </div>
           </div>

@@ -99,6 +99,12 @@ async def test_provider_connection(
                     headers={"api-subscription-key": api_key.strip()},
                 )
 
+            # 8. Google Gemini (Live / Multimodal)
+            elif provider_id in ("gemini_live", "google_gemini", "gemini"):
+                resp = await client.get(
+                    f"https://generativelanguage.googleapis.com/v1beta/models?key={api_key.strip()}",
+                )
+
             else:
                 return ProviderTestResult(
                     status="invalid",

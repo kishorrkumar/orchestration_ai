@@ -21,7 +21,8 @@ from ..audio.detokenizer import detokenize_sentencepiece_stream, stitch_token
 from ..audio.dsp import compute_rms, float32_to_int16, int16_to_float32, normalize_speech_loudness, soft_clip
 from ..audio.framing import InboundAudioFrameProcessor
 from ..audio.recorder import SessionAudioRecorder
-from ..audio.resample import AudioResampler, StreamingResampleBuffer
+from ..audio.resample import AudioResampler, StreamingResampleBuffer, resample_oneshot
+from ..infrastructure.engines.gemini_live import GeminiLiveSession, resolve_gemini_api_key
 from ..tools import default_registry
 from ..db.models import AgentVersion
 from ..db.service import AgentService, CallSessionService
@@ -168,6 +169,276 @@ async def get_conversation(
 
 
 
+async def _run_gemini_live_session(
+    websocket: WebSocket,
+    inbound_reader: asyncio.Task,
+    inbound_prebuffer: asyncio.Queue,
+    early_disconnect: asyncio.Event,
+    agent: Any,
+    target_ver: Any,
+    call_session_id: str,
+    call_start_time: float,
+    system_prompt: str,
+    compiled_prompt: Any,
+    effective_gemini_key: str,
+    gemini_voice: str | None,
+    sample_rate: int,
+    codec: str,
+    session_factory: Any,
+    record_session: bool = True,
+) -> None:
+    """
+    Manages full-duplex conversational voice using Google Gemini Multimodal Live API.
+    Provides sub-400ms turn latency, zero GPU startup delay, and native tool execution.
+    """
+    logger.info(f"[VoiceSession {call_session_id}] Starting Gemini Multimodal Live session")
+
+    # 1. Resolve Gemini Voice
+    resolved_gemini_voice = gemini_voice
+    if not resolved_gemini_voice:
+        name_l = (agent.name or "").lower()
+        is_female = any(fn in name_l for fn in ("ananya", "priya", "sarah", "emma", "maria", "elena"))
+        if getattr(target_ver, "voice_id", None) and "NATF" in str(target_ver.voice_id):
+            is_female = True
+        resolved_gemini_voice = "Aoede" if is_female else "Puck"
+
+    # 2. Inform client that line is connecting
+    await websocket.send_json({
+        "type": "status",
+        "status": "connecting",
+        "message": f"Connecting to Gemini Live ({resolved_gemini_voice})...",
+    })
+
+    # 3. Instantiate Gemini Live Session
+    gemini_session = GeminiLiveSession(
+        api_key=effective_gemini_key,
+        model="models/gemini-2.0-flash-exp",
+        voice_name=resolved_gemini_voice,
+        system_instruction=getattr(compiled_prompt, "text", system_prompt),
+        sample_rate=16000,
+        enable_tools=True,
+    )
+
+    try:
+        await gemini_session.connect()
+    except Exception as conn_err:
+        logger.error(f"[VoiceSession {call_session_id}] Gemini Live connection failed: {conn_err}")
+        inbound_reader.cancel()
+        await websocket.send_json({
+            "type": "error",
+            "message": f"Gemini Live connection error: {conn_err}. Please verify your API key.",
+        })
+        await websocket.close(code=status.WS_1011_INTERNAL_ERROR)
+        return
+
+    # Signal ready and session started
+    await websocket.send_json({
+        "type": "status",
+        "status": "ready",
+        "message": "Connected to Google Gemini Live API",
+    })
+    await websocket.send_json({
+        "type": "session_started",
+        "session_id": call_session_id,
+        "engine": "gemini_live",
+        "model": "gemini-2.0-flash-exp",
+        "voice": resolved_gemini_voice,
+        "sample_rate": sample_rate,
+    })
+
+    disconnect_reason = "normal"
+    conversation_turns: list[dict[str, Any]] = []
+    current_agent_turn = {"text": "", "start_time": 0.0}
+    last_user_speech_time = time.perf_counter()
+    first_audio_emitted = False
+
+    # Callbacks for Gemini Live session
+    async def on_audio_chunk(raw_pcm24k: bytes):
+        nonlocal first_audio_emitted
+        if not first_audio_emitted:
+            ttfa_ms = (time.perf_counter() - last_user_speech_time) * 1000.0
+            first_audio_emitted = True
+            try:
+                await websocket.send_json({
+                    "type": "metrics",
+                    "ttfa_ms": round(ttfa_ms, 1),
+                    "engine": "gemini_live",
+                })
+                await websocket.send_json({
+                    "type": "timing",
+                    "ttfa_ms": round(ttfa_ms, 1),
+                })
+            except Exception:
+                pass
+
+        # Resample from 24kHz to client rate (16000 Hz or 8000 Hz)
+        try:
+            out_pcm = resample_oneshot(raw_pcm24k, 24000, sample_rate)
+            if codec == "g711_ulaw":
+                out_pcm = encode_ulaw(out_pcm)
+            await websocket.send_bytes(out_pcm)
+        except Exception as send_err:
+            logger.debug(f"[GeminiLive] Send audio chunk error: {send_err}")
+
+    async def on_text_token(token: str):
+        if not current_agent_turn["text"]:
+            current_agent_turn["start_time"] = time.time()
+        current_agent_turn["text"] += token
+        try:
+            await websocket.send_json({
+                "type": "transcript",
+                "role": "assistant",
+                "text": token,
+            })
+        except Exception:
+            pass
+
+    async def on_interrupted():
+        try:
+            await websocket.send_json({"type": "interrupted"})
+        except Exception:
+            pass
+
+    async def on_tool_event(fn_name: str, event_data: dict[str, Any]):
+        try:
+            await websocket.send_json({
+                "type": "tool_call",
+                "name": fn_name,
+                **event_data,
+            })
+        except Exception:
+            pass
+
+    gemini_session.start_receiving(
+        on_audio_chunk=on_audio_chunk,
+        on_text_token=on_text_token,
+        on_interrupted=on_interrupted,
+        on_tool_event=on_tool_event,
+    )
+
+    # Inbound client audio pump
+    try:
+        while not early_disconnect.is_set():
+            try:
+                msg = await inbound_prebuffer.get()
+            except asyncio.CancelledError:
+                break
+
+            if msg.get("type") == "websocket.disconnect":
+                disconnect_reason = "client_disconnected"
+                break
+
+            # Handle binary audio frame from browser mic
+            binary_data = msg.get("bytes")
+            if binary_data:
+                pcm16 = binary_data
+                if codec == "g711_ulaw":
+                    pcm16 = decode_ulaw(pcm16)
+                    pcm16 = resample_oneshot(pcm16, 8000, 16000)
+                elif sample_rate != 16000:
+                    pcm16 = resample_oneshot(pcm16, sample_rate, 16000)
+
+                last_user_speech_time = time.perf_counter()
+                first_audio_emitted = False
+                await gemini_session.send_audio_chunk(pcm16, sample_rate=16000)
+                continue
+
+            # Handle JSON control messages from client
+            text_data = msg.get("text")
+            if text_data:
+                try:
+                    payload = json.loads(text_data)
+                    p_type = payload.get("type")
+                    if p_type == "ping":
+                        await websocket.send_json({"type": "pong"})
+                    elif p_type == "hangup":
+                        disconnect_reason = "user_hangup"
+                        break
+                    elif p_type == "interrupt":
+                        # Client barge-in
+                        await websocket.send_json({"type": "interrupted"})
+                    elif p_type == "user_transcript":
+                        user_text = payload.get("text", "")
+                        if user_text:
+                            conversation_turns.append({
+                                "role": "user",
+                                "text": user_text,
+                                "timestamp": time.time(),
+                            })
+                except Exception as text_err:
+                    logger.debug(f"[GeminiLive] Inbound text error: {text_err}")
+
+    except Exception as e:
+        logger.warning(f"[VoiceSession {call_session_id}] Gemini loop notice: {e}")
+        disconnect_reason = "error"
+    finally:
+        inbound_reader.cancel()
+        await gemini_session.close()
+
+        # Save conversation turn if any remaining
+        if current_agent_turn["text"].strip():
+            conversation_turns.append({
+                "role": "assistant",
+                "text": current_agent_turn["text"].strip(),
+                "timestamp": current_agent_turn["start_time"],
+            })
+
+        duration_sec = round(time.time() - call_start_time, 2)
+
+        # Save conversation recording
+        convo_payload = {
+            "session_id": call_session_id,
+            "agent_id": agent.id,
+            "agent_name": agent.name,
+            "engine": "gemini_live",
+            "model": "gemini-2.0-flash-exp",
+            "voice_id": resolved_gemini_voice,
+            "status": "completed",
+            "started_at": call_start_time,
+            "ended_at": time.time(),
+            "created_at_iso": datetime.datetime.fromtimestamp(call_start_time, tz=datetime.timezone.utc).isoformat(),
+            "duration_sec": duration_sec,
+            "disconnect_reason": disconnect_reason,
+            "system_prompt": system_prompt,
+            "turns": conversation_turns,
+        }
+        for dest_dir in (CONVERSATIONS_DIR, LOGS_CONVERSATIONS_DIR):
+            try:
+                dest_dir.mkdir(parents=True, exist_ok=True)
+                dest_file = dest_dir / f"{call_session_id}.json"
+                with open(dest_file, "w", encoding="utf-8") as fp:
+                    json.dump(convo_payload, fp, indent=2)
+            except Exception as e:
+                logger.warning(f"Failed to write conversation JSON: {e}")
+
+        # Update DB session record
+        try:
+            async with session_factory() as db:
+                call_svc = CallSessionService(db)
+                await call_svc.end_session(
+                    session_id=call_session_id,
+                    end_reason=disconnect_reason,
+                    duration_sec=duration_sec,
+                )
+                await db.commit()
+        except Exception as db_err:
+            logger.debug(f"DB end_session note: {db_err}")
+
+        # Notify caller and close websocket
+        try:
+            await websocket.send_json({
+                "type": "call_ended",
+                "reason": disconnect_reason,
+                "stats": {
+                    "duration_sec": duration_sec,
+                    "engine": "gemini_live",
+                },
+            })
+            await websocket.close(code=status.WS_1000_NORMAL_CLOSURE, reason="call_ended")
+        except Exception:
+            pass
+
+
 @router.websocket("/v2/voice")
 async def voice_v2_endpoint(
     websocket: WebSocket,
@@ -188,6 +459,9 @@ async def voice_v2_endpoint(
     denoise: bool = Query(True, description="Enable server-side neural noise suppression"),
     denoise_mode: str = Query("isolation", description="Noise suppression mode: 'rnnoise', 'isolation', or 'bypass'"),
     enable_aec: bool = Query(True, description="Enable acoustic echo cancellation against loudspeaker bleed"),
+    engine: str = Query("auto", description="Voice engine: 'auto', 'gemini', or 'personaplex'"),
+    gemini_api_key: str | None = Query(None, description="Google Gemini API key pasted directly from UI"),
+    gemini_voice: str | None = Query(None, description="Gemini voice preset: Aoede, Puck, Charon, Fenrir, Kore"),
 ):
 
     """
@@ -259,13 +533,6 @@ async def voice_v2_endpoint(
         "message": "Connecting to voice engine...",
     })
 
-    # PersonaPlex S2S worker pool
-    worker_pool: WorkerPool = getattr(websocket.app.state, "pool", None)
-    if not worker_pool:
-        inbound_reader.cancel()
-        await websocket.send_json({"type": "error", "message": "Worker pool not available on gateway"})
-        await websocket.close(code=status.WS_1011_INTERNAL_ERROR)
-        return
 
     # Extract active configuration values
     voice_id = target_ver.voice_id if target_ver else agent.draft_voice_id
@@ -383,6 +650,51 @@ async def voice_v2_endpoint(
             session_id=call_session_id,
         )
         await db.commit()
+
+    # Check if caller requested Gemini Multimodal Live API
+    effective_gemini_key = None
+    if engine in ("gemini", "auto"):
+        effective_gemini_key = await resolve_gemini_api_key(
+            passed_key=gemini_api_key,
+            session_factory=session_factory,
+        )
+
+    if engine == "gemini" and not effective_gemini_key:
+        inbound_reader.cancel()
+        await websocket.send_json({
+            "type": "error",
+            "message": "Google Gemini API key required. Please paste your key in the Test Call modal or set GEMINI_API_KEY in .env.",
+        })
+        await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+        return
+
+    if effective_gemini_key and (engine == "gemini" or (engine == "auto" and gemini_api_key)):
+        return await _run_gemini_live_session(
+            websocket=websocket,
+            inbound_reader=inbound_reader,
+            inbound_prebuffer=inbound_prebuffer,
+            early_disconnect=early_disconnect,
+            agent=agent,
+            target_ver=target_ver,
+            call_session_id=call_session_id,
+            call_start_time=call_start_time,
+            system_prompt=system_prompt,
+            compiled_prompt=compiled,
+            effective_gemini_key=effective_gemini_key,
+            gemini_voice=gemini_voice,
+            sample_rate=sample_rate,
+            codec=codec,
+            session_factory=session_factory,
+            record_session=record_session,
+        )
+
+    # Fallback to local PersonaPlex S2S worker pool
+    worker_pool: WorkerPool = getattr(websocket.app.state, "pool", None)
+    if not worker_pool:
+        inbound_reader.cancel()
+        await websocket.send_json({"type": "error", "message": "Worker pool not available on gateway"})
+        await websocket.close(code=status.WS_1011_INTERNAL_ERROR)
+        return
 
     # Telemetry tracking state for diagnosis & /v2/debug/session/{id}
     telemetry: dict[str, Any] = {

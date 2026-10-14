@@ -210,24 +210,31 @@ class StreamingResampleBuffer:
 
 
 def resample_oneshot(
-    audio: np.ndarray,
+    audio: np.ndarray | bytes,
     in_rate: int,
     out_rate: int,
     quality: str = "HQ",
-) -> np.ndarray:
+) -> np.ndarray | bytes:
     """
-    High-fidelity one-shot resampling of an entire audio buffer.
+    High-fidelity one-shot resampling of an entire audio buffer (supports np.ndarray or raw bytes).
     """
     if in_rate == out_rate:
-        return audio.copy()
+        return audio if isinstance(audio, bytes) else audio.copy()
 
-    is_int16 = (audio.dtype == np.int16)
-    if is_int16:
-        audio_f32 = np.clip(audio.astype(np.float32) / 32767.0, -1.0, 1.0)
-    elif audio.dtype != np.float32:
-        audio_f32 = audio.astype(np.float32)
+    was_bytes = isinstance(audio, (bytes, bytearray, memoryview))
+    if was_bytes:
+        arr = np.frombuffer(audio, dtype=np.int16)
+        is_int16 = True
     else:
-        audio_f32 = audio
+        arr = audio
+        is_int16 = (arr.dtype == np.int16)
+
+    if is_int16:
+        audio_f32 = np.clip(arr.astype(np.float32) / 32767.0, -1.0, 1.0)
+    elif arr.dtype != np.float32:
+        audio_f32 = arr.astype(np.float32)
+    else:
+        audio_f32 = arr
 
     if _HAS_SOXR:
         out_f32 = soxr.resample(audio_f32, in_rate, out_rate, quality=quality)
@@ -243,5 +250,6 @@ def resample_oneshot(
         ).astype(np.float32)
 
     if is_int16:
-        return (np.clip(out_f32, -1.0, 1.0) * 32767.0).astype(np.int16)
+        out_i16 = (np.clip(out_f32, -1.0, 1.0) * 32767.0).astype(np.int16)
+        return out_i16.tobytes() if was_bytes else out_i16
     return out_f32
