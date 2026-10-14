@@ -354,11 +354,15 @@ async def voice_v2_endpoint(
                 logger.info(f"[VOICE ROUTING] Re-routing female agent '{agent.name}' from male preset '{resolved_voice}' to 'NATF0.pt'")
                 resolved_voice = "NATF0.pt"
 
-    # 2. Compile prompt - pure system prompt with variables removed
+    # 2. Compile prompt - pure system prompt with variables removed and live temporal context
     try:
         compiled = compile_prompt(
             system_prompt=system_prompt,
             agent_name=agent.name,
+            timezone=tz_name or "Asia/Kolkata",
+            caller_name=caller_name,
+            customer_name=customer_name,
+            phone_number=phone_number,
             strict=False,
         )
     except Exception as compile_err:
@@ -711,6 +715,7 @@ async def voice_v2_endpoint(
         stop_event.set()
 
     turn_counter = 0
+    active_caller_name = (caller_name or customer_name or "").strip()
     current_agent_turn_text: list[str] = []
     current_agent_turn_start = 0.0
 
@@ -724,7 +729,11 @@ async def voice_v2_endpoint(
     def commit_agent_turn(interrupted: bool = False):
         nonlocal current_agent_buffer, current_agent_start_ms, current_agent_turn_start_time
         if current_agent_buffer:
-            text = detokenize_sentencepiece_stream(current_agent_buffer, agent_name=agent.name).strip()
+            text = detokenize_sentencepiece_stream(
+                current_agent_buffer,
+                agent_name=agent.name,
+                caller_name=active_caller_name,
+            ).strip()
             now_ms = (time.time() - call_start_time) * 1000.0
             if text:
                 if interrupted and not text.endswith("[Interrupted]"):
@@ -941,6 +950,22 @@ async def voice_v2_endpoint(
                                 user_text = msg_json.get("text", "").strip()
                                 is_final = bool(msg_json.get("is_final", True))
                                 if user_text:
+                                    # Dynamically extract caller name from introduction phrases if spoken
+                                    name_match = re.search(
+                                        r"\b(?:my name is|this is|i am|i'm)\s+([A-Za-z]+(?:\s+[A-Za-z]+)?)\b",
+                                        user_text,
+                                        re.IGNORECASE,
+                                    )
+                                    if name_match:
+                                        candidate = name_match.group(1).strip()
+                                        stop_words = {"calling", "here", "just", "trying", "looking", "interested", "wondering", "a", "an", "the", "not", "good", "fine", "ok", "okay"}
+                                        c_words = [w for w in candidate.split() if w.lower() not in stop_words]
+                                        if c_words and len(c_words) <= 2:
+                                            extracted_name = " ".join(w.capitalize() for w in c_words)
+                                            if len(extracted_name) >= 2:
+                                                active_caller_name = extracted_name
+                                                logger.info(f"[VoiceSession {call_session_id}] Dynamically extracted caller name: '{active_caller_name}'")
+
                                     user_has_responded = True
                                     last_user_speech_time = time.time()
                                     last_user_speech_end_time = time.time()
@@ -1239,7 +1264,11 @@ async def voice_v2_endpoint(
                         await websocket.send_bytes(raw)
 
                     # Monologue Guard & Question Turn Yield
-                    current_stitched = detokenize_sentencepiece_stream(current_agent_buffer, agent_name=agent.name)
+                    current_stitched = detokenize_sentencepiece_stream(
+                        current_agent_buffer,
+                        agent_name=agent.name,
+                        caller_name=active_caller_name,
+                    )
                     current_words = current_stitched.split()
                     turn_elapsed_sec = time.time() - current_agent_turn_start_time
 
@@ -1531,7 +1560,11 @@ async def voice_v2_endpoint(
 
     # Ensure conversation turns are never completely empty if speech tokens were received
     if not conversation_turns and current_agent_turn_text:
-        recovered = detokenize_sentencepiece_stream(current_agent_turn_text, agent_name=agent.name).strip()
+        recovered = detokenize_sentencepiece_stream(
+            current_agent_turn_text,
+            agent_name=agent.name,
+            caller_name=active_caller_name,
+        ).strip()
         if recovered:
             conversation_turns.append({
                 "role": "assistant",
@@ -1580,7 +1613,11 @@ async def voice_v2_endpoint(
         async with session_factory() as db:
             call_svc = CallSessionService(db)
             if current_agent_turn_text:
-                full_turn_text = detokenize_sentencepiece_stream(current_agent_turn_text).strip()
+                full_turn_text = detokenize_sentencepiece_stream(
+                    current_agent_turn_text,
+                    agent_name=agent.name,
+                    caller_name=active_caller_name,
+                ).strip()
                 if full_turn_text:
                     await call_svc.add_turn(
                         session_id=call_session_id,

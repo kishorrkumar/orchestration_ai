@@ -389,6 +389,24 @@ def compile_prompt(
             )
             clean_sys = clean_sys.strip() + indian_accent_rules
 
+    # 5. Live Date, Time & Caller Temporal Context Injection
+    live_temporal_context = (
+        f"\n\n[Live Date & Time]\n"
+        f"Today is {time_ctx['weekday']}, {time_ctx['date']}, {time_ctx['current_time']} ({time_ctx['timezone']})."
+    )
+    clean_sys = clean_sys.strip() + live_temporal_context
+
+    eff_caller = (caller_name or customer_name or "").strip()
+    if eff_caller and eff_caller.lower() != "the caller":
+        clean_sys = clean_sys.strip() + f" Speaking with {eff_caller}."
+
+    entity_rules = (
+        "\n\n[Entity Directives]\n"
+        "Address caller by their stated name. Never call them 'Mark' or invent names. "
+        "Use today's date and time accurately when discussing scheduling."
+    )
+    clean_sys = clean_sys.strip() + entity_rules
+
     compiled_body = clean_sys.strip()
     final_prompt = wrap_system_prompt(compiled_body)
 

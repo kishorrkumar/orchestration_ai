@@ -70,7 +70,11 @@ def stitch_token(current_text: str, new_token: str) -> str:
     return current_text + cleaned
 
 
-def detokenize_sentencepiece_stream(tokens: list[str], agent_name: str | None = None) -> str:
+def detokenize_sentencepiece_stream(
+    tokens: list[str],
+    agent_name: str | None = None,
+    caller_name: str | None = None,
+) -> str:
     """
     Detokenizes an entire list of SentencePiece pieces into a clean, human-readable sentence.
     """
@@ -109,10 +113,22 @@ def detokenize_sentencepiece_stream(tokens: list[str], agent_name: str | None = 
     result = re.sub(r"\bMoshi\b", display_name, result, flags=re.IGNORECASE)
     result = re.sub(r"\bKyutai\b", "Snapserve", result, flags=re.IGNORECASE)
 
-    # 5. Normalize punctuation spacing (e.g. "word ," -> "word,")
+    # 5. Anti-Pretraining Vocative Hallucinations (e.g. "Mark" from Fisher corpus)
+    if caller_name and caller_name.strip() and caller_name.strip().lower() != "the caller":
+        c_name = caller_name.strip()
+        first_name = c_name.split()[0]
+        # Replace vocative "Mark" with caller's first name
+        result = re.sub(r"\b(Okay|Sure|Hi|Hello|Thanks|Thank you|Yes|Right|Great|Got it|Hey),?\s+Mark\b", rf"\1, {first_name}", result, flags=re.IGNORECASE)
+        result = re.sub(r"\bMark\b", first_name, result)
+    else:
+        # Strip or convert "Mark" vocative to generic friendly vocative
+        result = re.sub(r"\b(Okay|Sure|Hi|Hello|Thanks|Thank you|Yes|Right|Great|Got it|Hey),?\s+Mark\b", r"\1", result, flags=re.IGNORECASE)
+        result = re.sub(r"\bMark\b", "there", result)
+
+    # 6. Normalize punctuation spacing (e.g. "word ," -> "word,")
     result = re.sub(r"\s+([,.:;?!%])", r"\1", result)
 
-    # 6. Collapse multiple spaces
+    # 7. Collapse multiple spaces
     result = re.sub(r"\s+", " ", result).strip()
 
     return result

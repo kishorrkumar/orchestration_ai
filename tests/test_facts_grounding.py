@@ -45,3 +45,30 @@ def test_anti_moshi_leak_in_runtime_stream():
     cleaned = detokenize_sentencepiece_stream(leaked_tokens, agent_name="Ananya")
     assert "Moshi" not in cleaned
     assert "Ananya" in cleaned
+
+
+def test_anti_mark_hallucination_with_caller_name():
+    """Verify that detokenizer replaces Fisher pretraining 'Mark' with actual caller name."""
+    leaked_tokens = [" Okay", ",", " Mark", ".", " How", " are", " you", "?"]
+    cleaned = detokenize_sentencepiece_stream(leaked_tokens, agent_name="Ananya", caller_name="Kishore Kumar")
+    assert "Mark" not in cleaned
+    assert "Kishore" in cleaned
+    assert "Okay, Kishore." in cleaned
+
+
+def test_anti_mark_hallucination_without_caller_name():
+    """Verify that detokenizer strips Fisher pretraining 'Mark' vocatives when no caller name is known."""
+    leaked_tokens = [" Okay", ",", " Mark", ".", " How", " are", " you", "?"]
+    cleaned = detokenize_sentencepiece_stream(leaked_tokens, agent_name="Ananya", caller_name=None)
+    assert "Mark" not in cleaned
+    assert "Okay." in cleaned
+
+
+def test_live_date_time_injection():
+    """Verify that compile_prompt dynamically embeds live date, weekday, time, and timezone."""
+    compiled = compile_prompt("You are Ananya.", agent_name="Ananya", timezone="Asia/Kolkata")
+    assert "[Live Date & Time]" in compiled.text
+    assert "Asia/Kolkata" in compiled.text
+    assert "Today is" in compiled.text
+    assert "[Entity Directives]" in compiled.text
+
