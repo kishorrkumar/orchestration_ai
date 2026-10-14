@@ -126,6 +126,13 @@ export const TestCallModal: React.FC<TestCallModalProps> = ({ agent, onClose }) 
   const [geminiVoice, setGeminiVoice] = useState<string>(() => {
     return localStorage.getItem('gemini_voice') || 'Aoede'
   })
+  const [geminiModel, setGeminiModel] = useState<string>(() => {
+    const saved = localStorage.getItem('gemini_model')
+    if (saved && !saved.includes('gemini-2.0-flash-exp')) {
+      return saved
+    }
+    return 'models/gemini-2.0-flash-realtime-exp'
+  })
   const [isKeyVisible, setIsKeyVisible] = useState(false)
   const [keySavedNotice, setKeySavedNotice] = useState(false)
   const [restartCallTrigger, setRestartCallTrigger] = useState(0)
@@ -242,7 +249,7 @@ export const TestCallModal: React.FC<TestCallModalProps> = ({ agent, onClose }) 
           agent.id || 'default'
         )}${voiceParam}&sample_rate=16000&codec=pcm16&engine=${encodeURIComponent(engine)}`
         if (engine === 'gemini' && geminiApiKey.trim()) {
-          queryParams += `&gemini_api_key=${encodeURIComponent(geminiApiKey.trim())}&gemini_voice=${encodeURIComponent(geminiVoice)}`
+          queryParams += `&gemini_api_key=${encodeURIComponent(geminiApiKey.trim())}&gemini_voice=${encodeURIComponent(geminiVoice)}&gemini_model=${encodeURIComponent(geminiModel)}`
         }
         const wsUrl = `${protocol}//${host}/v2/voice?${queryParams}`
 
@@ -858,6 +865,35 @@ export const TestCallModal: React.FC<TestCallModalProps> = ({ agent, onClose }) 
                     }`}
                   >
                     {v}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Live Model selector for Gemini */}
+            <div className="flex items-center justify-between text-[11px] pt-1 border-t border-[rgba(31,30,29,0.06)]">
+              <span className="text-[#6B6963]">Live Model:</span>
+              <div className="flex items-center gap-1">
+                {[
+                  { id: 'models/gemini-2.0-flash-realtime-exp', label: '2.0 Realtime' },
+                  { id: 'models/gemini-2.5-flash', label: '2.5 Flash' },
+                  { id: 'models/gemini-2.0-flash', label: '2.0 Flash' },
+                ].map((m) => (
+                  <button
+                    key={m.id}
+                    type="button"
+                    onClick={() => {
+                      setGeminiModel(m.id)
+                      localStorage.setItem('gemini_model', m.id)
+                      setRestartCallTrigger((c) => c + 1)
+                    }}
+                    className={`px-2 py-0.5 rounded text-[10px] font-medium transition-colors cursor-pointer ${
+                      geminiModel === m.id
+                        ? 'bg-[#1F1E1D] text-white font-semibold'
+                        : 'bg-white border border-[rgba(31,30,29,0.1)] text-[#6B6963] hover:text-[#1F1E1D]'
+                    }`}
+                  >
+                    {m.label}
                   </button>
                 ))}
               </div>

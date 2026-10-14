@@ -22,7 +22,7 @@ from ..audio.dsp import compute_rms, float32_to_int16, int16_to_float32, normali
 from ..audio.framing import InboundAudioFrameProcessor
 from ..audio.recorder import SessionAudioRecorder
 from ..audio.resample import AudioResampler, StreamingResampleBuffer, resample_oneshot
-from ..infrastructure.engines.gemini_live import GeminiLiveSession, resolve_gemini_api_key
+from ..infrastructure.engines.gemini_live import GeminiLiveSession, resolve_gemini_api_key, find_supported_live_model
 from ..tools import default_registry
 from ..db.models import AgentVersion
 from ..db.service import AgentService, CallSessionService
@@ -182,9 +182,10 @@ async def _run_gemini_live_session(
     compiled_prompt: Any,
     effective_gemini_key: str,
     gemini_voice: str | None,
-    sample_rate: int,
-    codec: str,
-    session_factory: Any,
+    gemini_model: str | None = None,
+    sample_rate: int = 16000,
+    codec: str = "pcm",
+    session_factory: Any = None,
     record_session: bool = True,
 ) -> None:
     """
@@ -209,10 +210,14 @@ async def _run_gemini_live_session(
         "message": f"Connecting to Gemini Live ({resolved_gemini_voice})...",
     })
 
-    # 3. Instantiate Gemini Live Session
+    # 3. Dynamically discover supported Live model for this key
+    active_model = await find_supported_live_model(effective_gemini_key, preferred_model=gemini_model)
+    logger.info(f"[VoiceSession {call_session_id}] Using Gemini Live model: {active_model}")
+
+    # 4. Instantiate Gemini Live Session
     gemini_session = GeminiLiveSession(
         api_key=effective_gemini_key,
-        model="models/gemini-2.0-flash-exp",
+        model=active_model,
         voice_name=resolved_gemini_voice,
         system_instruction=getattr(compiled_prompt, "text", system_prompt),
         sample_rate=16000,
@@ -235,13 +240,13 @@ async def _run_gemini_live_session(
     await websocket.send_json({
         "type": "status",
         "status": "ready",
-        "message": "Connected to Google Gemini Live API",
+        "message": f"Connected to Google Gemini Live API ({active_model})",
     })
     await websocket.send_json({
         "type": "session_started",
         "session_id": call_session_id,
         "engine": "gemini_live",
-        "model": "gemini-2.0-flash-exp",
+        "model": active_model,
         "voice": resolved_gemini_voice,
         "sample_rate": sample_rate,
     })
@@ -391,7 +396,7 @@ async def _run_gemini_live_session(
             "agent_id": agent.id,
             "agent_name": agent.name,
             "engine": "gemini_live",
-            "model": "gemini-2.0-flash-exp",
+            "model": active_model,
             "voice_id": resolved_gemini_voice,
             "status": "completed",
             "started_at": call_start_time,
@@ -462,6 +467,7 @@ async def voice_v2_endpoint(
     engine: str = Query("auto", description="Voice engine: 'auto', 'gemini', or 'personaplex'"),
     gemini_api_key: str | None = Query(None, description="Google Gemini API key pasted directly from UI"),
     gemini_voice: str | None = Query(None, description="Gemini voice preset: Aoede, Puck, Charon, Fenrir, Kore"),
+    gemini_model: str | None = Query(None, description="Gemini model (e.g. models/gemini-2.0-flash-realtime-exp, models/gemini-2.5-flash)"),
 ):
 
     """
@@ -682,6 +688,7 @@ async def voice_v2_endpoint(
             compiled_prompt=compiled,
             effective_gemini_key=effective_gemini_key,
             gemini_voice=gemini_voice,
+            gemini_model=gemini_model,
             sample_rate=sample_rate,
             codec=codec,
             session_factory=session_factory,

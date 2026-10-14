@@ -14,7 +14,7 @@ supported_languages:
   - hi-IN
   - ta-IN
   - te-IN
-default_model: "gemini-2.0-flash-exp"
+default_model: "gemini-2.0-flash-realtime-exp"
 model_list_type: static
 auth_fields:
   - name: api_key
@@ -24,11 +24,17 @@ auth_fields:
     placeholder: "AIzaSy..."
     description: "Get your free API key from Google AI Studio (aistudio.google.com)"
 models:
-  - id: "gemini-2.0-flash-exp"
-    name: "Gemini 2.0 Flash Live (3.1 Multimodal)"
-    description: "Real-time full-duplex speech-to-speech with <500ms latency and native tool calling"
+  - id: "gemini-2.0-flash-realtime-exp"
+    name: "Gemini 2.0 Flash Realtime Live"
+    description: "Real-time full-duplex speech-to-speech with <400ms latency and native tool calling"
     context_window: 1048576
     latency_profile: "ultra-fast"
+    last_verified: "2026-10-14"
+  - id: "gemini-2.5-flash"
+    name: "Gemini 2.5 Flash"
+    description: "State-of-the-art multimodal reasoning with audio-to-audio streaming"
+    context_window: 1048576
+    latency_profile: "fast"
     last_verified: "2026-10-14"
 voices:
   - id: "Aoede"
