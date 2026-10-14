@@ -100,6 +100,8 @@ async def _run_gateway_cmd(args):
 
     try:
         await uv_server.serve()
+    except (asyncio.CancelledError, KeyboardInterrupt):
+        logger.info("Gateway server stopping on user signal...")
     finally:
         for s in spawned_servers:
             await s.stop()
@@ -316,16 +318,19 @@ def main():
 
     args = parser.parse_args()
 
-    if args.subcommand == "doctor":
-        _doctor_cmd(args)
-    elif args.subcommand in ("run-gateway", "run-local"):
-        if not hasattr(args, "worker"):
-            args.worker = None
-        asyncio.run(_run_gateway_cmd(args))
-    elif args.subcommand == "run-mock-worker":
-        asyncio.run(_run_mock_worker_cmd(args))
-    elif args.subcommand == "test-call":
-        asyncio.run(_test_call_cmd(args))
+    try:
+        if args.subcommand == "doctor":
+            _doctor_cmd(args)
+        elif args.subcommand in ("run-gateway", "run-local"):
+            if not hasattr(args, "worker"):
+                args.worker = None
+            asyncio.run(_run_gateway_cmd(args))
+        elif args.subcommand == "run-mock-worker":
+            asyncio.run(_run_mock_worker_cmd(args))
+        elif args.subcommand == "test-call":
+            asyncio.run(_test_call_cmd(args))
+    except (KeyboardInterrupt, SystemExit):
+        logger.info("Process terminated by user (Ctrl+C). Exited cleanly.")
 
 
 if __name__ == "__main__":
