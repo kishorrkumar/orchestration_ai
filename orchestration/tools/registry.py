@@ -1,114 +1,81 @@
 """
-Asynchronous Tool & Business Logic Registry for Voice Orchestration.
+Tool Registry & Execution Dispatcher.
 
-Architecture Note on PersonaPlex Speech-to-Speech:
-NVIDIA PersonaPlex-7B-v1 is an end-to-end neural speech-to-speech foundation model (Mimi + Moshi LM).
-Unlike discrete cascaded pipelines (STT -> LLM -> TTS), PersonaPlex does not support native function calling / tool calling
-tokens mid-speech.
-This ToolRegistry defines the orchestrator extension interface for external business logic and retrieval.
-In the current native S2S engine, tool outputs (such as time, user account status, or RAG context) are pre-fetched
-and injected into prompt conditioning at connection time. In the later modular cascaded engine (Engine B), tools
-can be called dynamically by the LLM during conversation turns.
+Manages tool definitions, validates JSON arguments, and coordinates async execution.
 """
 
 from __future__ import annotations
 
-import datetime
-import inspect
+import json
 import logging
-from typing import Any, Callable, Coroutine
+from typing import Any
 
-logger = logging.getLogger("orchestration.tools")
+from .base import ToolDefinition, ToolResult
 
-
-class Tool:
-    """Represents a callable tool with metadata and JSON schema."""
-
-    def __init__(
-        self,
-        name: str,
-        description: str,
-        handler: Callable[..., Coroutine[Any, Any, Any]],
-        parameters_schema: dict[str, Any] | None = None,
-    ):
-        self.name = name
-        self.description = description
-        self.handler = handler
-        self.parameters_schema = parameters_schema or {}
-
-    async def execute(self, **kwargs: Any) -> Any:
-        try:
-            if inspect.iscoroutinefunction(self.handler):
-                return await self.handler(**kwargs)
-            return self.handler(**kwargs)
-        except Exception as e:
-            logger.error(f"Error executing tool '{self.name}': {e}", exc_info=True)
-            return {"error": str(e)}
+logger = logging.getLogger("orchestration.tools.registry")
 
 
 class ToolRegistry:
-    """Registry managing external tool definitions and execution."""
+    """Central registry for structured JSON tools."""
 
-    def __init__(self):
-        self._tools: dict[str, Tool] = {}
+    def __init__(self) -> None:
+        self._tools: dict[str, ToolDefinition] = {}
 
-    def register(self, tool: Tool) -> None:
-        self._tools[tool.name] = tool
-        logger.info(f"Registered tool: {tool.name}")
+    def register(self, tool_def: ToolDefinition) -> None:
+        """Register a tool definition."""
+        self._tools[tool_def.name] = tool_def
+        logger.info(f"Registered tool: '{tool_def.name}'")
 
-    def get_tool(self, name: str) -> Tool | None:
+    def get_tool(self, name: str) -> ToolDefinition | None:
+        """Retrieve tool by name."""
         return self._tools.get(name)
 
-    def list_tools(self) -> list[dict[str, Any]]:
-        return [
-            {
-                "name": t.name,
-                "description": t.description,
-                "parameters": t.parameters_schema,
-            }
-            for t in self._tools.values()
-        ]
+    def list_tools(self) -> list[str]:
+        """List registered tool names."""
+        return list(self._tools.keys())
 
-    async def call_tool(self, name: str, **kwargs: Any) -> Any:
-        tool = self.get_tool(name)
-        if not tool:
-            raise KeyError(f"Tool '{name}' not found in registry")
-        return await tool.execute(**kwargs)
+    def get_schemas(self) -> list[dict[str, Any]]:
+        """Return all tool schemas in OpenAI/Anthropic format."""
+        return [tool.to_schema() for tool in self._tools.values()]
+
+    async def execute(self, name: str, arguments: dict[str, Any] | str) -> ToolResult:
+        """
+        Execute a tool by name with arguments (either parsed dict or raw JSON string).
+        """
+        tool_def = self._tools.get(name)
+        if not tool_def:
+            logger.warning(f"Attempted execution of unknown tool: '{name}'")
+            return ToolResult(
+                status="error",
+                error_message=f"Tool '{name}' is not registered.",
+                summary=f"Unknown tool '{name}'",
+            )
+
+        parsed_args: dict[str, Any] = {}
+        if isinstance(arguments, str):
+            try:
+                parsed_args = json.loads(arguments) if arguments.strip() else {}
+            except json.JSONDecodeError as jde:
+                return ToolResult(
+                    status="error",
+                    error_message=f"Invalid JSON arguments: {jde}",
+                    summary="Failed to parse arguments JSON",
+                )
+        elif isinstance(arguments, dict):
+            parsed_args = arguments
+
+        logger.info(f"Executing tool '{name}' with args: {parsed_args}")
+        try:
+            result = await tool_def.handler(**parsed_args)
+            return result
+        except Exception as err:
+            logger.error(f"Error executing tool '{name}': {err}", exc_info=True)
+            return ToolResult(
+                status="error",
+                error_message=str(err),
+                summary=f"Tool execution failed: {err}",
+            )
 
 
-# ------------------------------------------------------------------------------
-# Example Tool: get_time
-# ------------------------------------------------------------------------------
-async def get_time_tool(timezone: str = "Asia/Kolkata") -> dict[str, str]:
-    """Returns formatted local time, weekday, and date for a given timezone."""
-    try:
-        import zoneinfo
-        tz = zoneinfo.ZoneInfo(timezone)
-    except Exception:
-        import zoneinfo
-        tz = zoneinfo.ZoneInfo("UTC")
-
-    now = datetime.datetime.now(tz)
-    return {
-        "timezone": timezone,
-        "time": now.strftime("%I:%M %p").lstrip("0"),
-        "weekday": now.strftime("%A"),
-        "date": now.strftime("%B %d, %Y"),
-        "iso": now.isoformat(),
-    }
-
-
-default_tool_registry = ToolRegistry()
-default_tool_registry.register(
-    Tool(
-        name="get_time",
-        description="Get the current local time and date for the caller's timezone.",
-        handler=get_time_tool,
-        parameters_schema={
-            "type": "object",
-            "properties": {
-                "timezone": {"type": "string", "default": "Asia/Kolkata"},
-            },
-        },
-    )
-)
+# Global default registry instance
+default_registry = ToolRegistry()

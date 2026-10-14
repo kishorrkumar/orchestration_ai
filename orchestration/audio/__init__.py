@@ -7,10 +7,14 @@ from .codecs import decode_ulaw, encode_ulaw, float32_to_ulaw, ulaw_to_float32
 from .dsp import calculate_snr_db, compute_rms, float32_to_int16, int16_to_float32, soft_clip
 from .framing import InboundAudioFrameProcessor
 from .resample import AudioResampler, StreamingResampleBuffer, resample_oneshot
+from .smart_turn import SmartTurnDetector
+from .webrtc_apm import WebRTCAPM
 
 __all__ = [
     "CallerAudioCleaner",
     "InboundAudioFrameProcessor",
+    "SmartTurnDetector",
+    "WebRTCAPM",
     "encode_ulaw",
     "decode_ulaw",
     "float32_to_ulaw",

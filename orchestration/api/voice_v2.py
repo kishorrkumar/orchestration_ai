@@ -22,6 +22,7 @@ from ..audio.dsp import compute_rms, float32_to_int16, int16_to_float32, normali
 from ..audio.framing import InboundAudioFrameProcessor
 from ..audio.recorder import SessionAudioRecorder
 from ..audio.resample import AudioResampler, StreamingResampleBuffer
+from ..tools import default_registry
 from ..db.models import AgentVersion
 from ..db.service import AgentService, CallSessionService
 from ..db.session import get_session_factory
@@ -507,9 +508,9 @@ async def voice_v2_endpoint(
             try:
                 await websocket.send_json({
                     "type": "status",
-                    "status": "priming",
+                    "status": "connecting",
                     "elapsed_ms": elapsed_ms,
-                    "message": f"Getting ready, about 10 seconds ({round(elapsed_ms / 1000, 1)}s)...",
+                    "message": "Connecting voice stream...",
                 })
             except Exception:
                 priming_stop.set()
@@ -996,6 +997,30 @@ async def voice_v2_endpoint(
                                 logger.warning(f"[VoiceSession {call_session_id}] Transcript processing warning: {text_err}")
                         elif mtype == "client_info":
                             telemetry["client_audio_context_state"] = msg_json.get("audio_context_state", "unknown")
+                        elif mtype in ("tool_call", "call_tool"):
+                            try:
+                                tool_name = msg_json.get("tool_name") or msg_json.get("name", "")
+                                tool_args = msg_json.get("arguments") or msg_json.get("args", {})
+                                logger.info(f"[VoiceSession {call_session_id}] Executing structured tool: {tool_name}")
+                                t_res = await default_registry.execute(tool_name, tool_args)
+                                await websocket.send_json({
+                                    "type": "tool_result",
+                                    "tool_name": tool_name,
+                                    "status": t_res.status,
+                                    "summary": t_res.summary,
+                                    "data": t_res.data,
+                                    "direct_speech": t_res.direct_speech,
+                                    "error_message": t_res.error_message,
+                                })
+                                conversation_turns.append({
+                                    "role": "tool",
+                                    "tool_name": tool_name,
+                                    "arguments": tool_args,
+                                    "result": t_res.to_json(),
+                                    "timestamp": time.time(),
+                                })
+                            except Exception as tool_err:
+                                logger.warning(f"[VoiceSession {call_session_id}] Tool dispatch error: {tool_err}")
                     except json.JSONDecodeError:
                         pass
         except WebSocketDisconnect as wsd:

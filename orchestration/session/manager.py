@@ -591,7 +591,13 @@ class SessionManager:
                 return None
 
             from ..persona.registry import default_registry
-            target_persona = persona or default_registry.get("casual_friend") or list(default_registry.list_all())[0]
+            target_persona = (
+                persona
+                or default_registry.get("ananya")
+                or default_registry.get("indian_priya")
+                or default_registry.get("casual_friend")
+                or list(default_registry.list_all())[0]
+            )
 
             self._is_prepriming = True
             standby_sid = f"standby_{uuid.uuid4().hex[:8]}"

@@ -31,7 +31,7 @@ from ..protocol.audio import (
     high_pass_filter,
     int16_to_float32,
 )
-from .aec import AcousticEchoCanceller
+from .webrtc_apm import WebRTCAPM
 
 logger = logging.getLogger("orchestration.audio.cleaner")
 
@@ -78,9 +78,9 @@ class CallerAudioCleaner:
         self.min_speech_rms = min_speech_rms
         self.enable_aec = enable_aec
 
-        # Acoustic Echo Canceller (AEC)
-        self.aec: AcousticEchoCanceller | None = (
-            AcousticEchoCanceller(
+        # WebRTC AEC3 Acoustic Echo Canceller & Dual-Channel APM
+        self.apm: WebRTCAPM | None = (
+            WebRTCAPM(
                 sample_rate=sample_rate,
                 frame_size=frame_size,
                 enabled=enable_aec,
@@ -88,6 +88,7 @@ class CallerAudioCleaner:
             if enable_aec
             else None
         )
+        self.aec = self.apm  # Backward compatibility alias
 
         # State tracking
         self.last_speech_time: float = 0.0
@@ -162,8 +163,8 @@ class CallerAudioCleaner:
 
     def push_agent_reference(self, ref_audio: np.ndarray | bytes) -> None:
         """Register agent outbound synthesized audio frame for acoustic echo cancellation."""
-        if self.aec is not None:
-            self.aec.push_reference(ref_audio)
+        if self.apm is not None:
+            self.apm.push_reference(ref_audio)
 
     def process_chunk(self, raw_audio: np.ndarray | bytes) -> list[np.ndarray]:
         """
@@ -194,9 +195,9 @@ class CallerAudioCleaner:
             self.processing_latency_ms = (time.perf_counter() - t0) * 1000.0
             return frames
 
-        # 0. Acoustic Echo Cancellation (AEC) against agent speaker output
-        if self.aec is not None and self.aec.enabled:
-            samples_f32 = self.aec.process_inbound(samples_f32)
+        # 0. WebRTC AEC3 Acoustic Echo Cancellation against agent speaker output
+        if self.apm is not None and self.apm.enabled:
+            samples_f32, _ = self.apm.process_frame(samples_f32)
 
         # 1. High-Pass filter to strip rumble / 50Hz hum
         filtered = high_pass_filter(samples_f32, cutoff_hz=80.0, fs=self.sample_rate)

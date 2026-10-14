@@ -352,6 +352,23 @@ class PersonaRegistry:
             )
         )
 
+        # Persona 8: Ananya (Snapserve Lead Sales Agent • Female)
+        self.register(
+            PersonaConfig(
+                id="ananya",
+                name="Ananya (Snapserve Lead Sales Agent)",
+                description="Friendly, articulate sales representative at Snapserve.",
+                gender="female",
+                accent="Indian English",
+                character="Consultative",
+                voice_ref="NATF0.pt",
+                neural_voice="NATF0.pt",
+                speaking_style="articulate, consultative",
+                language="en",
+                system_prompt="You are Ananya, a friendly sales rep at Snapserve.",
+            )
+        )
+
     def register(self, config: PersonaConfig) -> None:
         self._personas[config.id] = config
 
