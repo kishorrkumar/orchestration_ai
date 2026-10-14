@@ -185,7 +185,7 @@ async def voice_v2_endpoint(
     text_topk: int | None = Query(None, description="Text top-k sampling"),
     record_session: bool = Query(True, description="Enable dual-channel 24kHz blackbox audio recording"),
     denoise: bool = Query(True, description="Enable server-side neural noise suppression"),
-    denoise_mode: str = Query("rnnoise", description="Noise suppression mode: 'rnnoise', 'isolation', or 'bypass'"),
+    denoise_mode: str = Query("isolation", description="Noise suppression mode: 'rnnoise', 'isolation', or 'bypass'"),
     enable_aec: bool = Query(True, description="Enable acoustic echo cancellation against loudspeaker bleed"),
 ):
 
@@ -346,6 +346,14 @@ async def voice_v2_endpoint(
 
     resolved_voice = matched_voice
 
+    # Ensure female personas like "Ananya" don't inadvertently run with male voice defaults
+    if agent and hasattr(agent, "name"):
+        name_l = agent.name.lower()
+        if any(fn in name_l for fn in ("ananya", "priya", "sarah", "emma", "maria", "elena")):
+            if resolved_voice and resolved_voice.startswith("NATM"):
+                logger.info(f"[VOICE ROUTING] Re-routing female agent '{agent.name}' from male preset '{resolved_voice}' to 'NATF0.pt'")
+                resolved_voice = "NATF0.pt"
+
     # 2. Compile prompt - pure system prompt with variables removed
     try:
         compiled = compile_prompt(
@@ -467,9 +475,9 @@ async def voice_v2_endpoint(
         noise_suppression=denoise,
         speaker_isolation=(effective_mode == "isolation"),
         suppression_strength=0.70,
-        vad_hangover_sec=0.35,
-        vad_threshold=0.45,
-        min_speech_rms=0.010,
+        vad_hangover_sec=0.45,
+        vad_threshold=0.40,
+        min_speech_rms=0.006,
         enable_aec=enable_aec,
     )
 
@@ -622,14 +630,78 @@ async def voice_v2_endpoint(
     })
 
     # 8. Full-Duplex Bi-Directional Streaming Engine
-    # Note: PersonaPlex S2S vocalizes its own opening turn / greeting naturally from prompt conditioning.
-    # We DO NOT send synthetic duplicate text transcripts prior to actual model vocalization.
     call_stream_start = time.time()
     detector.start_session(call_stream_start)
     stop_event = asyncio.Event()
     disconnect_reason = "normal"
     first_agent_audio_emitted = False
     ttfa_greeting_ms: float | None = None
+
+    # Instant Branded Greeting Playout (<150ms TTFA)
+    if greeting_mode == "agent_first":
+        greeting_clean = (greeting_text or f"Hello, thanks for calling! This is {agent.name}. How can I assist you today?").strip()
+        if greeting_clean:
+            initial_greeting_delivered = True
+            # Send greeting transcript to client immediately
+            try:
+                await websocket.send_json({
+                    "type": "text",
+                    "role": "assistant",
+                    "text": greeting_clean,
+                    "instant_greeting": True,
+                })
+            except Exception as e:
+                logger.debug(f"[VoiceSession {call_session_id}] Greeting text send note: {e}")
+
+            greeting_t0 = round((time.time() - call_start_time) * 1000.0, 1)
+            conversation_turns.append({
+                "role": "assistant",
+                "text": greeting_clean,
+                "interrupted": False,
+                "started_ms": greeting_t0,
+                "ended_ms": greeting_t0 + 1500.0,
+                "duration_ms": 1500.0,
+                "time_offset_sec": round(greeting_t0 / 1000.0, 2),
+                "timestamp": time.time(),
+                "words": len(greeting_clean.split()),
+            })
+
+            # Synthesize and stream opening greeting audio
+            try:
+                from ..tts.base import StreamingCompositeTTS
+                tts_engine = StreamingCompositeTTS(sample_rate=MODEL_SAMPLE_RATE)
+                greeting_pcm = await tts_engine.synthesize_chunk(greeting_clean)
+                if len(greeting_pcm) > 0:
+                    normalized_pcm = normalize_speech_loudness(greeting_pcm, target_rms=0.12)
+                    audio_recorder.record_outbound(normalized_pcm)
+                    cleaner.push_agent_reference(normalized_pcm)
+
+                    resampled = out_resampler.resample_chunk(normalized_pcm, last=False)
+                    clipped = soft_clip(resampled, threshold=0.92)
+                    if codec == "g711_ulaw":
+                        pcm_bytes = encode_ulaw(clipped)
+                    else:
+                        pcm_bytes = float32_to_int16(clipped).tobytes()
+
+                    # Chunk and stream greeting audio
+                    chunk_size = int(sample_rate * 2 * 0.02)  # 20ms chunk
+                    t_first_sent = False
+                    for i in range(0, len(pcm_bytes), chunk_size):
+                        chunk = pcm_bytes[i:i + chunk_size]
+                        if not t_first_sent:
+                            first_audio_ms = round((time.time() - call_start_time) * 1000.0, 1)
+                            first_agent_audio_emitted = True
+                            ttfa_greeting_ms = first_audio_ms
+                            telemetry["ttfa_greeting_ms"] = ttfa_greeting_ms
+                            telemetry["timing"]["ttfa_greeting_ms"] = ttfa_greeting_ms
+                            telemetry["first_audio_to_browser_ms"] = first_audio_ms
+                            t_first_sent = True
+                        telemetry["traffic"]["gateway_to_browser"]["bytes"] += len(chunk)
+                        telemetry["traffic"]["gateway_to_browser"]["frames"] += 1
+                        await websocket.send_bytes(chunk)
+                        await asyncio.sleep(0.015)
+            except Exception as e:
+                logger.warning(f"[VoiceSession {call_session_id}] Instant greeting audio note: {e}")
 
     def trigger_stop(reason: str):
         nonlocal disconnect_reason
@@ -764,9 +836,12 @@ async def voice_v2_endpoint(
                     else:
                         # Robust PCM16 / G.711 processing with carryover & control separation
                         event_type, frames_24k, f32_samples = inbound_processor.process_frame(data)
-                        if event_type == "audio" and f32_samples is not None:
-                            # 1. Multi-Stage Caller Audio Cleaning (80Hz HPF + RNNoise Neural Denoising + Silero VAD + Silence Gating)
-                            cleaned_frames_24k = cleaner.process_chunk(f32_samples)
+                        if event_type == "audio":
+                            cleaned_frames_24k: list[np.ndarray] = []
+                            if frames_24k:
+                                for frame_raw_24k in frames_24k:
+                                    c_frames = cleaner.process_chunk(frame_raw_24k)
+                                    cleaned_frames_24k.extend(c_frames)
 
                             # 2. Voice Activity & Direct-Field Speech Detection
                             if cleaner.is_speech_active:
@@ -1066,6 +1141,12 @@ async def voice_v2_endpoint(
 
                         # Only proceed if we received actual decoded audio samples
                         if pcm is not None and len(pcm) > 0:
+                            if initial_greeting_delivered and not user_has_responded:
+                                if (time.time() - call_stream_start) < 4.0:
+                                    # Branded greeting is active; suppress early pretraining audio babble from worker
+                                    continue
+                                else:
+                                    user_has_responded = True
                             telemetry["decoded_pcm_frames"] = telemetry.get("decoded_pcm_frames", 0) + 1
                             rms_val = compute_rms(pcm)
                             peak_val = float(np.max(np.abs(pcm)))
