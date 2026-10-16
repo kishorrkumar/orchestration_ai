@@ -1,0 +1,39 @@
+id: elevenlabs_tts
+kind: tts
+display_name: "ElevenLabs Multilingual v2"
+description: "High-fidelity conversational voice synthesis with ultra-expressive emotional range"
+docs_url: "https://elevenlabs.io/docs"
+streaming: true
+native_sample_rates:
+  - 16000
+  - 24000
+supported_languages:
+  - en-US
+  - en-IN
+  - hi-IN
+default_model: "eleven_turbo_v2_5"
+default_voice: "21m00Tcm4TlvDq8ikWAM"
+model_list_type: static
+auth_fields:
+  - name: api_key
+    label: "ElevenLabs API Key"
+    field_type: password
+    required: true
+    placeholder: "xi-api-key..."
+    description: "API key from elevenlabs.io"
+models:
+  - id: "eleven_turbo_v2_5"
+    name: "Eleven Turbo v2.5"
+    description: "High-speed conversational speech synthesis"
+    latency_profile: "fast"
+    last_verified: "2026-10-15"
+voices:
+  - id: "21m00Tcm4TlvDq8ikWAM"
+    name: "Rachel (Calm, Professional)"
+    gender: female
+    language: en-US
+  - id: "AZnzlk1XvdvUeBnXmlld"
+    name: "Domi (Strong, Friendly)"
+    gender: female
+    language: en-US
+pipecat_service: "pipecat.services.elevenlabs.tts.ElevenLabsTTSService"

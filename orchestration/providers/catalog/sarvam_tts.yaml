@@ -1,0 +1,80 @@
+id: sarvam_tts
+kind: tts
+display_name: "Sarvam AI Bulbul (Indic TTS)"
+description: "Expressive Indic text-to-speech engine with 11+ languages and diverse regional accents"
+docs_url: "https://docs.sarvam.ai/products/text-to-speech"
+streaming: true
+native_sample_rates:
+  - 16000
+  - 24000
+supported_languages:
+  - hi-IN
+  - en-IN
+  - ta-IN
+  - te-IN
+  - kn-IN
+  - ml-IN
+  - mr-IN
+  - gu-IN
+  - bn-IN
+  - pa-IN
+  - od-IN
+default_model: "bulbul:v4-flash"
+default_voice: "shubh"
+model_list_type: static
+auth_fields:
+  - name: api_key
+    label: "Sarvam API Subscription Key"
+    field_type: password
+    required: true
+    placeholder: "Paste api-subscription-key from dashboard.sarvam.ai"
+    description: "Sarvam AI subscription key from dashboard.sarvam.ai"
+models:
+  - id: "bulbul:v4-flash"
+    name: "Bulbul v4 Flash (Latest)"
+    description: "Ultra-fast expressive speech generation with temperature and pace controls"
+    latency_profile: "ultra-fast"
+    last_verified: "2026-10-15"
+  - id: "bulbul:v3"
+    name: "Bulbul v3"
+    description: "Production-grade multilingual Indic TTS with high naturalness"
+    latency_profile: "fast"
+    last_verified: "2026-10-15"
+voices:
+  - id: "shubh"
+    name: "Shubh (Warm Indian Male)"
+    gender: male
+    language: hi-IN
+  - id: "ritu"
+    name: "Ritu (Polite, Professional Female)"
+    gender: female
+    language: hi-IN
+  - id: "priya"
+    name: "Priya (Warm, Friendly Female)"
+    gender: female
+    language: en-IN
+  - id: "aditya"
+    name: "Aditya (Clear, Confident Male)"
+    gender: male
+    language: hi-IN
+  - id: "kavya"
+    name: "Kavya (Expressive, Engaging Female)"
+    gender: female
+    language: ta-IN
+  - id: "ananya"
+    name: "Ananya (Warm, Conversational Female)"
+    gender: female
+    language: en-IN
+  - id: "arvind"
+    name: "Arvind (Calm, Consultative Male)"
+    gender: male
+    language: ta-IN
+  - id: "meera"
+    name: "Meera (Articulate, Courteous Female)"
+    gender: female
+    language: hi-IN
+  - id: "rahul"
+    name: "Rahul (Energetic, Natural Male)"
+    gender: male
+    language: en-IN
+pipecat_service: "pipecat.services.sarvam.tts.SarvamTTSService"

@@ -116,9 +116,9 @@ export const TestCallModal: React.FC<TestCallModalProps> = ({ agent, onClose }) 
   const [turnTtfaMs, setTurnTtfaMs] = useState<number | null>(null)
   const [greetingTtfaMs, setGreetingTtfaMs] = useState<number | null>(null)
 
-  // Gemini Live & S2S Engine Options
-  const [engine, setEngine] = useState<'gemini' | 'personaplex'>(() => {
-    return (localStorage.getItem('voice_engine') as 'gemini' | 'personaplex') || 'gemini'
+  // Gemini Live, Sarvam (Engine B), & PersonaPlex Engine Options
+  const [engine, setEngine] = useState<'gemini' | 'sarvam' | 'personaplex'>(() => {
+    return (localStorage.getItem('voice_engine') as 'gemini' | 'sarvam' | 'personaplex') || 'gemini'
   })
   const [geminiApiKey, setGeminiApiKey] = useState<string>(() => {
     return localStorage.getItem('gemini_api_key') || ''
@@ -129,6 +129,19 @@ export const TestCallModal: React.FC<TestCallModalProps> = ({ agent, onClose }) 
   const [geminiModel] = useState<string>('models/gemini-2.0-flash-exp')
   const [isKeyVisible, setIsKeyVisible] = useState(false)
   const [keySavedNotice, setKeySavedNotice] = useState(false)
+
+  // Sarvam AI Engine B State
+  const [sarvamApiKey, setSarvamApiKey] = useState<string>(() => {
+    return localStorage.getItem('sarvam_api_key') || ''
+  })
+  const [sarvamVoice, setSarvamVoice] = useState<string>(() => {
+    return localStorage.getItem('sarvam_voice') || 'shubh'
+  })
+  const [sarvamLanguage, setSarvamLanguage] = useState<string>(() => {
+    return localStorage.getItem('sarvam_language') || 'hi-IN'
+  })
+  const [isSarvamKeyVisible, setIsSarvamKeyVisible] = useState(false)
+  const [sarvamKeySavedNotice, setSarvamKeySavedNotice] = useState(false)
   const [restartCallTrigger, setRestartCallTrigger] = useState(0)
 
   const handleSaveApiKey = (newKey?: string) => {
@@ -149,6 +162,30 @@ export const TestCallModal: React.FC<TestCallModalProps> = ({ agent, onClose }) 
         const clean = text.trim()
         setGeminiApiKey(clean)
         handleSaveApiKey(clean)
+      }
+    } catch (e) {
+      console.warn('Clipboard read error:', e)
+    }
+  }
+
+  const handleSaveSarvamApiKey = (newKey?: string) => {
+    const cleanKey = (newKey !== undefined ? newKey : sarvamApiKey).trim()
+    localStorage.setItem('sarvam_api_key', cleanKey)
+    setSarvamApiKey(cleanKey)
+    setSarvamKeySavedNotice(true)
+    setTimeout(() => setSarvamKeySavedNotice(false), 2500)
+    setErrorMessage(null)
+    setCallStatus('connecting')
+    setRestartCallTrigger((c) => c + 1)
+  }
+
+  const handlePasteSarvamKey = async () => {
+    try {
+      const text = await navigator.clipboard.readText()
+      if (text && text.trim()) {
+        const clean = text.trim()
+        setSarvamApiKey(clean)
+        handleSaveSarvamApiKey(clean)
       }
     } catch (e) {
       console.warn('Clipboard read error:', e)
@@ -235,6 +272,13 @@ export const TestCallModal: React.FC<TestCallModalProps> = ({ agent, onClose }) 
           return
         }
 
+        // Check for Sarvam API key if Sarvam engine selected
+        if (engine === 'sarvam' && !sarvamApiKey.trim()) {
+          setCallStatus('error')
+          setErrorMessage('Please paste your Sarvam AI API subscription key below to enable Indic voice.')
+          return
+        }
+
         // Build WebSocket URL
         const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
         const host = window.location.host
@@ -244,6 +288,8 @@ export const TestCallModal: React.FC<TestCallModalProps> = ({ agent, onClose }) 
         )}${voiceParam}&sample_rate=16000&codec=pcm16&engine=${encodeURIComponent(engine)}`
         if (engine === 'gemini' && geminiApiKey.trim()) {
           queryParams += `&gemini_api_key=${encodeURIComponent(geminiApiKey.trim())}&gemini_voice=${encodeURIComponent(geminiVoice)}&gemini_model=${encodeURIComponent(geminiModel)}`
+        } else if (engine === 'sarvam' && sarvamApiKey.trim()) {
+          queryParams += `&sarvam_api_key=${encodeURIComponent(sarvamApiKey.trim())}&sarvam_voice=${encodeURIComponent(sarvamVoice)}&sarvam_language=${encodeURIComponent(sarvamLanguage)}`
         }
         const wsUrl = `${protocol}//${host}/v2/voice?${queryParams}`
 
@@ -731,12 +777,14 @@ export const TestCallModal: React.FC<TestCallModalProps> = ({ agent, onClose }) 
           <p className="text-[13px] text-[#6B6963]">
             {engine === 'gemini'
               ? 'Google Gemini 2.0 Flash Multimodal Live (<400ms Sub-Second Voice)'
+              : engine === 'sarvam'
+              ? 'Sarvam AI Engine B (Saaras STT • Sarvam LLM • Bulbul TTS)'
               : 'PersonaPlex 7B Native S2S Voice Agent (24 kHz Mimi)'}
           </p>
         </div>
 
-        {/* Engine Toggle: Gemini Live vs PersonaPlex */}
-        <div className="flex items-center justify-center p-1 bg-[#F4F3F0] rounded-xl border border-[rgba(31,30,29,0.08)] w-full">
+        {/* Engine Toggle: Gemini Live vs Sarvam Engine B vs PersonaPlex */}
+        <div className="flex items-center justify-center p-1 bg-[#F4F3F0] rounded-xl border border-[rgba(31,30,29,0.08)] w-full gap-1">
           <button
             type="button"
             onClick={() => {
@@ -745,14 +793,31 @@ export const TestCallModal: React.FC<TestCallModalProps> = ({ agent, onClose }) 
               setCallStatus('connecting')
               setRestartCallTrigger((c) => c + 1)
             }}
-            className={`flex-1 py-1.5 px-3 rounded-lg text-[12px] font-medium flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
+            className={`flex-1 py-1.5 px-2.5 rounded-lg text-[11px] sm:text-[12px] font-medium flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
               engine === 'gemini'
                 ? 'bg-white text-[#1F1E1D] shadow-xs font-semibold'
                 : 'text-[#6B6963] hover:text-[#1F1E1D]'
             }`}
           >
             <Sparkles className="w-3.5 h-3.5 text-[#C2603F]" />
-            <span>Gemini Live (Cloud • &lt;400ms)</span>
+            <span>Gemini Live</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setEngine('sarvam')
+              localStorage.setItem('voice_engine', 'sarvam')
+              setCallStatus('connecting')
+              setRestartCallTrigger((c) => c + 1)
+            }}
+            className={`flex-1 py-1.5 px-2.5 rounded-lg text-[11px] sm:text-[12px] font-medium flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
+              engine === 'sarvam'
+                ? 'bg-white text-[#1F1E1D] shadow-xs font-semibold'
+                : 'text-[#6B6963] hover:text-[#1F1E1D]'
+            }`}
+          >
+            <Sparkles className="w-3.5 h-3.5 text-emerald-600" />
+            <span>Sarvam (Engine B)</span>
           </button>
           <button
             type="button"
@@ -762,14 +827,14 @@ export const TestCallModal: React.FC<TestCallModalProps> = ({ agent, onClose }) 
               setCallStatus('connecting')
               setRestartCallTrigger((c) => c + 1)
             }}
-            className={`flex-1 py-1.5 px-3 rounded-lg text-[12px] font-medium flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
+            className={`flex-1 py-1.5 px-2.5 rounded-lg text-[11px] sm:text-[12px] font-medium flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
               engine === 'personaplex'
                 ? 'bg-white text-[#1F1E1D] shadow-xs font-semibold'
                 : 'text-[#6B6963] hover:text-[#1F1E1D]'
             }`}
           >
             <Server className="w-3.5 h-3.5" />
-            <span>PersonaPlex (Local GPU)</span>
+            <span>PersonaPlex (GPU)</span>
           </button>
         </div>
 
@@ -869,6 +934,149 @@ export const TestCallModal: React.FC<TestCallModalProps> = ({ agent, onClose }) 
               <span className="text-[#6B6963]">Live Model:</span>
               <span className="px-2 py-0.5 rounded text-[10px] font-semibold bg-[#1F1E1D] text-white">
                 Gemini 2.0 Flash Live (3.1 Multimodal)
+              </span>
+            </div>
+          </div>
+        )}
+
+        {/* Sarvam AI (Engine B) API Key UI Paste Card */}
+        {engine === 'sarvam' && (
+          <div className="w-full bg-[#FAF9F5] border border-[rgba(31,30,29,0.12)] rounded-2xl p-3.5 text-left space-y-2.5">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Key className="w-4 h-4 text-emerald-600" />
+                <span className="text-[12px] font-semibold text-[#1F1E1D]">Sarvam AI API Subscription Key</span>
+                {sarvamApiKey ? (
+                  <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 font-medium flex items-center gap-1">
+                    <Check className="w-3 h-3" /> Active
+                  </span>
+                ) : (
+                  <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 font-medium">
+                    Paste Key to Enable Voice
+                  </span>
+                )}
+              </div>
+              <a
+                href="https://dashboard.sarvam.ai"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-[11px] text-emerald-700 hover:underline flex items-center gap-1 font-medium"
+              >
+                <span>dashboard.sarvam.ai</span>
+                <ExternalLink className="w-3 h-3" />
+              </a>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <div className="relative flex-1">
+                <input
+                  type={isSarvamKeyVisible ? 'text' : 'password'}
+                  value={sarvamApiKey}
+                  onChange={(e) => setSarvamApiKey(e.target.value)}
+                  placeholder="Paste api-subscription-key from dashboard.sarvam.ai"
+                  className="w-full px-3 py-1.5 pr-8 text-[12px] bg-white border border-[rgba(31,30,29,0.15)] rounded-lg font-mono focus:outline-none focus:ring-1 focus:ring-emerald-600"
+                />
+                <button
+                  type="button"
+                  onClick={() => setIsSarvamKeyVisible(!isSarvamKeyVisible)}
+                  className="absolute right-2.5 top-1/2 -translate-y-1/2 text-[#8C8980] hover:text-[#1F1E1D] cursor-pointer"
+                  title={isSarvamKeyVisible ? 'Hide Key' : 'Show Key'}
+                >
+                  {isSarvamKeyVisible ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                </button>
+              </div>
+
+              <Button
+                variant="secondary"
+                size="compact"
+                onClick={handlePasteSarvamKey}
+                title="Paste API key directly from system clipboard"
+              >
+                Paste
+              </Button>
+
+              <Button
+                variant="primary"
+                size="compact"
+                onClick={() => handleSaveSarvamApiKey()}
+                disabled={!sarvamApiKey.trim()}
+              >
+                {sarvamKeySavedNotice ? 'Saved!' : 'Save & Connect'}
+              </Button>
+            </div>
+
+            {/* Bulbul Voice Persona selector */}
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between text-[11px] pt-1 border-t border-[rgba(31,30,29,0.06)] gap-1">
+              <span className="text-[#6B6963]">Bulbul Voice Persona:</span>
+              <div className="flex items-center gap-1 flex-wrap">
+                {([
+                  { id: 'shubh', name: 'Shubh (Male)' },
+                  { id: 'ritu', name: 'Ritu (Female)' },
+                  { id: 'priya', name: 'Priya (Female)' },
+                  { id: 'aditya', name: 'Aditya (Male)' },
+                  { id: 'kavya', name: 'Kavya (Female)' },
+                  { id: 'ananya', name: 'Ananya (Female)' },
+                  { id: 'arvind', name: 'Arvind (Male)' },
+                ] as const).map((v) => (
+                  <button
+                    key={v.id}
+                    type="button"
+                    onClick={() => {
+                      setSarvamVoice(v.id)
+                      localStorage.setItem('sarvam_voice', v.id)
+                      setRestartCallTrigger((c) => c + 1)
+                    }}
+                    className={`px-2 py-0.5 rounded text-[10px] font-medium transition-colors cursor-pointer ${
+                      sarvamVoice === v.id
+                        ? 'bg-emerald-700 text-white font-semibold'
+                        : 'bg-white border border-[rgba(31,30,29,0.1)] text-[#6B6963] hover:text-[#1F1E1D]'
+                    }`}
+                  >
+                    {v.name}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Language Selector */}
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between text-[11px] pt-1 border-t border-[rgba(31,30,29,0.06)] gap-1">
+              <span className="text-[#6B6963]">Indic Language:</span>
+              <div className="flex items-center gap-1 flex-wrap">
+                {([
+                  { code: 'hi-IN', label: 'Hindi' },
+                  { code: 'en-IN', label: 'Indian English' },
+                  { code: 'ta-IN', label: 'Tamil' },
+                  { code: 'te-IN', label: 'Telugu' },
+                  { code: 'kn-IN', label: 'Kannada' },
+                  { code: 'ml-IN', label: 'Malayalam' },
+                  { code: 'mr-IN', label: 'Marathi' },
+                  { code: 'bn-IN', label: 'Bengali' },
+                ] as const).map((lang) => (
+                  <button
+                    key={lang.code}
+                    type="button"
+                    onClick={() => {
+                      setSarvamLanguage(lang.code)
+                      localStorage.setItem('sarvam_language', lang.code)
+                      setRestartCallTrigger((c) => c + 1)
+                    }}
+                    className={`px-2 py-0.5 rounded text-[10px] font-medium transition-colors cursor-pointer ${
+                      sarvamLanguage === lang.code
+                        ? 'bg-emerald-700 text-white font-semibold'
+                        : 'bg-white border border-[rgba(31,30,29,0.1)] text-[#6B6963] hover:text-[#1F1E1D]'
+                    }`}
+                  >
+                    {lang.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Pipeline Stack Indicator */}
+            <div className="flex items-center justify-between text-[11px] pt-1 border-t border-[rgba(31,30,29,0.06)]">
+              <span className="text-[#6B6963]">Pipeline Architecture:</span>
+              <span className="px-2 py-0.5 rounded text-[10px] font-semibold bg-emerald-800 text-white">
+                Saaras:v4 (STT) + Sarvam-105B (LLM) + Bulbul:v4-flash (TTS)
               </span>
             </div>
           </div>
@@ -996,13 +1204,17 @@ export const TestCallModal: React.FC<TestCallModalProps> = ({ agent, onClose }) 
               <div>
                 <span className="text-[#8C8980]">Engine / Mode:</span>{' '}
                 <span className="font-bold text-[#1F1E1D]">
-                  {engine === 'gemini' ? 'Gemini 2.0 Live' : 'PersonaPlex S2S'}
+                  {engine === 'gemini' ? 'Gemini 2.0 Live' : engine === 'sarvam' ? 'Sarvam Engine B' : 'PersonaPlex S2S'}
                 </span>
               </div>
               <div className="truncate">
                 <span className="text-[#8C8980]">Voice Conditioning:</span>{' '}
                 <span className="font-semibold text-[#1F1E1D] truncate">
-                  {engine === 'gemini' ? `${geminiVoice} (Google Live)` : (agent.voice_id || 'NATF0.pt')}
+                  {engine === 'gemini'
+                    ? `${geminiVoice} (Google Live)`
+                    : engine === 'sarvam'
+                    ? `${sarvamVoice} (${sarvamLanguage} Bulbul)`
+                    : (agent.voice_id || 'NATF0.pt')}
                 </span>
               </div>
               <div>
@@ -1013,10 +1225,21 @@ export const TestCallModal: React.FC<TestCallModalProps> = ({ agent, onClose }) 
               </div>
               <div>
                 <span className="text-[#8C8980]">Audio Transport:</span>{' '}
-                <span>{engine === 'gemini' ? '16 kHz PCM ↔ 24 kHz Live' : '16 kHz PCM → 24 kHz Mimi'}</span>
+                <span>
+                  {engine === 'gemini'
+                    ? '16 kHz PCM ↔ 24 kHz Live'
+                    : engine === 'sarvam'
+                    ? '16 kHz PCM ↔ 16 kHz Cloud'
+                    : '16 kHz PCM → 24 kHz Mimi'}
+                </span>
               </div>
               <div className="col-span-2 text-[10px] text-[#8C8980]">
-                Pipeline: {engine === 'gemini' ? 'Google Gemini Multimodal Live (Sub-400ms TTFA, Native Audio-to-Audio)' : 'Native Speech-to-Speech (Pure S2S, Zero Cascaded Lag)'}
+                Pipeline:{' '}
+                {engine === 'gemini'
+                  ? 'Google Gemini Multimodal Live (Sub-400ms TTFA, Native Audio-to-Audio)'
+                  : engine === 'sarvam'
+                  ? 'Sarvam AI Cascaded Pipeline (Saaras STT + Sarvam-105B LLM + Bulbul TTS)'
+                  : 'Native Speech-to-Speech (Pure S2S, Zero Cascaded Lag)'}
               </div>
             </div>
           </div>

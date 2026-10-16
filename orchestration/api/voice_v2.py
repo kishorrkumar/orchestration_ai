@@ -23,6 +23,7 @@ from ..audio.framing import InboundAudioFrameProcessor
 from ..audio.recorder import SessionAudioRecorder
 from ..audio.resample import AudioResampler, StreamingResampleBuffer, resample_oneshot
 from ..infrastructure.engines.gemini_live import GeminiLiveSession, resolve_gemini_api_key, find_supported_live_model
+from ..infrastructure.engines.sarvam_engine import SarvamClient, resolve_sarvam_api_key
 from ..tools import default_registry
 from ..db.models import AgentVersion
 from ..db.service import AgentService, CallSessionService
@@ -444,6 +445,399 @@ async def _run_gemini_live_session(
             pass
 
 
+async def _run_sarvam_session(
+    websocket: WebSocket,
+    inbound_reader: asyncio.Task,
+    inbound_prebuffer: asyncio.Queue,
+    early_disconnect: asyncio.Event,
+    agent: Any,
+    target_ver: Any,
+    call_session_id: str,
+    call_start_time: float,
+    system_prompt: str,
+    compiled_prompt: Any,
+    effective_sarvam_key: str,
+    sarvam_voice: str | None = None,
+    sarvam_language: str | None = None,
+    sarvam_model: str | None = None,
+    sample_rate: int = 16000,
+    codec: str = "pcm16",
+    session_factory: Any = None,
+    record_session: bool = True,
+) -> None:
+    """
+    Manages full-duplex conversational voice using Sarvam AI Engine B
+    (Saaras STT + Sarvam-105b LLM + Bulbul TTS).
+    """
+    logger.info(f"[VoiceSession {call_session_id}] Starting Sarvam AI Cascaded Voice session")
+
+    # 1. Resolve Voice, Language, and LLM Model
+    resolved_sarvam_voice = sarvam_voice
+    if not resolved_sarvam_voice:
+        name_l = (agent.name or "").lower()
+        is_female = any(fn in name_l for fn in ("ananya", "priya", "ritu", "kavya", "meera", "sarah", "emma"))
+        if getattr(target_ver, "voice_id", None) and "NATF" in str(target_ver.voice_id):
+            is_female = True
+        resolved_sarvam_voice = "ritu" if is_female else "shubh"
+
+    resolved_language = sarvam_language or "hi-IN"
+    active_model = sarvam_model or "sarvam-105b-conversations"
+
+    # 2. Inform client that line is connecting
+    await websocket.send_json({
+        "type": "status",
+        "status": "connecting",
+        "message": f"Connecting to Sarvam AI ({resolved_sarvam_voice} • {resolved_language})...",
+    })
+
+    client = SarvamClient(api_key=effective_sarvam_key)
+
+    # 3. Inform client that session is ready & started
+    await websocket.send_json({
+        "type": "status",
+        "status": "ready",
+        "message": f"Connected to Sarvam AI Engine B ({active_model})",
+    })
+    await websocket.send_json({
+        "type": "session_started",
+        "session_id": call_session_id,
+        "engine": "sarvam",
+        "model": active_model,
+        "voice": resolved_sarvam_voice,
+        "language": resolved_language,
+        "sample_rate": sample_rate,
+    })
+
+    disconnect_reason = "normal"
+    conversation_turns: list[dict[str, Any]] = []
+    messages: list[dict[str, str]] = [
+        {"role": "system", "content": getattr(compiled_prompt, "text", system_prompt)},
+    ]
+
+    is_agent_speaking = False
+    generation_cancelled = asyncio.Event()
+
+    async def speak_text(text_to_speak: str, role: str = "assistant"):
+        nonlocal is_agent_speaking
+        clean = text_to_speak.strip()
+        if not clean or generation_cancelled.is_set():
+            return
+
+        is_agent_speaking = True
+        try:
+            await websocket.send_json({
+                "type": "transcript",
+                "role": role,
+                "text": clean,
+            })
+        except Exception:
+            pass
+
+        t0 = time.perf_counter()
+        try:
+            pcm_audio = await client.synthesize(
+                text=clean,
+                speaker=resolved_sarvam_voice,
+                target_language_code=resolved_language,
+                model="bulbul:v4-flash",
+                sample_rate=sample_rate,
+            )
+            if not pcm_audio or generation_cancelled.is_set():
+                is_agent_speaking = False
+                return
+
+            ttfa_ms = (time.perf_counter() - t0) * 1000.0
+            try:
+                await websocket.send_json({
+                    "type": "metrics",
+                    "ttfa_ms": round(ttfa_ms, 1),
+                    "engine": "sarvam",
+                })
+                await websocket.send_json({
+                    "type": "timing",
+                    "ttfa_ms": round(ttfa_ms, 1),
+                })
+            except Exception:
+                pass
+
+            # Stream audio chunks over WebSocket (640 bytes = 20ms at 16kHz)
+            chunk_size = 640 if sample_rate == 16000 else 320
+            for offset in range(0, len(pcm_audio), chunk_size):
+                if generation_cancelled.is_set():
+                    break
+                chunk = pcm_audio[offset : offset + chunk_size]
+                if codec == "g711_ulaw":
+                    chunk = encode_ulaw(chunk)
+                await websocket.send_bytes(chunk)
+                await asyncio.sleep(0.018)
+        except Exception as synth_err:
+            logger.warning(f"[SarvamSession] Synthesis error: {synth_err}")
+        finally:
+            is_agent_speaking = False
+
+    # 4. Instant Branded Greeting
+    greeting_val = getattr(target_ver, "greeting", None) or getattr(agent, "greeting", None)
+    if greeting_val and str(greeting_val).strip():
+        greeting_text = str(greeting_val).strip()
+        conversation_turns.append({
+            "role": "assistant",
+            "text": greeting_text,
+            "timestamp": time.time(),
+        })
+        messages.append({"role": "assistant", "content": greeting_text})
+        asyncio.create_task(speak_text(greeting_text))
+
+    # Inbound Audio & Control Loop
+    user_audio_buffer = bytearray()
+    last_user_speech_time = 0.0
+    speech_detected_in_turn = False
+    turn_in_progress = False
+
+    async def handle_user_turn(user_text: str):
+        nonlocal turn_in_progress
+        if not user_text.strip():
+            return
+        turn_in_progress = True
+        clean_user_text = user_text.strip()
+        logger.info(f"[SarvamSession {call_session_id}] Caller said: {clean_user_text}")
+
+        conversation_turns.append({
+            "role": "user",
+            "text": clean_user_text,
+            "timestamp": time.time(),
+        })
+        try:
+            await websocket.send_json({
+                "type": "transcript",
+                "role": "user",
+                "text": clean_user_text,
+            })
+        except Exception:
+            pass
+
+        messages.append({"role": "user", "content": clean_user_text})
+
+        # Check for tool intent
+        try:
+            low = clean_user_text.lower()
+            if any(k in low for k in ("schedule", "book", "appointment", "demo", "calendar", "call tomorrow", "meeting")):
+                t_res = await default_registry.execute("schedule_demo", {"notes": clean_user_text})
+                if t_res and t_res.success:
+                    try:
+                        await websocket.send_json({
+                            "type": "tool_call",
+                            "name": "schedule_demo",
+                            "summary": t_res.summary or "Demo appointment scheduled successfully",
+                        })
+                    except Exception:
+                        pass
+                    messages.append({
+                        "role": "system",
+                        "content": f"[Tool Result: schedule_demo executed successfully. Details: {t_res.data}]",
+                    })
+            elif any(k in low for k in ("price", "pricing", "cost", "quote", "rate", "how much")):
+                t_res = await default_registry.execute("lookup_pricing", {"query": clean_user_text})
+                if t_res and t_res.success:
+                    try:
+                        await websocket.send_json({
+                            "type": "tool_call",
+                            "name": "lookup_pricing",
+                            "summary": t_res.summary or "Pricing information retrieved",
+                        })
+                    except Exception:
+                        pass
+                    messages.append({
+                        "role": "system",
+                        "content": f"[Tool Result: lookup_pricing retrieved: {t_res.data}]",
+                    })
+        except Exception as tool_err:
+            logger.debug(f"[SarvamSession] Tool match note: {tool_err}")
+
+        # Stream response from Sarvam LLM
+        generation_cancelled.clear()
+        sentence_buffer = ""
+        full_reply_text = ""
+
+        try:
+            async for token in client.stream_chat_completion(messages, model=active_model):
+                if generation_cancelled.is_set():
+                    break
+                sentence_buffer += token
+                full_reply_text += token
+
+                # If sentence boundary reached, synthesize and speak
+                if any(delim in sentence_buffer for delim in (". ", "? ", "! ", ".\n", "?\n", "!\n", "।", "\n\n")):
+                    parts = re.split(r"([.?!।\n]+)", sentence_buffer)
+                    if len(parts) >= 3:
+                        sentence_to_speak = (parts[0] + parts[1]).strip()
+                        sentence_buffer = "".join(parts[2:])
+                        if sentence_to_speak:
+                            await speak_text(sentence_to_speak)
+
+            # Flush remaining tokens in sentence buffer
+            if sentence_buffer.strip() and not generation_cancelled.is_set():
+                await speak_text(sentence_buffer.strip())
+
+            if full_reply_text.strip() and not generation_cancelled.is_set():
+                conversation_turns.append({
+                    "role": "assistant",
+                    "text": full_reply_text.strip(),
+                    "timestamp": time.time(),
+                })
+                messages.append({"role": "assistant", "content": full_reply_text.strip()})
+        except Exception as llm_err:
+            logger.warning(f"[SarvamSession] LLM stream error: {llm_err}")
+        finally:
+            turn_in_progress = False
+
+    try:
+        while not early_disconnect.is_set():
+            try:
+                msg = await inbound_prebuffer.get()
+            except asyncio.CancelledError:
+                break
+
+            if msg.get("type") == "websocket.disconnect":
+                disconnect_reason = "client_disconnected"
+                break
+
+            # Handle binary audio frame from browser mic
+            binary_data = msg.get("bytes")
+            if binary_data:
+                pcm16 = binary_data
+                if codec == "g711_ulaw":
+                    pcm16 = decode_ulaw(pcm16)
+                    pcm16 = resample_oneshot(pcm16, 8000, 16000)
+                elif sample_rate != 16000:
+                    pcm16 = resample_oneshot(pcm16, sample_rate, 16000)
+
+                frame_rms = compute_rms(pcm16)
+
+                # Check for interruption if user speaks during agent output
+                if is_agent_speaking and frame_rms > 0.040:
+                    generation_cancelled.set()
+                    is_agent_speaking = False
+                    user_audio_buffer.clear()
+                    speech_detected_in_turn = False
+                    try:
+                        await websocket.send_json({"type": "interrupted"})
+                    except Exception:
+                        pass
+                    continue
+
+                if frame_rms > 0.022:
+                    speech_detected_in_turn = True
+                    last_user_speech_time = time.perf_counter()
+                    user_audio_buffer.extend(pcm16)
+                elif speech_detected_in_turn:
+                    user_audio_buffer.extend(pcm16)
+                    silence_duration = time.perf_counter() - last_user_speech_time
+                    if silence_duration > 0.55 and len(user_audio_buffer) >= 4800:
+                        speech_chunk = bytes(user_audio_buffer)
+                        user_audio_buffer.clear()
+                        speech_detected_in_turn = False
+
+                        transcribed = await client.transcribe(
+                            speech_chunk,
+                            sample_rate=16000,
+                            language_code=resolved_language,
+                            model="saaras:v4",
+                        )
+                        if transcribed:
+                            asyncio.create_task(handle_user_turn(transcribed))
+                continue
+
+            # Handle JSON control messages from client
+            text_data = msg.get("text")
+            if text_data:
+                try:
+                    payload = json.loads(text_data)
+                    p_type = payload.get("type")
+                    if p_type == "ping":
+                        await websocket.send_json({"type": "pong"})
+                    elif p_type == "hangup":
+                        disconnect_reason = "user_hangup"
+                        break
+                    elif p_type == "interrupt":
+                        generation_cancelled.set()
+                        is_agent_speaking = False
+                        user_audio_buffer.clear()
+                        speech_detected_in_turn = False
+                        await websocket.send_json({"type": "interrupted"})
+                    elif p_type == "user_transcript":
+                        user_text = payload.get("text", "")
+                        is_final = payload.get("is_final", False)
+                        if user_text and is_final and not turn_in_progress:
+                            user_audio_buffer.clear()
+                            speech_detected_in_turn = False
+                            asyncio.create_task(handle_user_turn(user_text))
+                except Exception as text_err:
+                    logger.debug(f"[SarvamSession] Inbound text error: {text_err}")
+
+    except Exception as e:
+        logger.warning(f"[VoiceSession {call_session_id}] Sarvam loop note: {e}")
+        disconnect_reason = "error"
+    finally:
+        generation_cancelled.set()
+        inbound_reader.cancel()
+
+        duration_sec = round(time.time() - call_start_time, 2)
+
+        # Save conversation recording JSON
+        convo_payload = {
+            "session_id": call_session_id,
+            "agent_id": agent.id,
+            "agent_name": agent.name,
+            "engine": "sarvam",
+            "model": active_model,
+            "voice_id": resolved_sarvam_voice,
+            "language": resolved_language,
+            "status": "completed",
+            "started_at": call_start_time,
+            "ended_at": time.time(),
+            "created_at_iso": datetime.datetime.fromtimestamp(call_start_time, tz=datetime.timezone.utc).isoformat(),
+            "duration_sec": duration_sec,
+            "disconnect_reason": disconnect_reason,
+            "system_prompt": system_prompt,
+            "turns": conversation_turns,
+        }
+        for dest_dir in (CONVERSATIONS_DIR, LOGS_CONVERSATIONS_DIR):
+            try:
+                dest_dir.mkdir(parents=True, exist_ok=True)
+                dest_file = dest_dir / f"{call_session_id}.json"
+                with open(dest_file, "w", encoding="utf-8") as fp:
+                    json.dump(convo_payload, fp, indent=2)
+            except Exception as e:
+                logger.warning(f"Failed to write conversation JSON: {e}")
+
+        # Update DB session record
+        try:
+            async with session_factory() as db:
+                call_svc = CallSessionService(db)
+                await call_svc.end_session(
+                    session_id=call_session_id,
+                    end_reason=disconnect_reason,
+                    duration_sec=duration_sec,
+                )
+                await db.commit()
+        except Exception as db_err:
+            logger.debug(f"DB end_session note: {db_err}")
+
+        # Notify caller and close websocket
+        try:
+            await websocket.send_json({
+                "type": "call_ended",
+                "reason": disconnect_reason,
+                "stats": {
+                    "duration_sec": duration_sec,
+                    "engine": "sarvam",
+                },
+            })
+            await websocket.close(code=status.WS_1000_NORMAL_CLOSURE, reason="call_ended")
+        except Exception:
+            pass
+
+
 @router.websocket("/v2/voice")
 async def voice_v2_endpoint(
     websocket: WebSocket,
@@ -464,10 +858,14 @@ async def voice_v2_endpoint(
     denoise: bool = Query(True, description="Enable server-side neural noise suppression"),
     denoise_mode: str = Query("isolation", description="Noise suppression mode: 'rnnoise', 'isolation', or 'bypass'"),
     enable_aec: bool = Query(True, description="Enable acoustic echo cancellation against loudspeaker bleed"),
-    engine: str = Query("auto", description="Voice engine: 'auto', 'gemini', or 'personaplex'"),
+    engine: str = Query("auto", description="Voice engine: 'auto', 'gemini', 'sarvam', 'cascaded_cloud', or 'personaplex'"),
     gemini_api_key: str | None = Query(None, description="Google Gemini API key pasted directly from UI"),
     gemini_voice: str | None = Query(None, description="Gemini voice preset: Aoede, Puck, Charon, Fenrir, Kore"),
     gemini_model: str | None = Query(None, description="Gemini model (e.g. models/gemini-2.0-flash-realtime-exp, models/gemini-2.5-flash)"),
+    sarvam_api_key: str | None = Query(None, description="Sarvam AI API subscription key pasted directly from UI"),
+    sarvam_voice: str | None = Query(None, description="Sarvam Bulbul voice preset: shubh, ritu, priya, aditya, kavya, ananya, arvind, meera, rahul"),
+    sarvam_language: str | None = Query(None, description="Sarvam Indic language code (e.g. hi-IN, en-IN, ta-IN, te-IN)"),
+    sarvam_model: str | None = Query(None, description="Sarvam LLM model (e.g. sarvam-105b-conversations, sarvam-105b)"),
 ):
 
     """
@@ -689,6 +1087,45 @@ async def voice_v2_endpoint(
             effective_gemini_key=effective_gemini_key,
             gemini_voice=gemini_voice,
             gemini_model=gemini_model,
+            sample_rate=sample_rate,
+            codec=codec,
+            session_factory=session_factory,
+            record_session=record_session,
+        )
+
+    # Check if caller requested Sarvam / Cascaded Cloud (Engine B)
+    effective_sarvam_key = None
+    if engine in ("sarvam", "cascaded", "cascaded_cloud", "auto"):
+        effective_sarvam_key = await resolve_sarvam_api_key(
+            passed_key=sarvam_api_key,
+            session_factory=session_factory,
+        )
+
+    if engine in ("sarvam", "cascaded", "cascaded_cloud") and not effective_sarvam_key:
+        inbound_reader.cancel()
+        await websocket.send_json({
+            "type": "error",
+            "message": "Sarvam AI API key required for Engine B. Please paste your api-subscription-key in the Test Call modal or configure it under Providers.",
+        })
+        await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+        return
+
+    if effective_sarvam_key and (engine in ("sarvam", "cascaded", "cascaded_cloud") or (engine == "auto" and sarvam_api_key)):
+        return await _run_sarvam_session(
+            websocket=websocket,
+            inbound_reader=inbound_reader,
+            inbound_prebuffer=inbound_prebuffer,
+            early_disconnect=early_disconnect,
+            agent=agent,
+            target_ver=target_ver,
+            call_session_id=call_session_id,
+            call_start_time=call_start_time,
+            system_prompt=system_prompt,
+            compiled_prompt=compiled,
+            effective_sarvam_key=effective_sarvam_key,
+            sarvam_voice=sarvam_voice,
+            sarvam_language=sarvam_language,
+            sarvam_model=sarvam_model,
             sample_rate=sample_rate,
             codec=codec,
             session_factory=session_factory,

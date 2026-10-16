@@ -91,13 +91,22 @@ async def test_provider_connection(
                     headers={"xi-api-key": api_key.strip()},
                 )
 
-            # 7. Sarvam (STT / TTS)
-            elif provider_id in ("sarvam_stt", "sarvam_tts"):
-                # Lightweight call to Sarvam speech API info
+            # 7. Sarvam (STT / LLM / TTS)
+            elif provider_id in ("sarvam_stt", "sarvam_llm", "sarvam_tts", "sarvam"):
+                clean_key = api_key.strip()
+                sarvam_headers = {
+                    "api-subscription-key": clean_key,
+                    "Authorization": f"Bearer {clean_key}",
+                }
                 resp = await client.get(
-                    "https://api.sarvam.ai/speech-to-text",
-                    headers={"api-subscription-key": api_key.strip()},
+                    "https://api.sarvam.ai/v2/models",
+                    headers=sarvam_headers,
                 )
+                if resp.status_code == 404:
+                    resp = await client.get(
+                        "https://api.sarvam.ai/usage",
+                        headers=sarvam_headers,
+                    )
 
             # 8. Google Gemini (Live / Multimodal)
             elif provider_id in ("gemini_live", "google_gemini", "gemini"):

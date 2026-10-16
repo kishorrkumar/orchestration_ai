@@ -1,0 +1,47 @@
+id: sarvam_llm
+kind: llm
+display_name: "Sarvam AI (Indic LLM)"
+description: "OpenAI-compatible LLM natively fluent in Indian languages and conversational dialogue"
+docs_url: "https://docs.sarvam.ai/products/chat-completions"
+streaming: true
+native_eot: false
+supported_languages:
+  - hi-IN
+  - en-IN
+  - ta-IN
+  - te-IN
+  - kn-IN
+  - ml-IN
+  - mr-IN
+  - gu-IN
+  - bn-IN
+  - pa-IN
+default_model: "sarvam-105b-conversations"
+model_list_type: static
+auth_fields:
+  - name: api_key
+    label: "Sarvam API Subscription Key"
+    field_type: password
+    required: true
+    placeholder: "Paste api-subscription-key from dashboard.sarvam.ai"
+    description: "Sarvam AI subscription key (supports /v1/chat/completions)"
+models:
+  - id: "sarvam-105b-conversations"
+    name: "Sarvam 105B Conversations"
+    description: "Optimized conversational dialogue variant for real-time voice agents (32K context)"
+    context_window: 32768
+    latency_profile: "ultra-fast"
+    last_verified: "2026-10-15"
+  - id: "sarvam-105b"
+    name: "Sarvam 105B Flagship"
+    description: "Flagship 105B reasoning model with 128K context for complex multilingual workflows"
+    context_window: 131072
+    latency_profile: "fast"
+    last_verified: "2026-10-15"
+  - id: "sarvam-2b"
+    name: "Sarvam 2B"
+    description: "Lightweight foundational Indic model for low-latency dialogue"
+    context_window: 8192
+    latency_profile: "ultra-fast"
+    last_verified: "2026-10-15"
+pipecat_service: "pipecat.services.sarvam.llm.SarvamLLMService"

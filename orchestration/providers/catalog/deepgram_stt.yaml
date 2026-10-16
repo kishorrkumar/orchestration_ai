@@ -1,0 +1,38 @@
+id: deepgram_stt
+kind: stt
+display_name: "Deepgram Nova-3 / Flux (STT)"
+description: "Ultra-low-latency real-time streaming speech-to-text with native end-of-turn detection"
+docs_url: "https://developers.deepgram.com"
+streaming: true
+native_eot: true
+native_sample_rates:
+  - 8000
+  - 16000
+  - 24000
+supported_languages:
+  - en-US
+  - en-IN
+  - hi-IN
+  - es
+  - fr
+default_model: "nova-3"
+model_list_type: static
+auth_fields:
+  - name: api_key
+    label: "Deepgram API Key"
+    field_type: password
+    required: true
+    placeholder: "Token..."
+    description: "Deepgram API key from console.deepgram.com"
+models:
+  - id: "nova-3"
+    name: "Deepgram Nova-3"
+    description: "Latest generation SOTA streaming speech recognition"
+    latency_profile: "ultra-fast"
+    last_verified: "2026-10-15"
+  - id: "nova-2-general"
+    name: "Deepgram Nova-2"
+    description: "High-accuracy production streaming STT"
+    latency_profile: "fast"
+    last_verified: "2026-10-15"
+pipecat_service: "pipecat.services.deepgram.stt.DeepgramSTTService"

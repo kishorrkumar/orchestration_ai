@@ -156,6 +156,7 @@ class Settings(BaseSettings):
     GATEWAY_PORT: int = Field(default=8000, description="Gateway bind port")
     AUTH_TOKEN: str | None = Field(default=None, description="Optional bearer token for REST and WebSocket authentication")
     GEMINI_API_KEY: str | None = Field(default=None, description="Google Gemini API key for Gemini Multimodal Live speech-to-speech")
+    SARVAM_API_KEY: str | None = Field(default=None, description="Sarvam AI subscription key for Engine B (Saaras STT, Sarvam LLM, Bulbul TTS)")
 
     # 4. Latency & Buffers
     JITTER_BUFFER_MS: int = Field(default=120, description="Target playback jitter buffer size in milliseconds")

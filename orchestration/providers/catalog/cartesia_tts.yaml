@@ -1,0 +1,47 @@
+id: cartesia_tts
+kind: tts
+display_name: "Cartesia Sonic (Zero-Shot TTS)"
+description: "Ultra-fast state-space TTS model with sub-100ms first audio latency"
+docs_url: "https://docs.cartesia.ai"
+streaming: true
+native_sample_rates:
+  - 16000
+  - 24000
+supported_languages:
+  - en-US
+  - en-IN
+  - hi-IN
+  - es
+  - fr
+  - de
+default_model: "sonic-english"
+default_voice: "a0e99841-438c-4a64-b679-ae501e7d6091"
+model_list_type: static
+auth_fields:
+  - name: api_key
+    label: "Cartesia API Key"
+    field_type: password
+    required: true
+    placeholder: "..."
+    description: "Cartesia API key from play.cartesia.ai"
+models:
+  - id: "sonic-english"
+    name: "Sonic English"
+    description: "Ultra-fast English voice synthesis (~90ms TTFA)"
+    latency_profile: "ultra-fast"
+    last_verified: "2026-10-15"
+  - id: "sonic-multilingual"
+    name: "Sonic Multilingual"
+    description: "Multilingual Sonic with Indic language support"
+    latency_profile: "ultra-fast"
+    last_verified: "2026-10-15"
+voices:
+  - id: "a0e99841-438c-4a64-b679-ae501e7d6091"
+    name: "Barbershop Man"
+    gender: male
+    language: en-US
+  - id: "79a125e8-cd45-4c13-8a67-188112f4dd22"
+    name: "British Lady"
+    gender: female
+    language: en-US
+pipecat_service: "pipecat.services.cartesia.tts.CartesiaTTSService"

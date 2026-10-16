@@ -1,0 +1,40 @@
+id: openai_llm
+kind: llm
+display_name: "OpenAI GPT-4o / GPT-4o-mini"
+description: "Industry-standard OpenAI chat completions and structured tool calling"
+docs_url: "https://platform.openai.com/docs"
+streaming: true
+native_eot: false
+supported_languages:
+  - en-US
+  - en-IN
+  - hi-IN
+default_model: "gpt-4o-mini"
+model_list_type: static
+auth_fields:
+  - name: api_key
+    label: "OpenAI API Key"
+    field_type: password
+    required: true
+    placeholder: "sk-..."
+    description: "OpenAI API key from platform.openai.com"
+  - name: base_url
+    label: "Custom Base URL (Optional)"
+    field_type: text
+    required: false
+    placeholder: "https://api.openai.com/v1"
+    description: "Optional custom API endpoint for Groq, Together, Ollama or Azure"
+models:
+  - id: "gpt-4o-mini"
+    name: "GPT-4o Mini"
+    description: "Ultra-fast low-cost LLM ideal for conversational voice agents"
+    context_window: 128000
+    latency_profile: "ultra-fast"
+    last_verified: "2026-10-15"
+  - id: "gpt-4o"
+    name: "GPT-4o"
+    description: "Flagship omnichannel reasoning model"
+    context_window: 128000
+    latency_profile: "fast"
+    last_verified: "2026-10-15"
+pipecat_service: "pipecat.services.openai.llm.OpenAILLMService"
